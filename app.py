@@ -24,10 +24,12 @@ client = gspread.authorize(creds)
 # Spreadsheet and Worksheet
 SPREADSHEET_NAME = "truckinventory"
 worksheet = client.open(SPREADSHEET_NAME).sheet1  # First sheet
-
 # ========================
 # Helper Functions
 # ========================
+SPREADSHEET_NAME = "truckinventory"
+worksheet = client.open(SPREADSHEET_NAME).sheet1
+
 def load_data():
     data = worksheet.get_all_records()
     return pd.DataFrame(data)
@@ -82,10 +84,11 @@ with tab2:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
             idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
-            from_owner = df_inventory.loc[idx, "USER"]
-            df_inventory.loc[idx, "Previous User"] = from_owner
-            df_inventory.loc[idx, "USER"] = new_owner
-            df_inventory.loc[idx, "TO"] = new_owner
+            from_owner = df_inventory.loc[idx, "To owner"]  # current owner
+            df_inventory.loc[idx, "From owner"] = from_owner
+            df_inventory.loc[idx, "To owner"] = new_owner
+            df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
+            df_inventory.loc[idx, "Registered by"] = registered_by
 
             # Append to TransferLog
             log_ws = get_transfer_log_sheet()
@@ -95,7 +98,7 @@ with tab2:
                 serial_number,
                 from_owner,
                 new_owner,
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                datetime.now().strftime("%m/%d/%Y %H:%M:%S"),
                 registered_by
             ])
 
