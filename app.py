@@ -19,20 +19,24 @@ creds = Credentials.from_service_account_info(
 
 client = gspread.authorize(creds)
 SPREADSHEET_NAME = "truckinventory"
-worksheet = client.open(SPREADSHEET_NAME).sheet1  # Inventory sheet
+worksheet = client.open(SPREADSHEET_NAME).sheet1
 
 # ========================
 # Helper Functions
 # ========================
 def normalize_columns(df):
+    """Make all column names lowercase and strip spaces."""
     df.columns = df.columns.str.strip().str.lower()
     return df
 
 def load_inventory():
+    """Load inventory from the first sheet."""
     data = worksheet.get_all_records()
-    return normalize_columns(pd.DataFrame(data))
+    df = pd.DataFrame(data)
+    return normalize_columns(df)
 
 def get_transfer_log_sheet():
+    """Get or create the TransferLog worksheet."""
     ss = client.open(SPREADSHEET_NAME)
     try:
         return ss.worksheet("TransferLog")
@@ -77,11 +81,11 @@ with tab2:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
             idx = df_inventory[df_inventory["serial number"] == serial_number].index[0]
-            from_owner = df_inventory.loc[idx, "to owner"]
+            from_owner = df_inventory.loc[idx, "user"]  # normalized lowercase
             device_type = df_inventory.loc[idx, "device type"]
             date_issued = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
 
-            # Only append to TransferLog (do not update inventory)
+            # Append to TransferLog sheet
             log_ws = get_transfer_log_sheet()
             log_ws.append_row([
                 device_type,
