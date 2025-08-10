@@ -3,6 +3,7 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
+import json
 
 # ========================
 # CONFIGURATION
@@ -20,8 +21,8 @@ SCOPES = [
 # ========================
 @st.cache_resource
 def get_gsheet_client():
-    creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
-    client = gspread.authorize(creds)
+    creds_dict = json.loads(st.secrets["gcp_service_account"].to_dict())
+    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
     return client
 
 client = get_gsheet_client()
