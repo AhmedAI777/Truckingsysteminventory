@@ -77,10 +77,10 @@ with tab2:
     if st.button("Transfer Now"):
         df_inventory = load_inventory()
 
-        if serial_number not in df_inventory["serial number"].values:
-            st.error(f"Device with Serial Number {serial_number} not found!")
+        if serial_number not in df_inventory["Serial Number"].values:
+            st.error(f"Device with Serial Number {Serial_Number} not found!")
         else:
-            idx = df_inventory[df_inventory["serial number"] == serial_number].index[0]
+            idx = df_inventory[df_inventory["Serial Number"] == Serial_Number].index[0]
             from_owner = df_inventory.loc[idx, "user"]  # normalized lowercase
             device_type = df_inventory.loc[idx, "device type"]
             date_issued = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
