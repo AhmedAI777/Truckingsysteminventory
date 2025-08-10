@@ -38,7 +38,12 @@ def save_transfer_log(df):
 st.set_page_config(page_title="Trucking Inventory System", page_icon="🚚", layout="wide")
 st.title("🚚 Trucking Inventory Management System")
 
-tab1, tab2, tab3 = st.tabs(["📦 View Inventory", "🔄 Transfer Device", "⬇ Export Files"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📦 View Inventory", 
+    "🔄 Transfer Device", 
+    "📜 View Transfer Log", 
+    "⬇ Export Files"
+])
 
 # TAB 1 – View Inventory
 with tab1:
@@ -71,18 +76,16 @@ with tab2:
             df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             df_inventory.loc[idx, "Registered by"] = registered_by
 
-            # Append to transfer log
-            df_log = pd.concat([
-                df_log,
-                pd.DataFrame([{
-                    "Device Type": device_type,
-                    "Serial Number": serial_number,
-                    "From owner": from_owner,
-                    "To owner": new_owner,
-                    "Date issued": datetime.now().strftime("%m/%d/%Y %H:%M:%S"),
-                    "Registered by": registered_by
-                }])
-            ], ignore_index=True)
+            # Append to transfer log with numbering
+            log_entry = {
+                "Device Type": device_type,
+                "Serial Number": serial_number,
+                "From owner": from_owner,
+                "To owner": new_owner,
+                "Date issued": datetime.now().strftime("%m/%d/%Y %H:%M:%S"),
+                "Registered by": registered_by
+            }
+            df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
 
             # Save both files
             save_inventory(df_inventory)
@@ -90,8 +93,14 @@ with tab2:
 
             st.success(f"✅ Transfer logged: {from_owner} → {new_owner}")
 
-# TAB 3 – Export Files
+# TAB 3 – View Transfer Log
 with tab3:
+    st.subheader("Transfer Log History")
+    df_log = load_transfer_log()
+    st.dataframe(df_log)
+
+# TAB 4 – Export Files
+with tab4:
     st.subheader("Download Updated Files")
 
     # Export inventory
