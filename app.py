@@ -12,34 +12,27 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
-# Authenticate using credentials stored in Streamlit Secrets
 creds = Credentials.from_service_account_info(
     dict(st.secrets["gcp_service_account"]),
     scopes=SCOPES
 )
 
-# Authorize the gspread client
 client = gspread.authorize(creds)
-
-# Spreadsheet and Worksheet
 SPREADSHEET_NAME = "truckinventory"
-worksheet = client.open(SPREADSHEET_NAME).sheet1  # First sheet
+worksheet = client.open(SPREADSHEET_NAME).sheet1  # Inventory sheet
 
 # ========================
 # Helper Functions
 # ========================
-def load_data():
-    """Load inventory sheet as DataFrame."""
-    data = worksheet.get_all_records()
-    return pd.DataFrame(data)
+def normalize_columns(df):
+    df.columns = df.columns.str.strip().str.lower()
+    return df
 
-def save_data(df):
-    """Overwrite inventory sheet with updated DataFrame."""
-    worksheet.clear()
-    worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+def load_inventory():
+    data = worksheet.get_all_records()
+    return normalize_columns(pd.DataFrame(data))
 
 def get_transfer_log_sheet():
-    """Get or create TransferLog worksheet."""
     ss = client.open(SPREADSHEET_NAME)
     try:
         return ss.worksheet("TransferLog")
@@ -63,8 +56,8 @@ tab1, tab2 = st.tabs(["📦 View Inventory", "🔄 Transfer Device"])
 # TAB 1: VIEW INVENTORY
 # ========================
 with tab1:
-    st.subheader("Current Inventory")
-    df_inventory = load_data()
+    st.subheader("Current Inventory (Read Only)")
+    df_inventory = load_inventory()
     st.dataframe(df_inventory)
 
 # ========================
@@ -78,23 +71,20 @@ with tab2:
     registered_by = st.text_input("Registered By (IT Staff)")
 
     if st.button("Transfer Now"):
-        df_inventory = load_data()
+        df_inventory = load_inventory()
 
-        if serial_number not in df_inventory["Serial Number"].values:
+        if serial_number not in df_inventory["serial number"].values:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
-            idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
-            from_owner = df_inventory.loc[idx, "To owner"]  # Ensure this matches your sheet's column name
-            df_inventory.loc[idx, "From owner"] = from_owner
-            df_inventory.loc[idx, "To owner"] = new_owner
+            idx = df_inventory[df_inventory["serial number"] == serial_number].index[0]
+            from_owner = df_inventory.loc[idx, "to owner"]
+            device_type = df_inventory.loc[idx, "device type"]
             date_issued = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
-            df_inventory.loc[idx, "Date issued"] = date_issued
-            df_inventory.loc[idx, "Registered by"] = registered_by
 
-            # Append transfer log BEFORE saving inventory changes
+            # Only append to TransferLog (do not update inventory)
             log_ws = get_transfer_log_sheet()
             log_ws.append_row([
-                df_inventory.loc[idx, "Device Type"],
+                device_type,
                 serial_number,
                 from_owner,
                 new_owner,
@@ -102,7 +92,4 @@ with tab2:
                 registered_by
             ])
 
-            # Save updated inventory
-            save_data(df_inventory)
-
-            st.success(f"✅ Transfer Successful from {from_owner} to {new_owner}")
+            st.success(f"✅ Transfer Logged: {from_owner} → {new_owner}")
