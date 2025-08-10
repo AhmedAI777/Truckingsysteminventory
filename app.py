@@ -7,7 +7,7 @@ from datetime import datetime
 # ========================
 # CONFIGURATION
 # ========================
-SHEET_NAME = "Your Google Sheet Name Here"  # Change to your actual sheet name
+SHEET_NAME = "truckinventory"  # Change to your actual sheet name
 
 # Scopes for Google Sheets + Drive access
 SCOPES = [
