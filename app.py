@@ -133,14 +133,3 @@ with tab3:
     log_df = log_df.sort_values(by="No", ascending=False).reset_index(drop=True)
 
     st.dataframe(log_df)
-
-    # Download Transfer Log Excel
-    output_log = io.BytesIO()
-    with pd.ExcelWriter(output_inv, engine='openpyxl') as writer:
-        log_df.to_excel(writer, index=False, sheet_name="TransferLog")
-    st.download_button(
-        label="📥 Download Transfer Log Excel",
-        data=output_log.getvalue(),
-        file_name="transfer_log.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
