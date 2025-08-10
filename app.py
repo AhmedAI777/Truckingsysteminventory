@@ -3,10 +3,10 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
-import json
-from google.oauth2.service_account import Credentials
 
-# Google Sheets scopes
+# ========================
+# Google Sheets Setup
+# ========================
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
@@ -21,25 +21,33 @@ creds = Credentials.from_service_account_info(
 # Authorize the gspread client
 client = gspread.authorize(creds)
 
-# Your spreadsheet name
-SHEET_NAME = "truckinventory"
-
-# Example: Read all data
-data = SHEET_NAME.get_all_records()
-st.write("Google Sheet Data:", data)
-
+# Spreadsheet and Worksheet
+SPREADSHEET_NAME = "truckinventory"
+worksheet = client.open(SPREADSHEET_NAME).sheet1  # First sheet
 
 # ========================
-# LOAD DATA
+# Helper Functions
 # ========================
 def load_data():
-    data = SHEET_NAME.get_all_records()
-    df = pd.DataFrame(data)
-    return df
+    data = worksheet.get_all_records()
+    return pd.DataFrame(data)
 
 def save_data(df):
-    SHEET_NAME.clear()
-    SHEET_NAME.update([df.columns.values.tolist()] + df.values.tolist())
+    worksheet.clear()
+    worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+
+def get_transfer_log_sheet():
+    try:
+        return client.open(SPREADSHEET_NAME).worksheet("TransferLog")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = client.open(SPREADSHEET_NAME).add_worksheet(
+            title="TransferLog", rows="1000", cols="10"
+        )
+        ws.append_row([
+            "Device Type", "Serial Number", "From owner", "To owner",
+            "Date issued", "Registered by"
+        ])
+        return ws
 
 # ========================
 # STREAMLIT UI
@@ -79,15 +87,10 @@ with tab2:
             df_inventory.loc[idx, "USER"] = new_owner
             df_inventory.loc[idx, "TO"] = new_owner
 
-            # Append to transfer log sheet
-            try:
-                SHEET_NAME_log = client.open(SHEET_NAME).SHEET_NAME("TransferLog")
-            except gspread.exceptions.SHEET_NAMENotFound:
-                SHEET_NAME_log = client.open(SHEET_NAME).add_SHEET_NAME(title="TransferLog", rows="1000", cols="10")
-                SHEET_NAME_log.append_row(["Device Type", "Serial Number", "From owner", "To owner", "Date issued", "Registered by"])
-
+            # Append to TransferLog
+            log_ws = get_transfer_log_sheet()
             device_type = df_inventory.loc[idx, "Device Type"]
-            SHEET_NAME_log.append_row([
+            log_ws.append_row([
                 device_type,
                 serial_number,
                 from_owner,
@@ -100,4 +103,3 @@ with tab2:
             save_data(df_inventory)
 
             st.success(f"✅ Transfer Successful from {from_owner} to {new_owner}")
-
