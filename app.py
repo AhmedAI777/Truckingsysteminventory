@@ -1,60 +1,57 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import os
+from io import BytesIO
 
 # ========================
-# File paths
+# File Paths
 # ========================
 INVENTORY_FILE = "truckinventory.xlsx"
 TRANSFER_LOG_FILE = "transferlog.xlsx"
 
 # ========================
-# Helper Functions
+# Load Data
 # ========================
 def load_inventory():
-    if os.path.exists(INVENTORY_FILE):
-        return pd.read_excel(INVENTORY_FILE)
-    else:
-        st.error(f"{INVENTORY_FILE} not found.")
-        return pd.DataFrame()
-
-def save_inventory(df):
-    df.to_excel(INVENTORY_FILE, index=False)
+    return pd.read_excel(INVENTORY_FILE)
 
 def load_transfer_log():
-    if os.path.exists(TRANSFER_LOG_FILE):
+    try:
         return pd.read_excel(TRANSFER_LOG_FILE)
-    else:
+    except FileNotFoundError:
         df = pd.DataFrame(columns=[
-            "Device Type", "Serial Number", "From owner", "To owner", 
+            "Device Type", "Serial Number", "From owner", "To owner",
             "Date issued", "Registered by"
         ])
         df.to_excel(TRANSFER_LOG_FILE, index=False)
         return df
 
+def save_inventory(df):
+    df.to_excel(INVENTORY_FILE, index=False)
+
 def save_transfer_log(df):
     df.to_excel(TRANSFER_LOG_FILE, index=False)
 
 # ========================
-# Streamlit UI
+# Streamlit App
 # ========================
-st.set_page_config(page_title="Trucking Inventory System (Excel Version)", page_icon="🚚", layout="wide")
-st.title("🚚 Trucking Inventory Management System (Excel Version)")
+st.set_page_config(page_title="Trucking Inventory System", page_icon="🚚", layout="wide")
+st.title("🚚 Trucking Inventory Management System")
 
-tab1, tab2, tab3 = st.tabs(["📦 View Inventory", "🔄 Transfer Device", "🪵 Transfer Log"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📦 View Inventory", 
+    "🔄 Transfer Device", 
+    "📜 View Transfer Log", 
+    "⬇ Export Files"
+])
 
-# ========================
-# TAB 1: VIEW INVENTORY
-# ========================
+# TAB 1 – View Inventory
 with tab1:
-    st.subheader("Current Inventory (Read Only)")
+    st.subheader("Current Inventory")
     df_inventory = load_inventory()
     st.dataframe(df_inventory)
 
-# ========================
-# TAB 2: TRANSFER DEVICE
-# ========================
+# TAB 2 – Transfer Device
 with tab2:
     st.subheader("Register Ownership Transfer")
 
@@ -70,22 +67,16 @@ with tab2:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
             idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
+            from_owner = df_inventory.loc[idx, "From owner"] if "From owner" in df_inventory.columns else df_inventory.loc[idx, "USER"]
             device_type = df_inventory.loc[idx, "Device Type"]
 
-            # Get last known owner from transfer log if exists
-            previous_transfers = df_log[df_log["Serial Number"] == serial_number]
-            if not previous_transfers.empty:
-                from_owner = previous_transfers.iloc[-1]["To owner"]
-            else:
-                from_owner = df_inventory.loc[idx, "USER"]
-
-            # Update inventory sheet
+            # Update inventory
             df_inventory.loc[idx, "From owner"] = from_owner
             df_inventory.loc[idx, "To owner"] = new_owner
             df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             df_inventory.loc[idx, "Registered by"] = registered_by
 
-            # Append to transfer log
+            # Append to transfer log with numbering
             log_entry = {
                 "Device Type": device_type,
                 "Serial Number": serial_number,
@@ -96,22 +87,41 @@ with tab2:
             }
             df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
 
-            # Save both
+            # Save both files
             save_inventory(df_inventory)
             save_transfer_log(df_log)
 
             st.success(f"✅ Transfer logged: {from_owner} → {new_owner}")
 
-# ========================
-# TAB 3: TRANSFER LOG
-# ========================
+# TAB 3 – View Transfer Log
 with tab3:
-    st.subheader("🪵 Transfer Log (Newest First)")
+    st.subheader("Transfer Log History")
     df_log = load_transfer_log()
+    st.dataframe(df_log)
 
-    if not df_log.empty:
-        df_log_sorted = df_log.iloc[::-1].reset_index(drop=True)
-        df_log_sorted.index += 1
-        st.dataframe(df_log_sorted)
-    else:
-        st.info("No transfers recorded yet.")
+# TAB 4 – Export Files
+with tab4:
+    st.subheader("Download Updated Files")
+
+    # Export inventory
+    output_inv = BytesIO()
+    with pd.ExcelWriter(output_inv, engine="openpyxl") as writer:
+        df_inventory.to_excel(writer, index=False)
+    st.download_button(
+        label="⬇ Download Inventory",
+        data=output_inv.getvalue(),
+        file_name="truckinventory_updated.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    # Export transfer log
+    df_log = load_transfer_log()
+    output_log = BytesIO()
+    with pd.ExcelWriter(output_log, engine="openpyxl") as writer:
+        df_log.to_excel(writer, index=False)
+    st.download_button(
+        label="⬇ Download Transfer Log",
+        data=output_log.getvalue(),
+        file_name="transferlog_updated.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
