@@ -121,11 +121,3 @@ with tab3:
         df_log_sorted = df_log.iloc[::-1].reset_index(drop=True)
         df_log_sorted.index += 1  # Start numbering from 1
         st.dataframe(df_log_sorted)
-
-        st.download_button(
-            label="📥 Download Transfer Log as Excel",
-            data=df_log_sorted.to_excel(index=False, engine='xlsxwriter'),
-            file_name="transfer_log_export.xlsx"
-        )
-    else:
-        st.info("No transfers recorded yet.")
