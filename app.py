@@ -26,7 +26,6 @@ def load_transfer_log():
     if os.path.exists(TRANSFER_LOG_FILE):
         return pd.read_excel(TRANSFER_LOG_FILE)
     else:
-        # Create empty log with correct headers
         df = pd.DataFrame(columns=[
             "Device Type", "Serial Number", "From owner", "To owner", 
             "Date issued", "Registered by"
@@ -53,13 +52,6 @@ with tab1:
     df_inventory = load_inventory()
     st.dataframe(df_inventory)
 
-    if not df_inventory.empty:
-        st.download_button(
-            label="📥 Download Inventory as Excel",
-            data=df_inventory.to_excel(index=False, engine='xlsxwriter'),
-            file_name="inventory_export.xlsx"
-        )
-
 # ========================
 # TAB 2: TRANSFER DEVICE
 # ========================
@@ -80,14 +72,14 @@ with tab2:
             idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
             device_type = df_inventory.loc[idx, "Device Type"]
 
-            # ✅ Get last known owner from transfer log if available
+            # Get last known owner from transfer log if exists
             previous_transfers = df_log[df_log["Serial Number"] == serial_number]
             if not previous_transfers.empty:
                 from_owner = previous_transfers.iloc[-1]["To owner"]
             else:
                 from_owner = df_inventory.loc[idx, "USER"]
 
-            # Update inventory sheet (current owner info)
+            # Update inventory sheet
             df_inventory.loc[idx, "From owner"] = from_owner
             df_inventory.loc[idx, "To owner"] = new_owner
             df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
@@ -119,5 +111,7 @@ with tab3:
 
     if not df_log.empty:
         df_log_sorted = df_log.iloc[::-1].reset_index(drop=True)
-        df_log_sorted.index += 1  # Start numbering from 1
+        df_log_sorted.index += 1
         st.dataframe(df_log_sorted)
+    else:
+        st.info("No transfers recorded yet.")
