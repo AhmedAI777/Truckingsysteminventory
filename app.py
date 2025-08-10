@@ -63,12 +63,12 @@ with tab2:
         df_inventory = load_inventory()
         df_log = load_transfer_log()
 
-        if serial_number not in df_inventory["Serial Number"].values:
-            st.error(f"Device with Serial Number {serial_number} not found!")
-        else:
-            idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
-            from_owner = df_inventory.loc[idx, "From owner"] if "From owner" in df_inventory.columns else df_inventory.loc[idx, "To owner"]
-            device_type = df_inventory.loc[idx, "Device Type"]
+      # Check last owner from transfer log first
+previous_transfers = df_log[df_log["Serial Number"] == serial_number]
+if not previous_transfers.empty:
+    from_owner = previous_transfers.iloc[-1]["To owner"]
+else:
+    from_owner = df_inventory.loc[idx, "USER"]
 
             # Update inventory
             df_inventory.loc[idx, "From owner"] = from_owner
