@@ -4,26 +4,25 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 import json
+from google.oauth2.service_account import Credentials
+
 
 # ========================
 # CONFIGURATION
 # ========================
 SHEET_NAME = "truckinventory"  # Change to your actual sheet name
 
-# Scopes for Google Sheets + Drive access
+# Google Sheets + Drive API scopes
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
 
-# ========================
-# CONNECT TO GOOGLE SHEETS
-# ========================
-@st.cache_resource
-def get_gsheet_client():
-    creds_dict = json.loads(st.secrets["gcp_service_account"].to_dict())
-    creds = Credentials.from_service_account_info(creds_dict, scopes=SCOPES)
-    return client
+# Load credentials from Streamlit Secrets
+creds = Credentials.from_service_account_info(
+    dict(st.secrets["gcp_service_account"]),
+    scopes=SCOPES
+)
 
 client = get_gsheet_client()
 worksheet = client.open(SHEET_NAME).sheet1
