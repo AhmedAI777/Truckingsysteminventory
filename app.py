@@ -21,24 +21,25 @@ creds = Credentials.from_service_account_info(
 # Authorize the gspread client
 client = gspread.authorize(creds)
 
-# Spreadsheet and Worksheet
+# Main spreadsheet + main worksheet
 SPREADSHEET_NAME = "truckinventory"
-worksheet = client.open(SPREADSHEET_NAME).sheet1  # First sheet
+worksheet = client.open(SPREADSHEET_NAME).sheet1  # Default sheet
+
 # ========================
 # Helper Functions
 # ========================
-SPREADSHEET_NAME = "truckinventory"
-worksheet = client.open(SPREADSHEET_NAME).sheet1
-
 def load_data():
+    """Load inventory sheet as DataFrame."""
     data = worksheet.get_all_records()
     return pd.DataFrame(data)
 
 def save_data(df):
+    """Overwrite inventory sheet with DataFrame content."""
     worksheet.clear()
     worksheet.update([df.columns.values.tolist()] + df.values.tolist())
 
 def get_transfer_log_sheet():
+    """Get or create TransferLog sheet."""
     try:
         return client.open(SPREADSHEET_NAME).worksheet("TransferLog")
     except gspread.exceptions.WorksheetNotFound:
@@ -83,14 +84,17 @@ with tab2:
         if serial_number not in df_inventory["Serial Number"].values:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
+            # Find device row
             idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
-            from_owner = df_inventory.loc[idx, "To owner"]  # current owner
+            from_owner = df_inventory.loc[idx, "To owner"]  # Current owner before change
+
+            # Update inventory
             df_inventory.loc[idx, "From owner"] = from_owner
             df_inventory.loc[idx, "To owner"] = new_owner
             df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             df_inventory.loc[idx, "Registered by"] = registered_by
 
-            # Append to TransferLog
+            # Append to TransferLog sheet
             log_ws = get_transfer_log_sheet()
             device_type = df_inventory.loc[idx, "Device Type"]
             log_ws.append_row([
@@ -102,7 +106,7 @@ with tab2:
                 registered_by
             ])
 
-            # Save updated inventory
+            # Save updated inventory sheet
             save_data(df_inventory)
 
             st.success(f"✅ Transfer Successful from {from_owner} to {new_owner}")
