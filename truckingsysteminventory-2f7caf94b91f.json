@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "truckingsysteminventory",
+  "private_key_id": "2f7caf94b91fe5474fc6f000c1e774fe413a041b",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDc2+vlE6Fz7V5R\nWSatbSkQUwt/+vPV/LBFNV0xaMIYixJhtq6qXwCo8l/DleTOxw7RKvhlk1qowNJ4\nbq58PXQ+g7f2kC8oP1qQu+aKPCiYNN8BcZTtH/NwU9xBWOBwfHy8Yj+yGfQkMXtF\nrh5o3w4Iz2TirumIMse95GFCKkdxaWvRmay8dPJv4M7ZkVypgF5cne6TvcgjjO6v\n/KGUz9G+YewSJCfHZKdEz4PcB+VdGrnxFZ8nHmcmxNNG3Hrw0rSuf+SESk4ezfSD\noc1qNz8wpu26es3X6q0/tggQMRdlGoW0BPqB0cjG3P4upvUhEm4rIjbkkL84QAkk\ncVsBEBR/AgMBAAECggEAEGwqoHLdvK+H+wzh2Ip3P7dVHGlDgVlpSAl9n64WT1nj\n/i+7JtWqnbrBY9s8/iKEwl6WGtjNUyKyDnIjIlTgKcKEnDPAy0GEEU1k3p7g4TR+\nkpkTWwXXBba5TYNM08BwoVdoPMI7n7IC5Ghb6ti52UOGpmkdhLBLSZ5LnG5lYpQx\n9BL12vper2oZ5jchigJ+KLsFAVKKW+A29XgtiqJLAXF2AxqdHEyrTA7w7F0P+Rfh\nsSv1SrecmxAX6fC+4WhMab8vpM0di3vpmG3brnbqS3uiGD/K6MAxuAynDSl/vTPc\nXpiPO3UTdM+gEHtJl2tjzrw6wVFp+sJArmpvYXNbpQKBgQD6qUitmoz9gvvQGNdS\nyJGZSNH4PKPV2idd283LSlHrl0aCzuCy1h6WAz28aq6xRwBN54wIiEnPNU8wC5QP\nxzVRg8qH5uVwI3n5dNOiOhHIr8MFQWA4SXj1W1yvijx8Qc4VkeiQGKGWy27kJJD9\nqU/iWuH1mMs28WWcX4mdbivR4wKBgQDhkCSOyTghYRccu3jMGgivj/B4AfhMbaGw\nb12iX1ah4g4EiXC/Alu9o3pHzIK/cDaFTXjA6t4etxFfJcepcwvCTQrCXMGuyOYl\n/nhcFDYg3PvQqhrq1z18KssOVujwsbEPdUPZs0TuwVDmcCNbz8m7LrqYXcFQaHY9\nWYOHHvvFtQKBgQDF6R1CPRHvJBlwj/yLF2OmVJG8Xxy4v/tvJxqQ1UhjLFj29SMC\n8P7LURnQh6cQv8+ksxqkrf8hBKVWeP3Zi1800kr6DLvBU7F93dkvcIwUGXpwztKK\n/q/rgcxnqUziiw6Nh1vJUjlbl5ohtiFotuMlBL7+LDrfUa/5zJEaZR9iIwKBgGr2\nlb94QDvj9LfVVvVCqzfFxDzEgmCL5I7sYLStDUH7FrakDmklzydgrI37t0zdA523\nHToupmJeYciC++mo+ryLGD0PC3G9JxaBU8Ymd3yiDm/nGpietTN6f4wvPotVWCeC\nbkiAMIIf/iMorjvNj1ZKVIYIf7GHt/pjxnF/Cdm5AoGAO0LSCK9AbPUvicwQng9M\nakgF34ci8eIUXBfocu53jEePRauJy2DjNZHNaiJriWZgr/NAOsZ/QQNwpq7K3SyC\nEDXpSU1SnMIBbHlCdoEiGo2TIknWqpNXKBTHokIiRvEcyWi9TjkZLAco84lEQ2vA\nxsp9VlnyRLoN6NRwYdscdwY=\n-----END PRIVATE KEY-----\n",
+  "client_email": "truckingsysteminventory@truckingsysteminventory.iam.gserviceaccount.com",
+  "client_id": "102245321918606199600",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/truckingsysteminventory%40truckingsysteminventory.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
