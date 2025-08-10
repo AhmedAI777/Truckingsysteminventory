@@ -23,10 +23,9 @@ client = gspread.authorize(creds)
 
 # Your spreadsheet name
 SHEET_NAME = "truckinventory"
-worksheet = client.open(SHEET_NAME).sheet1
 
 # Example: Read all data
-data = worksheet.get_all_records()
+data = SHEET_NAME.get_all_records()
 st.write("Google Sheet Data:", data)
 
 
@@ -34,13 +33,13 @@ st.write("Google Sheet Data:", data)
 # LOAD DATA
 # ========================
 def load_data():
-    data = worksheet.get_all_records()
+    data = SHEET_NAME.get_all_records()
     df = pd.DataFrame(data)
     return df
 
 def save_data(df):
-    worksheet.clear()
-    worksheet.update([df.columns.values.tolist()] + df.values.tolist())
+    SHEET_NAME.clear()
+    SHEET_NAME.update([df.columns.values.tolist()] + df.values.tolist())
 
 # ========================
 # STREAMLIT UI
@@ -82,13 +81,13 @@ with tab2:
 
             # Append to transfer log sheet
             try:
-                worksheet_log = client.open(SHEET_NAME).worksheet("TransferLog")
-            except gspread.exceptions.WorksheetNotFound:
-                worksheet_log = client.open(SHEET_NAME).add_worksheet(title="TransferLog", rows="1000", cols="10")
-                worksheet_log.append_row(["Device Type", "Serial Number", "From owner", "To owner", "Date issued", "Registered by"])
+                SHEET_NAME_log = client.open(SHEET_NAME).SHEET_NAME("TransferLog")
+            except gspread.exceptions.SHEET_NAMENotFound:
+                SHEET_NAME_log = client.open(SHEET_NAME).add_SHEET_NAME(title="TransferLog", rows="1000", cols="10")
+                SHEET_NAME_log.append_row(["Device Type", "Serial Number", "From owner", "To owner", "Date issued", "Registered by"])
 
             device_type = df_inventory.loc[idx, "Device Type"]
-            worksheet_log.append_row([
+            SHEET_NAME_log.append_row([
                 device_type,
                 serial_number,
                 from_owner,
