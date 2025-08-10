@@ -1,40 +1,58 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
 import os
+from datetime import datetime
 
 # ========================
-# Excel File Setup
+# File Paths
 # ========================
-INVENTORY_FILE = "truckinventory.xlsx"
-TRANSFER_LOG_FILE = "transferlog.xlsx"
+INVENTORY_PATH = "truckinventory.xlsx"
+TRANSFER_LOG_PATH = "transferlog.xlsx"
 
+# ========================
+# Helper Functions
+# ========================
 def load_inventory():
-    if os.path.exists(INVENTORY_FILE):
-        return pd.read_excel(INVENTORY_FILE)
-    else:
-        st.error(f"Inventory file '{INVENTORY_FILE}' not found!")
+    """Load inventory from Excel."""
+    if not os.path.exists(INVENTORY_PATH):
+        st.error("Inventory file not found!")
         return pd.DataFrame()
+    return pd.read_excel(INVENTORY_PATH)
+
+def save_inventory(df):
+    """Save inventory to Excel."""
+    df.to_excel(INVENTORY_PATH, index=False)
 
 def load_transfer_log():
-    if os.path.exists(TRANSFER_LOG_FILE):
-        return pd.read_excel(TRANSFER_LOG_FILE)
+    """Load the transfer log from Excel and sort newest first."""
+    if not os.path.exists(TRANSFER_LOG_PATH):
+        # Create empty transfer log if it doesn't exist
+        df = pd.DataFrame(columns=[
+            "Device Type", "Serial Number", "From owner", "To owner",
+            "Date issued", "Registered by"
+        ])
+        df.to_excel(TRANSFER_LOG_PATH, index=False)
     else:
-        # Create new transfer log if it doesn't exist
-        df = pd.DataFrame(columns=["Device Type", "Serial Number", "From owner", "To owner", "Date issued", "Registered by"])
-        df.to_excel(TRANSFER_LOG_FILE, index=False)
-        return df
+        df = pd.read_excel(TRANSFER_LOG_PATH)
+
+    if "Date issued" in df.columns and not df.empty:
+        # Ensure datetime type for sorting
+        df["Date issued"] = pd.to_datetime(df["Date issued"], errors="coerce")
+        df = df.sort_values(by="Date issued", ascending=False)
+
+    return df
 
 def save_transfer_log(df):
-    df.to_excel(TRANSFER_LOG_FILE, index=False)
+    """Save transfer log to Excel."""
+    df.to_excel(TRANSFER_LOG_PATH, index=False)
 
 # ========================
-# STREAMLIT UI
+# Streamlit UI
 # ========================
-st.set_page_config(page_title="Trucking Inventory System", page_icon="🚚", layout="wide")
+st.set_page_config(page_title="Trucking Inventory System (Excel Version)", page_icon="🚚", layout="wide")
 st.title("🚚 Trucking Inventory Management System (Excel Version)")
 
-tab1, tab2 = st.tabs(["📦 View Inventory", "🔄 Transfer Device"])
+tab1, tab2, tab3 = st.tabs(["📦 View Inventory", "🔄 Transfer Device", "📜 Transfer Log"])
 
 # ========================
 # TAB 1: VIEW INVENTORY
@@ -56,27 +74,41 @@ with tab2:
 
     if st.button("Transfer Now"):
         df_inventory = load_inventory()
-        df_transfer_log = load_transfer_log()
 
-        if serial_number not in df_inventory["Serial Number"].values:
+        if "Serial Number" not in df_inventory.columns:
+            st.error("Inventory file is missing the 'Serial Number' column.")
+        elif serial_number not in df_inventory["Serial Number"].values:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
             idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
-            from_owner = df_inventory.loc[idx, "USER"]
-            device_type = df_inventory.loc[idx, "Device Type"]
-            date_issued = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
+            from_owner = df_inventory.loc[idx, "USER"] if "USER" in df_inventory.columns else "Unknown"
+            device_type = df_inventory.loc[idx, "Device Type"] if "Device Type" in df_inventory.columns else "Unknown"
+            date_issued = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            # Append to TransferLog
-            new_log_entry = pd.DataFrame([{
+            # Update inventory
+            if "USER" in df_inventory.columns:
+                df_inventory.loc[idx, "USER"] = new_owner
+            save_inventory(df_inventory)
+
+            # Log the transfer
+            df_transfer_log = load_transfer_log()
+            new_entry = {
                 "Device Type": device_type,
                 "Serial Number": serial_number,
                 "From owner": from_owner,
                 "To owner": new_owner,
                 "Date issued": date_issued,
                 "Registered by": registered_by
-            }])
-
-            df_transfer_log = pd.concat([df_transfer_log, new_log_entry], ignore_index=True)
+            }
+            df_transfer_log = pd.concat([pd.DataFrame([new_entry]), df_transfer_log], ignore_index=True)
             save_transfer_log(df_transfer_log)
 
-            st.success(f"✅ Transfer Logged in Excel: {from_owner} → {new_owner}")
+            st.success(f"✅ Transfer Successful from {from_owner} to {new_owner}")
+
+# ========================
+# TAB 3: TRANSFER LOG
+# ========================
+with tab3:
+    st.subheader("📜 Transfer Log (Newest First)")
+    df_transfer_log = load_transfer_log()
+    st.dataframe(df_transfer_log)
