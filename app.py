@@ -136,7 +136,7 @@ with tab3:
 
     # Download Transfer Log Excel
     output_log = io.BytesIO()
-    with pd.ExcelWriter(output_log, engine='xlsxwriter') as writer:
+    with pd.ExcelWriter(output_inv, engine='openpyxl') as writer:
         log_df.to_excel(writer, index=False, sheet_name="TransferLog")
     st.download_button(
         label="📥 Download Transfer Log Excel",
