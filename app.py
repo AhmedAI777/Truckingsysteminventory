@@ -1,76 +1,101 @@
 import streamlit as st
+import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
-import pandas as pd
+from datetime import datetime
 
-# ----------------------------
-# GOOGLE SHEETS AUTHENTICATION
-# ----------------------------
-# Load credentials from Streamlit secrets (set in App settings > Secrets)
-creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"])
-client = gspread.authorize(creds)
+# ========================
+# CONFIGURATION
+# ========================
+SHEET_NAME = "Your Google Sheet Name Here"  # Change to your actual sheet name
 
-# Open your sheet
-SHEET_NAME = "truckinventory"  # <-- Change to the exact name of your Google Sheet
+# Scopes for Google Sheets + Drive access
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"
+]
+
+# ========================
+# CONNECT TO GOOGLE SHEETS
+# ========================
+@st.cache_resource
+def get_gsheet_client():
+    creds = Credentials.from_service_account_file("credentials.json", scopes=SCOPES)
+    client = gspread.authorize(creds)
+    return client
+
+client = get_gsheet_client()
 worksheet = client.open(SHEET_NAME).sheet1
 
-
-# ----------------------------
-# FUNCTIONS
-# ----------------------------
-def load_inventory():
-    """Load inventory from Google Sheets into DataFrame."""
+# ========================
+# LOAD DATA
+# ========================
+def load_data():
     data = worksheet.get_all_records()
-    if not data:
-        return pd.DataFrame()
-    return pd.DataFrame(data)
+    df = pd.DataFrame(data)
+    return df
 
-
-def save_inventory(df):
-    """Save DataFrame to Google Sheets."""
+def save_data(df):
     worksheet.clear()
-    worksheet.update([df.columns.tolist()] + df.values.tolist())
+    worksheet.update([df.columns.values.tolist()] + df.values.tolist())
 
-
-# ----------------------------
+# ========================
 # STREAMLIT UI
-# ----------------------------
-st.set_page_config(page_title="Trucking Inventory", layout="wide")
-st.title("🚚 Trucking Inventory System")
+# ========================
+st.set_page_config(page_title="Trucking Inventory System", page_icon="🚚", layout="wide")
+st.title("🚚 Trucking Inventory Management System")
 
-# Load data
-df = load_inventory()
+tab1, tab2 = st.tabs(["📦 View Inventory", "🔄 Transfer Device"])
 
-if df.empty:
-    st.warning("No inventory data found in Google Sheets.")
-else:
+# ========================
+# TAB 1: VIEW INVENTORY
+# ========================
+with tab1:
     st.subheader("Current Inventory")
-    edited_df = st.data_editor(df, num_rows="dynamic")
+    df_inventory = load_data()
+    st.dataframe(df_inventory)
 
-    if st.button("Save Changes to Google Sheets"):
-        save_inventory(edited_df)
-        st.success("✅ Inventory saved successfully to Google Sheets!")
+# ========================
+# TAB 2: TRANSFER DEVICE
+# ========================
+with tab2:
+    st.subheader("Register Ownership Transfer")
 
+    serial_number = st.text_input("Enter Serial Number")
+    new_owner = st.text_input("Enter NEW Owner's Name")
+    registered_by = st.text_input("Registered By (IT Staff)")
 
-# ----------------------------
-# ADD NEW TRANSFER RECORD
-# ----------------------------
-st.subheader("Add Transfer Log")
-with st.form("transfer_form"):
-    serial_number = st.selectbox("Select Serial Number", df["Serial Number"] if not df.empty else [])
-    new_owner = st.text_input("Enter New Owner")
-    registered_by = st.text_input("Registered By")
-    submitted = st.form_submit_button("Submit Transfer")
+    if st.button("Transfer Now"):
+        df_inventory = load_data()
 
-    if submitted:
-        import datetime
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        new_row = {
-            "Serial Number": serial_number,
-            "To owner": new_owner,
-            "Registered By": registered_by,
-            "Date issued": now
-        }
-        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-        save_inventory(df)
-        st.success("✅ Transfer logged successfully!")
+        if serial_number not in df_inventory["Serial Number"].values:
+            st.error(f"Device with Serial Number {serial_number} not found!")
+        else:
+            idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
+            from_owner = df_inventory.loc[idx, "USER"]
+            df_inventory.loc[idx, "Previous User"] = from_owner
+            df_inventory.loc[idx, "USER"] = new_owner
+            df_inventory.loc[idx, "TO"] = new_owner
+
+            # Append to transfer log sheet
+            try:
+                worksheet_log = client.open(SHEET_NAME).worksheet("TransferLog")
+            except gspread.exceptions.WorksheetNotFound:
+                worksheet_log = client.open(SHEET_NAME).add_worksheet(title="TransferLog", rows="1000", cols="10")
+                worksheet_log.append_row(["Device Type", "Serial Number", "From owner", "To owner", "Date issued", "Registered by"])
+
+            device_type = df_inventory.loc[idx, "Device Type"]
+            worksheet_log.append_row([
+                device_type,
+                serial_number,
+                from_owner,
+                new_owner,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                registered_by
+            ])
+
+            # Save updated inventory
+            save_data(df_inventory)
+
+            st.success(f"✅ Transfer Successful from {from_owner} to {new_owner}")
+
