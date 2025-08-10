@@ -1,58 +1,38 @@
 import streamlit as st
 import pandas as pd
-import gspread
-from google.oauth2.service_account import Credentials
 from datetime import datetime
+import os
 
 # ========================
-# Google Sheets Setup
+# Excel File Setup
 # ========================
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
-]
-
-creds = Credentials.from_service_account_info(
-    dict(st.secrets["gcp_service_account"]),
-    scopes=SCOPES
-)
-
-client = gspread.authorize(creds)
-SPREADSHEET_NAME = "truckinventory"
-worksheet = client.open(SPREADSHEET_NAME).sheet1
-
-# ========================
-# Helper Functions
-# ========================
-def normalize_columns(df):
-    """Make all column names lowercase and strip spaces."""
-    df.columns = df.columns.str.strip().str.lower()
-    return df
+INVENTORY_FILE = "truckinventory.xlsx"
+TRANSFER_LOG_FILE = "transferlog.xlsx"
 
 def load_inventory():
-    """Load inventory from the first sheet."""
-    data = worksheet.get_all_records()
-    df = pd.DataFrame(data)
-    return normalize_columns(df)
+    if os.path.exists(INVENTORY_FILE):
+        return pd.read_excel(INVENTORY_FILE)
+    else:
+        st.error(f"Inventory file '{INVENTORY_FILE}' not found!")
+        return pd.DataFrame()
 
-def get_transfer_log_sheet():
-    """Get or create the TransferLog worksheet."""
-    ss = client.open(SPREADSHEET_NAME)
-    try:
-        return ss.worksheet("TransferLog")
-    except gspread.exceptions.WorksheetNotFound:
-        ws = ss.add_worksheet(title="TransferLog", rows="1000", cols="10")
-        ws.append_row([
-            "Device Type", "Serial Number", "From owner", "To owner",
-            "Date issued", "Registered by"
-        ])
-        return ws
+def load_transfer_log():
+    if os.path.exists(TRANSFER_LOG_FILE):
+        return pd.read_excel(TRANSFER_LOG_FILE)
+    else:
+        # Create new transfer log if it doesn't exist
+        df = pd.DataFrame(columns=["Device Type", "Serial Number", "From owner", "To owner", "Date issued", "Registered by"])
+        df.to_excel(TRANSFER_LOG_FILE, index=False)
+        return df
+
+def save_transfer_log(df):
+    df.to_excel(TRANSFER_LOG_FILE, index=False)
 
 # ========================
 # STREAMLIT UI
 # ========================
 st.set_page_config(page_title="Trucking Inventory System", page_icon="🚚", layout="wide")
-st.title("🚚 Trucking Inventory Management System")
+st.title("🚚 Trucking Inventory Management System (Excel Version)")
 
 tab1, tab2 = st.tabs(["📦 View Inventory", "🔄 Transfer Device"])
 
@@ -76,24 +56,27 @@ with tab2:
 
     if st.button("Transfer Now"):
         df_inventory = load_inventory()
+        df_transfer_log = load_transfer_log()
 
         if serial_number not in df_inventory["Serial Number"].values:
-            st.error(f"Device with Serial Number {Serial_Number} not found!")
+            st.error(f"Device with Serial Number {serial_number} not found!")
         else:
-            idx = df_inventory[df_inventory["Serial Number"] == Serial_Number].index[0]
-            from_owner = df_inventory.loc[idx, "user"]  # normalized lowercase
-            device_type = df_inventory.loc[idx, "device type"]
+            idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
+            from_owner = df_inventory.loc[idx, "USER"]
+            device_type = df_inventory.loc[idx, "Device Type"]
             date_issued = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
 
-            # Append to TransferLog sheet
-            log_ws = get_transfer_log_sheet()
-            log_ws.append_row([
-                device_type,
-                serial_number,
-                from_owner,
-                new_owner,
-                date_issued,
-                registered_by
-            ])
+            # Append to TransferLog
+            new_log_entry = pd.DataFrame([{
+                "Device Type": device_type,
+                "Serial Number": serial_number,
+                "From owner": from_owner,
+                "To owner": new_owner,
+                "Date issued": date_issued,
+                "Registered by": registered_by
+            }])
 
-            st.success(f"✅ Transfer Logged: {from_owner} → {new_owner}")
+            df_transfer_log = pd.concat([df_transfer_log, new_log_entry], ignore_index=True)
+            save_transfer_log(df_transfer_log)
+
+            st.success(f"✅ Transfer Logged in Excel: {from_owner} → {new_owner}")
