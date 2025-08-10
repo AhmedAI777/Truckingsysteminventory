@@ -6,26 +6,29 @@ from datetime import datetime
 import json
 from google.oauth2.service_account import Credentials
 
-
-# ========================
-# CONFIGURATION
-# ========================
-SHEET_NAME = "truckinventory"  # Change to your actual sheet name
-
-# Google Sheets + Drive API scopes
+# Google Sheets scopes
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive"
 ]
 
-# Load credentials from Streamlit Secrets
+# Authenticate using credentials stored in Streamlit Secrets
 creds = Credentials.from_service_account_info(
     dict(st.secrets["gcp_service_account"]),
     scopes=SCOPES
 )
 
-client = get_gsheet_client()
+# Authorize the gspread client
+client = gspread.authorize(creds)
+
+# Your spreadsheet name
+SHEET_NAME = "TruckInventory"
 worksheet = client.open(SHEET_NAME).sheet1
+
+# Example: Read all data
+data = worksheet.get_all_records()
+st.write("Google Sheet Data:", data)
+
 
 # ========================
 # LOAD DATA
