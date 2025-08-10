@@ -22,7 +22,7 @@ creds = Credentials.from_service_account_info(
 client = gspread.authorize(creds)
 
 # Your spreadsheet name
-SHEET_NAME = "TruckInventory"
+SHEET_NAME = "truckinventory"
 worksheet = client.open(SHEET_NAME).sheet1
 
 # Example: Read all data
