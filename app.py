@@ -67,7 +67,7 @@ with tab2:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
             idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
-            from_owner = df_inventory.loc[idx, "From owner"] if "From owner" in df_inventory.columns else df_inventory.loc[idx, "USER"]
+            from_owner = df_inventory.loc[idx, "From owner"] if "From owner" in df_inventory.columns else df_inventory.loc[idx, "To owner"]
             device_type = df_inventory.loc[idx, "Device Type"]
 
             # Update inventory
