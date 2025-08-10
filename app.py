@@ -18,70 +18,38 @@ creds = Credentials.from_service_account_info(
     scopes=SCOPES
 )
 
+# Authorize the gspread client
 client = gspread.authorize(creds)
 
-# Spreadsheet
+# Spreadsheet and Worksheet
 SPREADSHEET_NAME = "truckinventory"
-worksheet = client.open(SPREADSHEET_NAME).sheet1  # Inventory sheet
+worksheet = client.open(SPREADSHEET_NAME).sheet1  # First sheet
 
 # ========================
 # Helper Functions
 # ========================
-def normalize_columns(df):
-    """Make column names lowercase, strip spaces, and replace spaces with underscores."""
-    df.columns = (
-        df.columns.str.strip()
-                  .str.lower()
-                  .str.replace(" ", "_")
-    )
-    return df
-
-def ensure_required_columns(df):
-    """Ensure required columns exist."""
-    required_cols = ["device_type", "serial_number", "from_owner", "to_owner", "date_issued", "registered_by"]
-    for col in required_cols:
-        if col not in df.columns:
-            df[col] = ""
-    return df
-
-def load_inventory():
-    """Load inventory from Google Sheets."""
+def load_data():
+    """Load inventory sheet as DataFrame."""
     data = worksheet.get_all_records()
-    df = pd.DataFrame(data)
-    df = normalize_columns(df)
-    df = ensure_required_columns(df)
-    return df
+    return pd.DataFrame(data)
 
-def save_inventory(df):
-    """Save inventory back to Google Sheets."""
+def save_data(df):
+    """Overwrite inventory sheet with updated DataFrame."""
     worksheet.clear()
-    worksheet.update([df.columns.tolist()] + df.values.tolist())
+    worksheet.update([df.columns.values.tolist()] + df.values.tolist())
 
 def get_transfer_log_sheet():
-    """Get or create TransferLog sheet."""
+    """Get or create TransferLog worksheet."""
+    ss = client.open(SPREADSHEET_NAME)
     try:
-        ws = client.open(SPREADSHEET_NAME).worksheet("TransferLog")
+        return ss.worksheet("TransferLog")
     except gspread.exceptions.WorksheetNotFound:
-        ws = client.open(SPREADSHEET_NAME).add_worksheet(
-            title="TransferLog", rows="1000", cols="10"
-        )
+        ws = ss.add_worksheet(title="TransferLog", rows="1000", cols="10")
         ws.append_row([
             "Device Type", "Serial Number", "From owner", "To owner",
             "Date issued", "Registered by"
         ])
-    return ws
-
-def append_to_transfer_log(device_type, serial_number, from_owner, to_owner, registered_by):
-    """Append a single row to the TransferLog sheet without deleting history."""
-    log_ws = get_transfer_log_sheet()
-    log_ws.append_row([
-        device_type,
-        serial_number,
-        from_owner,
-        to_owner,
-        datetime.now().strftime("%m/%d/%Y %H:%M:%S"),
-        registered_by
-    ])
+        return ws
 
 # ========================
 # STREAMLIT UI
@@ -96,7 +64,7 @@ tab1, tab2 = st.tabs(["📦 View Inventory", "🔄 Transfer Device"])
 # ========================
 with tab1:
     st.subheader("Current Inventory")
-    df_inventory = load_inventory()
+    df_inventory = load_data()
     st.dataframe(df_inventory)
 
 # ========================
@@ -105,30 +73,36 @@ with tab1:
 with tab2:
     st.subheader("Register Ownership Transfer")
 
-    serial_number = st.text_input("Enter Serial Number").strip()
-    new_owner = st.text_input("Enter NEW Owner's Name").strip()
-    registered_by = st.text_input("Registered By (IT Staff)").strip()
+    serial_number = st.text_input("Enter Serial Number")
+    new_owner = st.text_input("Enter NEW Owner's Name")
+    registered_by = st.text_input("Registered By (IT Staff)")
 
     if st.button("Transfer Now"):
-        df_inventory = load_inventory()
+        df_inventory = load_data()
 
-        if serial_number not in df_inventory["serial_number"].values:
+        if serial_number not in df_inventory["Serial Number"].values:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
-            idx = df_inventory[df_inventory["serial_number"] == serial_number].index[0]
-            from_owner = df_inventory.loc[idx, "to_owner"]
+            idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
+            from_owner = df_inventory.loc[idx, "To owner"]  # Ensure this matches your sheet's column name
+            df_inventory.loc[idx, "From owner"] = from_owner
+            df_inventory.loc[idx, "To owner"] = new_owner
+            date_issued = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
+            df_inventory.loc[idx, "Date issued"] = date_issued
+            df_inventory.loc[idx, "Registered by"] = registered_by
 
-            # Update main inventory
-            df_inventory.loc[idx, "from_owner"] = from_owner
-            df_inventory.loc[idx, "to_owner"] = new_owner
-            df_inventory.loc[idx, "date_issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
-            df_inventory.loc[idx, "registered_by"] = registered_by
-
-            # Append to log sheet
-            device_type = df_inventory.loc[idx, "device_type"]
-            append_to_transfer_log(device_type, serial_number, from_owner, new_owner, registered_by)
+            # Append transfer log BEFORE saving inventory changes
+            log_ws = get_transfer_log_sheet()
+            log_ws.append_row([
+                df_inventory.loc[idx, "Device Type"],
+                serial_number,
+                from_owner,
+                new_owner,
+                date_issued,
+                registered_by
+            ])
 
             # Save updated inventory
-            save_inventory(df_inventory)
+            save_data(df_inventory)
 
             st.success(f"✅ Transfer Successful from {from_owner} to {new_owner}")
