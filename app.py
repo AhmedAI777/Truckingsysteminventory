@@ -63,12 +63,19 @@ with tab2:
         df_inventory = load_inventory()
         df_log = load_transfer_log()
 
-      # Check last owner from transfer log first
-previous_transfers = df_log[df_log["Serial Number"] == serial_number]
-if not previous_transfers.empty:
-    from_owner = previous_transfers.iloc[-1]["To owner"]
-else:
-    from_owner = df_inventory.loc[idx, "USER"]
+        if serial_number not in df_inventory["Serial Number"].values:
+            st.error(f"Device with Serial Number {serial_number} not found!")
+        else:
+            idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
+            
+            # ✅ FIX: Remember last transfer
+            previous_transfers = df_log[df_log["Serial Number"] == serial_number]
+            if not previous_transfers.empty:
+                from_owner = previous_transfers.iloc[-1]["To owner"]
+            else:
+                from_owner = df_inventory.loc[idx, "USER"]
+
+            device_type = df_inventory.loc[idx, "Device Type"]
 
             # Update inventory
             df_inventory.loc[idx, "From owner"] = from_owner
@@ -76,7 +83,7 @@ else:
             df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             df_inventory.loc[idx, "Registered by"] = registered_by
 
-            # Append to transfer log with numbering
+            # Append to transfer log
             log_entry = {
                 "Device Type": device_type,
                 "Serial Number": serial_number,
