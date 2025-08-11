@@ -650,16 +650,14 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 from io import BytesIO
+import json
 import os
 import shutil
 
 # ========================
-# Users (plain text passwords)
+# Load Users from Secrets
 # ========================
-USERS = [
-    {"username": "admin1", "password": "adminpass", "role": "admin"},
-    {"username": "staff1", "password": "staffpass", "role": "staff"}
-]
+USERS = json.loads(st.secrets["users_json"])
 
 # ========================
 # File Paths
@@ -672,17 +670,24 @@ os.makedirs(BACKUP_FOLDER, exist_ok=True)
 # ========================
 # Helper Functions
 # ========================
+def normalize_dates(df):
+    """Ensure Date issued column is always string formatted."""
+    if "Date issued" in df.columns:
+        df["Date issued"] = pd.to_datetime(df["Date issued"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M:%S")
+    return df
+
 def backup_file(file_path):
+    """Create timestamped backup of a file."""
     if os.path.exists(file_path):
         backup_name = f"{BACKUP_FOLDER}/{os.path.basename(file_path).split('.')[0]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         shutil.copy(file_path, backup_name)
 
 def load_inventory():
-    return pd.read_excel(INVENTORY_FILE)
+    return normalize_dates(pd.read_excel(INVENTORY_FILE))
 
 def load_transfer_log():
     try:
-        return pd.read_excel(TRANSFER_LOG_FILE)
+        return normalize_dates(pd.read_excel(TRANSFER_LOG_FILE))
     except FileNotFoundError:
         df = pd.DataFrame(columns=[
             "Device Type", "Serial Number", "From owner", "To owner",
@@ -693,13 +698,16 @@ def load_transfer_log():
 
 def save_inventory(df):
     backup_file(INVENTORY_FILE)
+    df = normalize_dates(df)
     df.to_excel(INVENTORY_FILE, index=False)
 
 def save_transfer_log(df):
     backup_file(TRANSFER_LOG_FILE)
+    df = normalize_dates(df)
     df.to_excel(TRANSFER_LOG_FILE, index=False)
 
 def check_credentials(username, password):
+    """Verify username and password."""
     for user in USERS:
         if user["username"] == username and user["password"] == password:
             return user["role"]
@@ -738,7 +746,7 @@ if not st.session_state.authenticated:
 tabs = ["📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
 if st.session_state.role == "admin":
     tabs.append("⚙ Manage Users")
-    tabs.append("⬇ Export Files")
+tabs.append("⬇ Export Files")
 
 tab_objects = st.tabs(tabs)
 
@@ -774,7 +782,7 @@ with tab_objects[1]:
             # Update inventory
             df_inventory.loc[idx, "From owner"] = from_owner
             df_inventory.loc[idx, "To owner"] = new_owner
-            df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
+            df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             df_inventory.loc[idx, "Registered by"] = registered_by
 
             # Append to transfer log
@@ -783,11 +791,12 @@ with tab_objects[1]:
                 "Serial Number": serial_number,
                 "From owner": from_owner,
                 "To owner": new_owner,
-                "Date issued": datetime.now().strftime("%m/%d/%Y %H:%M:%S"),
+                "Date issued": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "Registered by": registered_by
             }
             df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
 
+            # Save updated files
             save_inventory(df_inventory)
             save_transfer_log(df_log)
 
@@ -800,35 +809,36 @@ with tab_objects[2]:
     st.dataframe(df_log)
 
 # TAB 4 – Manage Users (Admin only)
-if st.session_state.role == "admin" and len(tab_objects) > 3:
+if st.session_state.role == "admin":
     with tab_objects[3]:
         st.subheader("User Management")
         st.info("Coming soon: Admin tools for adding/removing users")
 
-# TAB 5 – Export Files (Admin only)
-if st.session_state.role == "admin" and "⬇ Export Files" in tabs:
-    with tab_objects[-1]:
-        st.subheader("Download Updated Files")
+# Last Tab – Export Files
+export_tab_index = -1 if st.session_state.role != "admin" else -1
+with tab_objects[export_tab_index]:
+    st.subheader("Download Updated Files")
 
-        # Inventory
-        output_inv = BytesIO()
-        with pd.ExcelWriter(output_inv, engine="openpyxl") as writer:
-            df_inventory.to_excel(writer, index=False)
-        st.download_button(
-            label="⬇ Download Inventory",
-            data=output_inv.getvalue(),
-            file_name="truckinventory_updated.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    # Inventory
+    output_inv = BytesIO()
+    with pd.ExcelWriter(output_inv, engine="openpyxl") as writer:
+        df_inventory.to_excel(writer, index=False)
+    st.download_button(
+        label="⬇ Download Inventory",
+        data=output_inv.getvalue(),
+        file_name="truckinventory_updated.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
-        # Transfer Log
-        df_log = load_transfer_log()
-        output_log = BytesIO()
-        with pd.ExcelWriter(output_log, engine="openpyxl") as writer:
-            df_log.to_excel(writer, index=False)
-        st.download_button(
-            label="⬇ Download Transfer Log",
-            data=output_log.getvalue(),
-            file_name="transferlog_updated.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    # Transfer Log
+    df_log = load_transfer_log()
+    output_log = BytesIO()
+    with pd.ExcelWriter(output_log, engine="openpyxl") as writer:
+        df_log.to_excel(writer, index=False)
+    st.download_button(
+        label="⬇ Download Transfer Log",
+        data=output_log.getvalue(),
+        file_name="transferlog_updated.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
