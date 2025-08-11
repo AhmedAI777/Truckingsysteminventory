@@ -134,33 +134,18 @@
 #     )
 
 
-
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 from io import BytesIO
-import os
-import shutil
 
 # ========================
-# SECURITY: Simple password login
+# PASSWORD PROTECTION
 # ========================
-PASSWORD = st.secrets.get("app_password", "admin123")  # set in secrets.toml
-
-st.set_page_config(page_title="Trucking Inventory System", page_icon="🚚", layout="wide")
-st.title("🚚 Trucking Inventory Management System")
-
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if not st.session_state.authenticated:
-    entered_password = st.text_input("Enter system password", type="password")
-    if st.button("Login"):
-        if entered_password == PASSWORD:
-            st.session_state.authenticated = True
-            st.experimental_rerun()
-        else:
-            st.error("❌ Incorrect password")
+APP_PASSWORD = st.secrets["mysecurepass123"]  # From secrets.toml or Cloud Secrets
+password = st.text_input("🔒 Enter App Password", type="password")
+if password != APP_PASSWORD:
+    st.error("❌ Incorrect password")
     st.stop()
 
 # ========================
@@ -168,18 +153,10 @@ if not st.session_state.authenticated:
 # ========================
 INVENTORY_FILE = "truckinventory.xlsx"
 TRANSFER_LOG_FILE = "transferlog.xlsx"
-BACKUP_FOLDER = "backups"
-os.makedirs(BACKUP_FOLDER, exist_ok=True)
 
 # ========================
-# Helper Functions
+# Load Data
 # ========================
-def backup_file(file_path):
-    """Create timestamped backup of a file."""
-    if os.path.exists(file_path):
-        backup_name = f"{BACKUP_FOLDER}/{os.path.basename(file_path).split('.')[0]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        shutil.copy(file_path, backup_name)
-
 def load_inventory():
     return pd.read_excel(INVENTORY_FILE)
 
@@ -195,16 +172,17 @@ def load_transfer_log():
         return df
 
 def save_inventory(df):
-    backup_file(INVENTORY_FILE)
     df.to_excel(INVENTORY_FILE, index=False)
 
 def save_transfer_log(df):
-    backup_file(TRANSFER_LOG_FILE)
     df.to_excel(TRANSFER_LOG_FILE, index=False)
 
 # ========================
-# Streamlit Tabs
+# Streamlit App
 # ========================
+st.set_page_config(page_title="Trucking Inventory System", page_icon="🚚", layout="wide")
+st.title("🚚 Trucking Inventory Management System")
+
 tab1, tab2, tab3, tab4 = st.tabs([
     "📦 View Inventory", 
     "🔄 Transfer Device", 
@@ -227,10 +205,6 @@ with tab2:
     registered_by = st.text_input("Registered By (IT Staff)")
 
     if st.button("Transfer Now"):
-        if not serial_number.strip() or not new_owner.strip() or not registered_by.strip():
-            st.error("⚠ All fields are required.")
-            st.stop()
-
         df_inventory = load_inventory()
         df_log = load_transfer_log()
 
@@ -258,7 +232,7 @@ with tab2:
             }
             df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
 
-            # Save updated files
+            # Save both files
             save_inventory(df_inventory)
             save_transfer_log(df_log)
 
@@ -274,7 +248,7 @@ with tab3:
 with tab4:
     st.subheader("Download Updated Files")
 
-    # Inventory download
+    # Export inventory
     output_inv = BytesIO()
     with pd.ExcelWriter(output_inv, engine="openpyxl") as writer:
         df_inventory.to_excel(writer, index=False)
@@ -285,7 +259,7 @@ with tab4:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # Transfer log download
+    # Export transfer log
     df_log = load_transfer_log()
     output_log = BytesIO()
     with pd.ExcelWriter(output_log, engine="openpyxl") as writer:
