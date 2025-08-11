@@ -659,11 +659,9 @@ import os
 import shutil
 
 # ========================
-# Load Users & Roles
+# Load Users from Secrets
 # ========================
-USERS_FILE = "users_json"
-with open(USERS_FILE, "r") as f:
-    USERS = json.load(f)
+USERS = json.loads(st.secrets["users_json"])
 
 # ========================
 # File Paths
@@ -734,7 +732,7 @@ if not st.session_state.authenticated:
             st.session_state.authenticated = True
             st.session_state.role = role
             st.success(f"✅ Logged in as {username} ({role})")
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.error("❌ Invalid username or password")
     st.stop()
@@ -747,16 +745,16 @@ if st.session_state.role == "admin":
     tabs.append("⚙ Manage Users")
 tabs.append("⬇ Export Files")
 
-tab1, tab2, tab3, *rest = st.tabs(tabs)
+tab_objects = st.tabs(tabs)
 
 # TAB 1 – View Inventory
-with tab1:
+with tab_objects[0]:
     st.subheader("Current Inventory")
     df_inventory = load_inventory()
     st.dataframe(df_inventory)
 
 # TAB 2 – Transfer Device
-with tab2:
+with tab_objects[1]:
     st.subheader("Register Ownership Transfer")
 
     serial_number = st.text_input("Enter Serial Number")
@@ -802,19 +800,20 @@ with tab2:
             st.success(f"✅ Transfer logged: {from_owner} → {new_owner}")
 
 # TAB 3 – View Transfer Log
-with tab3:
+with tab_objects[2]:
     st.subheader("Transfer Log History")
     df_log = load_transfer_log()
     st.dataframe(df_log)
 
 # TAB 4 – Manage Users (Admin only)
 if st.session_state.role == "admin":
-    with rest[0]:
+    with tab_objects[3]:
         st.subheader("User Management")
         st.info("Coming soon: Admin tools for adding/removing users")
 
 # Last Tab – Export Files
-with rest[-1] if st.session_state.role == "admin" else rest[0]:
+export_tab_index = -1 if st.session_state.role != "admin" else -1
+with tab_objects[export_tab_index]:
     st.subheader("Download Updated Files")
 
     # Inventory
