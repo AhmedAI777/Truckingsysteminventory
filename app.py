@@ -142,7 +142,7 @@ from io import BytesIO
 # ========================
 # PASSWORD PROTECTION
 # ========================
-APP_PASSWORD = st.secrets["mysecurepass123"]  # From secrets.toml or Cloud Secrets
+APP_PASSWORD = st.secrets["app_password"]  # From secrets.toml or Cloud Secrets
 password = st.text_input("🔒 Enter App Password", type="password")
 if password != APP_PASSWORD:
     st.error("❌ Incorrect password")
