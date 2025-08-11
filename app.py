@@ -646,21 +646,20 @@
 #             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 #         )
 
-
-
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 from io import BytesIO
-import bcrypt
-import json
 import os
 import shutil
 
 # ========================
-# Load Users from Secrets
+# Users (plain text passwords)
 # ========================
-USERS = json.loads(st.secrets["users_json"])
+USERS = [
+    {"username": "admin1", "password": "adminpass", "role": "admin"},
+    {"username": "staff1", "password": "staffpass", "role": "staff"}
+]
 
 # ========================
 # File Paths
@@ -674,7 +673,6 @@ os.makedirs(BACKUP_FOLDER, exist_ok=True)
 # Helper Functions
 # ========================
 def backup_file(file_path):
-    """Create timestamped backup of a file."""
     if os.path.exists(file_path):
         backup_name = f"{BACKUP_FOLDER}/{os.path.basename(file_path).split('.')[0]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         shutil.copy(file_path, backup_name)
@@ -702,11 +700,9 @@ def save_transfer_log(df):
     df.to_excel(TRANSFER_LOG_FILE, index=False)
 
 def check_credentials(username, password):
-    """Verify username and password."""
     for user in USERS:
-        if user["username"] == username:
-            if bcrypt.checkpw(password.encode(), user["password"].encode()):
-                return user["role"]
+        if user["username"] == username and user["password"] == password:
+            return user["role"]
     return None
 
 # ========================
@@ -742,7 +738,7 @@ if not st.session_state.authenticated:
 tabs = ["📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
 if st.session_state.role == "admin":
     tabs.append("⚙ Manage Users")
-tabs.append("⬇ Export Files")
+    tabs.append("⬇ Export Files")
 
 tab_objects = st.tabs(tabs)
 
@@ -792,7 +788,6 @@ with tab_objects[1]:
             }
             df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
 
-            # Save updated files
             save_inventory(df_inventory)
             save_transfer_log(df_log)
 
@@ -805,35 +800,35 @@ with tab_objects[2]:
     st.dataframe(df_log)
 
 # TAB 4 – Manage Users (Admin only)
-if st.session_state.role == "admin":
+if st.session_state.role == "admin" and len(tab_objects) > 3:
     with tab_objects[3]:
         st.subheader("User Management")
         st.info("Coming soon: Admin tools for adding/removing users")
 
-# Last Tab – Export Files
-export_tab_index = -1 if st.session_state.role != "admin" else -1
-with tab_objects[export_tab_index]:
-    st.subheader("Download Updated Files")
+# TAB 5 – Export Files (Admin only)
+if st.session_state.role == "admin" and "⬇ Export Files" in tabs:
+    with tab_objects[-1]:
+        st.subheader("Download Updated Files")
 
-    # Inventory
-    output_inv = BytesIO()
-    with pd.ExcelWriter(output_inv, engine="openpyxl") as writer:
-        df_inventory.to_excel(writer, index=False)
-    st.download_button(
-        label="⬇ Download Inventory",
-        data=output_inv.getvalue(),
-        file_name="truckinventory_updated.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        # Inventory
+        output_inv = BytesIO()
+        with pd.ExcelWriter(output_inv, engine="openpyxl") as writer:
+            df_inventory.to_excel(writer, index=False)
+        st.download_button(
+            label="⬇ Download Inventory",
+            data=output_inv.getvalue(),
+            file_name="truckinventory_updated.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
-    # Transfer Log
-    df_log = load_transfer_log()
-    output_log = BytesIO()
-    with pd.ExcelWriter(output_log, engine="openpyxl") as writer:
-        df_log.to_excel(writer, index=False)
-    st.download_button(
-        label="⬇ Download Transfer Log",
-        data=output_log.getvalue(),
-        file_name="transferlog_updated.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        # Transfer Log
+        df_log = load_transfer_log()
+        output_log = BytesIO()
+        with pd.ExcelWriter(output_log, engine="openpyxl") as writer:
+            df_log.to_excel(writer, index=False)
+        st.download_button(
+            label="⬇ Download Transfer Log",
+            data=output_log.getvalue(),
+            file_name="transferlog_updated.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
