@@ -1,1 +1,14 @@
-
+users_json = """
+[
+    {
+        "username": "admin1",
+        "password": "$2b$12$F91C3y8cF2P6YH1Zaj2sWe3YUNafFZURT3v0Jf3ZQmYDyCqtZtFda",
+        "role": "admin"
+    },
+    {
+        "username": "staff1",
+        "password": "$2b$12$5vbcqAasO9xxCBlG2YYHX.F7mwXzrxPgKgKftq9n8NGUpbtFQ8Qwi",
+        "role": "staff"
+    }
+]
+"""
