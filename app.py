@@ -645,7 +645,6 @@
 #             file_name="transferlog_updated.xlsx",
 #             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 #         )
-
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -670,40 +669,42 @@ os.makedirs(BACKUP_FOLDER, exist_ok=True)
 # ========================
 # Helper Functions
 # ========================
-def normalize_dates(df):
-    """Ensure Date issued column is always string formatted."""
-    if "Date issued" in df.columns:
-        df["Date issued"] = pd.to_datetime(df["Date issued"], errors="coerce").dt.strftime("%Y-%m-%d %H:%M:%S")
-    return df
-
 def backup_file(file_path):
     """Create timestamped backup of a file."""
     if os.path.exists(file_path):
         backup_name = f"{BACKUP_FOLDER}/{os.path.basename(file_path).split('.')[0]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
         shutil.copy(file_path, backup_name)
 
+def normalize_columns_for_display(df):
+    """Convert object/mixed columns to strings to prevent ArrowTypeError."""
+    for col in df.columns:
+        if df[col].dtype == "object" or str(df[col].dtype).startswith("datetime"):
+            df[col] = df[col].astype(str)
+    return df
+
 def load_inventory():
-    return normalize_dates(pd.read_excel(INVENTORY_FILE))
+    df = pd.read_excel(INVENTORY_FILE)
+    return normalize_columns_for_display(df)
 
 def load_transfer_log():
     try:
-        return normalize_dates(pd.read_excel(TRANSFER_LOG_FILE))
+        df = pd.read_excel(TRANSFER_LOG_FILE)
     except FileNotFoundError:
         df = pd.DataFrame(columns=[
             "Device Type", "Serial Number", "From owner", "To owner",
             "Date issued", "Registered by"
         ])
         df.to_excel(TRANSFER_LOG_FILE, index=False)
-        return df
+    return normalize_columns_for_display(df)
 
 def save_inventory(df):
     backup_file(INVENTORY_FILE)
-    df = normalize_dates(df)
+    df = normalize_columns_for_display(df)
     df.to_excel(INVENTORY_FILE, index=False)
 
 def save_transfer_log(df):
     backup_file(TRANSFER_LOG_FILE)
-    df = normalize_dates(df)
+    df = normalize_columns_for_display(df)
     df.to_excel(TRANSFER_LOG_FILE, index=False)
 
 def check_credentials(username, password):
@@ -782,7 +783,7 @@ with tab_objects[1]:
             # Update inventory
             df_inventory.loc[idx, "From owner"] = from_owner
             df_inventory.loc[idx, "To owner"] = new_owner
-            df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             df_inventory.loc[idx, "Registered by"] = registered_by
 
             # Append to transfer log
@@ -791,7 +792,7 @@ with tab_objects[1]:
                 "Serial Number": serial_number,
                 "From owner": from_owner,
                 "To owner": new_owner,
-                "Date issued": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "Date issued": datetime.now().strftime("%m/%d/%Y %H:%M:%S"),
                 "Registered by": registered_by
             }
             df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
@@ -841,4 +842,3 @@ with tab_objects[export_tab_index]:
         file_name="transferlog_updated.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
