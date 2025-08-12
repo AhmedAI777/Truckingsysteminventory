@@ -676,7 +676,7 @@ def backup_file(file_path):
         shutil.copy(file_path, backup_name)
 
 def normalize_columns_for_display(df):
-    """Convert object/mixed columns to strings to prevent ArrowTypeError."""
+    """Convert problematic columns to strings to avoid ArrowTypeError."""
     for col in df.columns:
         if df[col].dtype == "object" or str(df[col].dtype).startswith("datetime"):
             df[col] = df[col].astype(str)
@@ -708,7 +708,7 @@ def save_transfer_log(df):
     df.to_excel(TRANSFER_LOG_FILE, index=False)
 
 def check_credentials(username, password):
-    """Verify username and password."""
+    """Verify username and password (plain text)."""
     for user in USERS:
         if user["username"] == username and user["password"] == password:
             return user["role"]
@@ -745,19 +745,24 @@ if not st.session_state.authenticated:
 # Tabs
 # ========================
 tabs = ["📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
+
 if st.session_state.role == "admin":
     tabs.append("⚙ Manage Users")
-tabs.append("⬇ Export Files")
+    tabs.append("⬇ Export Files")  # Only admins can see exports
 
 tab_objects = st.tabs(tabs)
 
+# ========================
 # TAB 1 – View Inventory
+# ========================
 with tab_objects[0]:
     st.subheader("Current Inventory")
     df_inventory = load_inventory()
     st.dataframe(df_inventory)
 
+# ========================
 # TAB 2 – Transfer Device
+# ========================
 with tab_objects[1]:
     st.subheader("Register Ownership Transfer")
 
@@ -777,11 +782,20 @@ with tab_objects[1]:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
             idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
-            from_owner = df_inventory.loc[idx, "From owner"] if "From owner" in df_inventory.columns else df_inventory.loc[idx, "USER"]
+
+            # Get last owner (either from To owner or USER column)
+            if "To owner" in df_inventory.columns and pd.notna(df_inventory.loc[idx, "To owner"]):
+                from_owner = df_inventory.loc[idx, "To owner"]
+            elif "USER" in df_inventory.columns and pd.notna(df_inventory.loc[idx, "USER"]):
+                from_owner = df_inventory.loc[idx, "USER"]
+            else:
+                from_owner = "Unknown"
+
             device_type = df_inventory.loc[idx, "Device Type"]
 
             # Update inventory
-            df_inventory.loc[idx, "From owner"] = from_owner
+            df_inventory.loc[idx, "Previous User"] = from_owner
+            df_inventory.loc[idx, "USER"] = new_owner
             df_inventory.loc[idx, "To owner"] = new_owner
             df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             df_inventory.loc[idx, "Registered by"] = registered_by
@@ -803,42 +817,48 @@ with tab_objects[1]:
 
             st.success(f"✅ Transfer logged: {from_owner} → {new_owner}")
 
+# ========================
 # TAB 3 – View Transfer Log
+# ========================
 with tab_objects[2]:
     st.subheader("Transfer Log History")
     df_log = load_transfer_log()
     st.dataframe(df_log)
 
+# ========================
 # TAB 4 – Manage Users (Admin only)
+# ========================
 if st.session_state.role == "admin":
     with tab_objects[3]:
         st.subheader("User Management")
         st.info("Coming soon: Admin tools for adding/removing users")
 
-# Last Tab – Export Files
-export_tab_index = -1 if st.session_state.role != "admin" else -1
-with tab_objects[export_tab_index]:
-    st.subheader("Download Updated Files")
+# ========================
+# TAB 5 – Export Files (Admins only)
+# ========================
+if st.session_state.role == "admin":
+    with tab_objects[-1]:
+        st.subheader("Download Updated Files")
 
-    # Inventory
-    output_inv = BytesIO()
-    with pd.ExcelWriter(output_inv, engine="openpyxl") as writer:
-        df_inventory.to_excel(writer, index=False)
-    st.download_button(
-        label="⬇ Download Inventory",
-        data=output_inv.getvalue(),
-        file_name="truckinventory_updated.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        # Inventory
+        output_inv = BytesIO()
+        with pd.ExcelWriter(output_inv, engine="openpyxl") as writer:
+            df_inventory.to_excel(writer, index=False)
+        st.download_button(
+            label="⬇ Download Inventory",
+            data=output_inv.getvalue(),
+            file_name="truckinventory_updated.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
-    # Transfer Log
-    df_log = load_transfer_log()
-    output_log = BytesIO()
-    with pd.ExcelWriter(output_log, engine="openpyxl") as writer:
-        df_log.to_excel(writer, index=False)
-    st.download_button(
-        label="⬇ Download Transfer Log",
-        data=output_log.getvalue(),
-        file_name="transferlog_updated.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        # Transfer Log
+        df_log = load_transfer_log()
+        output_log = BytesIO()
+        with pd.ExcelWriter(output_log, engine="openpyxl") as writer:
+            df_log.to_excel(writer, index=False)
+        st.download_button(
+            label="⬇ Download Transfer Log",
+            data=output_log.getvalue(),
+            file_name="transferlog_updated.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
