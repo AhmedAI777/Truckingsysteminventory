@@ -676,7 +676,7 @@ def backup_file(file_path):
         shutil.copy(file_path, backup_name)
 
 def normalize_columns_for_display(df):
-    """Convert problematic columns to strings to avoid ArrowTypeError."""
+    """Convert object/mixed columns to strings to prevent ArrowTypeError."""
     for col in df.columns:
         if df[col].dtype == "object" or str(df[col].dtype).startswith("datetime"):
             df[col] = df[col].astype(str)
@@ -708,7 +708,7 @@ def save_transfer_log(df):
     df.to_excel(TRANSFER_LOG_FILE, index=False)
 
 def check_credentials(username, password):
-    """Verify username and password (plain text)."""
+    """Verify username and password."""
     for user in USERS:
         if user["username"] == username and user["password"] == password:
             return user["role"]
@@ -726,6 +726,7 @@ st.title("🚚 Trucking Inventory Management System")
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.role = None
+    st.session_state.username = None
 
 if not st.session_state.authenticated:
     username = st.text_input("Username")
@@ -735,6 +736,7 @@ if not st.session_state.authenticated:
         if role:
             st.session_state.authenticated = True
             st.session_state.role = role
+            st.session_state.username = username
             st.success(f"✅ Logged in as {username} ({role})")
             st.rerun()
         else:
@@ -745,33 +747,30 @@ if not st.session_state.authenticated:
 # Tabs
 # ========================
 tabs = ["📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
-
 if st.session_state.role == "admin":
-    tabs.append("⚙ Manage Users")
-    tabs.append("⬇ Export Files")  # Only admins can see exports
+    tabs.append("⬇ Export Files")  # Export tab only for admins
 
 tab_objects = st.tabs(tabs)
 
-# ========================
 # TAB 1 – View Inventory
-# ========================
 with tab_objects[0]:
     st.subheader("Current Inventory")
     df_inventory = load_inventory()
-    st.dataframe(df_inventory)
+    if st.session_state.role == "admin":
+        st.dataframe(df_inventory)  # interactive
+    else:
+        st.table(df_inventory)  # static no arrows
 
-# ========================
 # TAB 2 – Transfer Device
-# ========================
 with tab_objects[1]:
     st.subheader("Register Ownership Transfer")
 
     serial_number = st.text_input("Enter Serial Number")
     new_owner = st.text_input("Enter NEW Owner's Name")
-    registered_by = st.text_input("Registered By (IT Staff)")
+    registered_by = st.session_state.username  # Auto-fill with logged-in username
 
     if st.button("Transfer Now"):
-        if not serial_number.strip() or not new_owner.strip() or not registered_by.strip():
+        if not serial_number.strip() or not new_owner.strip():
             st.error("⚠ All fields are required.")
             st.stop()
 
@@ -782,21 +781,13 @@ with tab_objects[1]:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
             idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
-
-            # Get last owner (either from To owner or USER column)
-            if "To owner" in df_inventory.columns and pd.notna(df_inventory.loc[idx, "To owner"]):
-                from_owner = df_inventory.loc[idx, "To owner"]
-            elif "USER" in df_inventory.columns and pd.notna(df_inventory.loc[idx, "USER"]):
-                from_owner = df_inventory.loc[idx, "USER"]
-            else:
-                from_owner = "Unknown"
-
+            from_owner = df_inventory.loc[idx, "USER"]
             device_type = df_inventory.loc[idx, "Device Type"]
 
             # Update inventory
             df_inventory.loc[idx, "Previous User"] = from_owner
             df_inventory.loc[idx, "USER"] = new_owner
-            df_inventory.loc[idx, "To owner"] = new_owner
+            df_inventory.loc[idx, "TO"] = new_owner
             df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             df_inventory.loc[idx, "Registered by"] = registered_by
 
@@ -817,27 +808,18 @@ with tab_objects[1]:
 
             st.success(f"✅ Transfer logged: {from_owner} → {new_owner}")
 
-# ========================
 # TAB 3 – View Transfer Log
-# ========================
 with tab_objects[2]:
     st.subheader("Transfer Log History")
     df_log = load_transfer_log()
-    st.dataframe(df_log)
+    if st.session_state.role == "admin":
+        st.dataframe(df_log)
+    else:
+        st.table(df_log)
 
-# ========================
-# TAB 4 – Manage Users (Admin only)
-# ========================
-if st.session_state.role == "admin":
+# TAB 4 – Export Files (Admins Only)
+if st.session_state.role == "admin" and len(tab_objects) > 3:
     with tab_objects[3]:
-        st.subheader("User Management")
-        st.info("Coming soon: Admin tools for adding/removing users")
-
-# ========================
-# TAB 5 – Export Files (Admins only)
-# ========================
-if st.session_state.role == "admin":
-    with tab_objects[-1]:
         st.subheader("Download Updated Files")
 
         # Inventory
