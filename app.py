@@ -1,4 +1,4 @@
-# app.py — Streamlit Tracking Inventory (no sidebar, top-left logo, custom font)
+# app.py — Streamlit Tracking Inventory (centered brand header + working logo)
 
 import streamlit as st
 import pandas as pd
@@ -16,7 +16,7 @@ APP_TITLE   = "AdvancedConstruction"
 APP_TAGLINE = "Tracking Inventory Management System"
 EMOJI_FALLBACK = "🖥️"
 
-# Use repo images (you already have these)
+# Use repo images
 LOGO_FILE = "assets/company_logo.png"
 ICON_FILE = "assets/favicon.png"
 
@@ -31,41 +31,54 @@ st.set_page_config(
 )
 
 # ========================
-# Global CSS (hide sidebar, nicer header + login card, custom fonts)
+# Global CSS (hide sidebar, centered header, custom fonts)
 # ========================
 st.markdown("""
 <style>
-/* Load brand fonts (change to any Google font you like) */
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&family=Inter:wght@400;500;600&display=swap');
 
-/* Hide the left sidebar completely */
 [data-testid="stSidebar"] { display: none !important; }
-
-/* Page width & padding */
 .block-container { padding-top: 1.6rem; max-width: 1100px; }
 
-/* Header layout */
+/* --- centered header --- */
+.header-wrap{
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  text-align:center; gap:6px; margin-top:.3rem;
+}
+.brand-logo{ width:72px; height:auto; }
 .brand-title {
-  font-family: "Montserrat", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
-  font-weight: 800; letter-spacing: -0.01em; font-size: 38px; margin: 0;
+  font-family:"Montserrat", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
+  font-weight:800; letter-spacing:-0.01em; font-size:38px; margin:0;
 }
 .brand-tag {
-  margin: 3px 0 0; color:#64748b;
-  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
-  font-weight: 500;
+  margin:0; color:#64748b;
+  font-family:"Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
+  font-weight:500;
 }
-.header-divider { height:1px; background:#e5e7eb; margin:12px 0 20px; }
+.header-divider { height:1px; background:#e5e7eb; margin:14px 0 20px; }
 
-/* Login card + controls */
-.login-card { background:#fff; border-radius:14px; padding:22px;
-  box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0; }
+/* login card + inputs */
+.login-card {
+  background:#fff; border-radius:14px; padding:22px;
+  box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0;
+}
 .stButton>button { border-radius:10px; font-weight:600; padding:.55rem 1.0rem; }
 .stTextInput input { border-radius:10px !important; }
 
-/* Optional: hide Streamlit chrome */
-#MainMenu {visibility:hidden;} footer {visibility:hidden;}
+/* subtle page polish */
+body { background: #fafafa; }
+#MainMenu, footer {visibility:hidden;}
 </style>
 """, unsafe_allow_html=True)
+
+# ========================
+# Small helper: reliable logo display
+# ========================
+def img_to_base64(path: str) -> str:
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+    return ""
 
 # ========================
 # Session defaults (avoid AttributeError)
@@ -91,34 +104,36 @@ def check_credentials(username: str, password: str):
     return None
 
 # ========================
-# Header (logo top-left + title/tagline + optional logout top-right)
+# Header (centered brand + optional logout top-right)
 # ========================
 def show_header():
-    # 3-column header: logo | title | logout
-    c_logo, c_text, c_btn = st.columns([0.11, 0.74, 0.15])
-
-    with c_logo:
-        if os.path.exists(LOGO_FILE):
-            # Adjust width for your taste (48–64 is good)
-            st.image(LOGO_FILE, width=56)
-        else:
-            st.markdown("<div style='font-size:44px;line-height:1'>🖥️</div>", unsafe_allow_html=True)
-
-    with c_text:
-        st.markdown(
-            f"<h1 class='brand-title'>{APP_TITLE}</h1>"
-            f"<div class='brand-tag'>{APP_TAGLINE}</div>",
-            unsafe_allow_html=True
-        )
-
-    with c_btn:
+    # logout button stays top-right when logged in
+    top_l, top_c, top_r = st.columns([0.33, 0.34, 0.33])
+    with top_r:
         if st.session_state.get("authenticated"):
             if st.button("Log out"):
                 for k in ("authenticated", "role", "username"):
-                    if k in st.session_state:
-                        del st.session_state[k]
+                    st.session_state.pop(k, None)
                 st.rerun()
 
+    # centered brand block
+    logo_b64 = img_to_base64(LOGO_FILE)
+    logo_html = (
+        f'<img src="data:image/png;base64,{logo_b64}" class="brand-logo"/>'
+        if logo_b64
+        else f"<div style='font-size:44px;line-height:1'>{EMOJI_FALLBACK}</div>"
+    )
+
+    st.markdown(
+        f"""
+        <div class="header-wrap">
+            {logo_html}
+            <h1 class="brand-title">{APP_TITLE}</h1>
+            <div class="brand-tag">{APP_TAGLINE}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
 
 show_header()
@@ -244,6 +259,7 @@ with tab_objects[1]:
                 df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             if "Registered by" in df_inventory.columns:
                 df_inventory.loc[idx, "Registered by"] = registered_by
+
             log_entry = {
                 "Device Type": device_type,
                 "Serial Number": serial_number,
@@ -280,6 +296,7 @@ if st.session_state.get("role") == "admin" and len(tab_objects) > 3:
             file_name="truckinventory_updated.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
         df_log = load_transfer_log()
         out_log = BytesIO()
         with pd.ExcelWriter(out_log, engine="openpyxl") as writer:
