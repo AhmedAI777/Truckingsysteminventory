@@ -13,7 +13,7 @@ import base64
 # ========================
 # Header / Branding Config
 # ========================
-TITLE_TEXT   = "AdvancedConstruction"
+TITLE_TEXT   = "Advanced Construction"
 TAGLINE_TEXT = "Tracking Inventory Management System"
 
 LOGO_FILE = "assets/company_logo.png"
