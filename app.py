@@ -13,7 +13,7 @@ import base64
 # ========================
 # Header / Branding Config (edit these only)
 # ========================
-TITLE_TEXT   = "AdvancedConstruction"
+TITLE_TEXT   = "Advanced Construction"
 TAGLINE_TEXT = "Tracking Inventory Management System"
 
 # Logo & favicon paths
@@ -21,8 +21,8 @@ LOGO_FILE = "assets/company_logo.png"
 ICON_FILE = "assets/favicon.png"
 
 # Easy styling knobs
-LOGO_WIDTH  = 140                 # px
-TITLE_FONT  = "Montserrat"        # Google Font name
+LOGO_WIDTH  = 500                 # px
+TITLE_FONT  = "Times New Roman"        # Google Font name
 TITLE_SIZE  = 44                  # px
 ALIGNMENT   = "left"              # "left" | "center" | "right"
 
