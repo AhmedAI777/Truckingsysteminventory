@@ -13,8 +13,8 @@ import shutil
 # ========================
 APP_TITLE = "Tracking Inventory Management System"
 APP_TAGLINE = "Internal tool • AdvancedConstruction"
-LOGO_PATH = "/Users/ahmed/Downloads/Logo"   # header + sidebar
-FAVICON_PATH = "/Users/ahmed/Downloads/PC"     # small tab icon (optional)
+LOGO_PATH = "/Users/ahmed/Downloads/Logo.png"   # header + sidebar
+FAVICON_PATH = "/Users/ahmed/Downloads/PC.png"     # small tab icon (optional)
 EMOJI_FALLBACK = "🖥️"
 
 # Page config MUST be the first Streamlit call
