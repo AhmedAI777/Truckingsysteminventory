@@ -1,5 +1,5 @@
 # app.py — Streamlit Tracking Inventory
-# (Left-aligned header row with bigger logo, no duplicate logo, polished UI)
+# Flexible header (change logo place/size/font/alignment via variables)
 
 import streamlit as st
 import pandas as pd
@@ -11,14 +11,22 @@ import shutil
 import base64
 
 # ========================
-# Branding / Assets
+# Header / Branding Config (edit these only)
 # ========================
-APP_TITLE   = "Advanced Construction"
-APP_TAGLINE = "Tracking Inventory Management System"
-EMOJI_FALLBACK = "🖥️"
+TITLE_TEXT   = "AdvancedConstruction"
+TAGLINE_TEXT = "Tracking Inventory Management System"
 
-LOGO_FILE = "assets/company_logo.png"   # put your logo here
-ICON_FILE = "assets/favicon.png"        # optional favicon
+# Logo & favicon paths
+LOGO_FILE = "assets/company_logo.png"
+ICON_FILE = "assets/favicon.png"
+
+# Easy styling knobs
+LOGO_WIDTH  = 140                 # px
+TITLE_FONT  = "Montserrat"        # Google Font name
+TITLE_SIZE  = 44                  # px
+ALIGNMENT   = "left"              # "left" | "center" | "right"
+
+favicon = "🖥️"             # used if favicon not found
 
 # ========================
 # Page Config (first Streamlit call)
@@ -31,55 +39,90 @@ st.set_page_config(
 )
 
 # ========================
-# Global CSS (hide sidebar, nice header/login, custom fonts)
+# Global CSS (uses variables above)
 # ========================
-st.markdown("""
+st.markdown(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family={TITLE_FONT.replace(" ", "+")}:wght@700;800&family=Inter:wght@400;500;600&display=swap');
 
-/* Hide the left sidebar completely */
-[data-testid="stSidebar"] { display: none !important; }
+/* Hide sidebar */
+[data-testid="stSidebar"] {{ display: none !important; }}
 
 /* Page width & padding */
-.block-container { padding-top: 1.4rem; max-width: 1100px; }
+.block-container {{ padding-top: 1.4rem; max-width: 1100px; }}
 
-/* --- header row (left aligned) --- */
-.header-row {
-  display: flex; align-items: center; gap: 16px; margin-top: .3rem;
-}
-.brand-logo { width: 600px; height: auto; } /* adjust for bigger/smaller */
-.brand-text-block { display: flex; flex-direction: column; justify-content: center; }
-.brand-title {
-  font-family: "Montserrat", ui-sans-serif, system-ui, -apple-system, "Times New Roman";
-  font-weight: 800; letter-spacing: -0.01em; font-size: 40px; margin: 0;
-}
-.brand-tag {
+/* --- Header row (logo + text) --- */
+.header-row {{
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  justify-content: {"flex-start" if ALIGNMENT=="left" else "center" if ALIGNMENT=="center" else "flex-end"};
+}}
+.brand-logo {{ width: {LOGO_WIDTH}px; height: auto; }}
+.brand-text-block {{ display: flex; flex-direction: column; justify-content: center; }}
+.brand-title {{
+  font-family: "{TITLE_FONT}", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  font-size: {TITLE_SIZE}px;
+  margin: 0;
+}}
+.brand-tag {{
   margin: 2px 0 0; color:#64748b;
-  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Times New Roman";
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
   font-weight: 500;
-}
-.header-divider { height:1px; background:#e5e7eb; margin:14px 0 20px; }
+}}
+.header-divider {{ height:1px; background:#e5e7eb; margin:14px 0 20px; }}
 
-/* Login card + controls */
-.login-card { background:#fff; border-radius:14px; padding:22px;
-  box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0; }
-.stButton>button { border-radius:10px; font-weight:600; padding:.55rem 1.0rem; }
-.stTextInput input { border-radius:10px !important; }
+/* Login card + inputs */
+.login-card {{
+  background:#fff; border-radius:14px; padding:22px;
+  box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0;
+}}
+.stButton>button {{ border-radius:10px; font-weight:600; padding:.55rem 1.0rem; }}
+.stTextInput input {{ border-radius:10px !important; }}
 
-/* Optional: hide Streamlit chrome + subtle bg */
-body { background: #fafafa; }
-#MainMenu, footer {visibility:hidden;}
+/* Optional chrome + subtle bg */
+body {{ background: #fafafa; }}
+#MainMenu, footer {{visibility:hidden;}}
 </style>
 """, unsafe_allow_html=True)
 
 # ========================
-# Helper: reliable logo display (avoids relative-path issues)
+# Helpers
 # ========================
 def img_to_base64(path: str) -> str:
     if os.path.exists(path):
         with open(path, "rb") as f:
             return base64.b64encode(f.read()).decode("utf-8")
     return ""
+
+def show_header():
+    # top bar: logout button on the right (when authenticated)
+    _, _, r = st.columns([0.85, 0.05, 0.10])
+    with r:
+        if st.session_state.get("authenticated"):
+            if st.button("Log out"):
+                for k in ("authenticated", "role", "username"):
+                    st.session_state.pop(k, None)
+                st.rerun()
+
+    # logo + text (no duplicate icons)
+    logo_b64 = img_to_base64(LOGO_FILE)
+    logo_html = f'<img src="data:image/png;base64,{logo_b64}" class="brand-logo"/>' if logo_b64 else ""
+    st.markdown(
+        f"""
+        <div class="header-row">
+            {logo_html}
+            <div class="brand-text-block">
+                <h1 class="brand-title">{TITLE_TEXT}</h1>
+                <div class="brand-tag">{TAGLINE_TEXT}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
 
 # ========================
 # Session defaults
@@ -104,39 +147,7 @@ def check_credentials(username: str, password: str):
             return u.get("role")
     return None
 
-# ========================
-# Header (left-aligned logo + text; logout at top-right when logged in)
-# ========================
-def show_header():
-    # top bar for logout button on the right
-    _l, _c, r = st.columns([0.85, 0.05, 0.10])
-    with r:
-        if st.session_state.get("authenticated"):
-            if st.button("Log out"):
-                for k in ("authenticated", "role", "username"):
-                    st.session_state.pop(k, None)
-                st.rerun()
-
-    # Logo + text row (left aligned). No duplicate logo anywhere else.
-    logo_b64 = img_to_base64(LOGO_FILE)
-    logo_html = (
-        f'<img src="data:image/png;base64,{logo_b64}" class="brand-logo"/>'
-        if logo_b64 else f"<div style='font-size:44px;line-height:1'>{EMOJI_FALLBACK}</div>"
-    )
-    st.markdown(
-        f"""
-        <div class="header-row">
-            {logo_html}
-            <div class="brand-text-block">
-                <h1 class="brand-title">{APP_TITLE}</h1>
-                <div class="brand-tag">{APP_TAGLINE}</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-    st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
-
+# Render header now (after CSS + session state)
 show_header()
 
 # ========================
@@ -192,7 +203,7 @@ def save_transfer_log(df: pd.DataFrame):
     normalize_for_display(df).to_excel(TRANSFER_LOG_FILE, index=False)
 
 # ========================
-# Auth (centered login card on page)
+# Auth (login card)
 # ========================
 if not st.session_state.get("authenticated", False):
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
@@ -239,6 +250,7 @@ with tab_objects[1]:
         if not serial_number.strip() or not new_owner.strip():
             st.error("⚠ All fields are required.")
             st.stop()
+
         df_inventory = load_inventory()
         df_log = load_transfer_log()
 
@@ -250,7 +262,7 @@ with tab_objects[1]:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
             idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
-            from_owner = df_inventory.loc[idx, "USER"] if "USER" in df_inventory.columns else ""
+            from_owner  = df_inventory.loc[idx, "USER"] if "USER" in df_inventory.columns else ""
             device_type = df_inventory.loc[idx, "Device Type"] if "Device Type" in df_inventory.columns else ""
 
             if "Previous User" in df_inventory.columns:
