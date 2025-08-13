@@ -1,6 +1,5 @@
 # app.py — Tracking Inventory System (Streamlit)
-# ✅ New tab: "📝 Register Inventory" to add hardware columns
-# ✅ Auto-add missing columns to existing Excel
+# ✅ Tabs order: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device, 4) 📜 View Transfer Log, 5) ⬇ Export Files
 # ✅ Clean header + easy knobs (logo size/placement, fonts, spacing)
 # ✅ Logout row UNDER the header (right-aligned)
 # ✅ Persistent login across refresh (signed token using st.query_params)
@@ -260,12 +259,12 @@ TRANSFER_LOG_FILE      = TRANSFER_LOG_PRIMARY if os.path.exists(TRANSFER_LOG_PRI
 BACKUP_FOLDER          = "backups"
 os.makedirs(BACKUP_FOLDER, exist_ok=True)
 
-# --- New: required hardware columns for Register tab ---
+# --- Required hardware columns for Register tab ---
 HW_COLUMNS = [
     "Serial Number", "Device Type", "Brand", "Model", "CPU",
     "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size"
 ]
-# meta columns already used elsewhere in app
+# Meta columns already used elsewhere in app
 META_COLUMNS = ["USER", "Previous User", "TO", "Date issued", "Registered by"]
 ALL_INVENTORY_COLUMNS = HW_COLUMNS + META_COLUMNS
 
@@ -291,7 +290,7 @@ def load_inventory() -> pd.DataFrame:
     for col in ALL_INVENTORY_COLUMNS:
         if col not in df.columns:
             df[col] = ""
-    # re-order columns nicely (hardware first, then meta, then any extras)
+    # Re-order columns nicely (hardware first, then meta, then any extras)
     ordered = [c for c in ALL_INVENTORY_COLUMNS if c in df.columns] + \
               [c for c in df.columns if c not in ALL_INVENTORY_COLUMNS]
     df = df[ordered]
@@ -334,25 +333,16 @@ if not st.session_state.get("authenticated", False):
     st.stop()
 
 # ============================
-# TABS (main app)
+# TABS (main app) — ORDER CHANGED
 # ============================
-# Order: View Inventory | Register Inventory | Transfer Device | View Transfer Log | (Export Files)
-tabs = ["📦 View Inventory", "📝 Register Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
+# New order: Register | View | Transfer | Log | Export
+tabs = ["📝 Register Inventory", "📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
 if st.session_state.get("role") == "admin":
     tabs.append("⬇ Export Files")
 tab_objects = st.tabs(tabs)
 
-# TAB 1 – View Inventory
+# TAB 1 – 📝 Register Inventory
 with tab_objects[0]:
-    st.subheader("Current Inventory")
-    df_inventory = load_inventory()
-    if st.session_state.get("role") == "admin":
-        st.dataframe(for_display(df_inventory), use_container_width=True)
-    else:
-        st.table(for_display(df_inventory))
-
-# TAB 2 – 📝 Register Inventory (NEW)
-with tab_objects[1]:
     st.subheader("Register New Inventory Item")
     with st.form("register_inventory_form", clear_on_submit=False):
         c1, c2 = st.columns(2)
@@ -400,7 +390,16 @@ with tab_objects[1]:
                 st.success("✅ Inventory item registered.")
                 st.info("Tip: use ‘Transfer Device’ tab to assign this item to a user later.")
 
-# TAB 3 – Transfer Device
+# TAB 2 – 📦 View Inventory
+with tab_objects[1]:
+    st.subheader("Current Inventory")
+    df_inventory = load_inventory()
+    if st.session_state.get("role") == "admin":
+        st.dataframe(for_display(df_inventory), use_container_width=True)
+    else:
+        st.table(for_display(df_inventory))
+
+# TAB 3 – 🔄 Transfer Device
 with tab_objects[2]:
     st.subheader("Register Ownership Transfer")
     serial_number  = st.text_input("Enter Serial Number")
@@ -449,7 +448,7 @@ with tab_objects[2]:
             save_transfer_log(df_log)
             st.success(f"✅ Transfer logged: {from_owner} → {new_owner}")
 
-# TAB 4 – View Transfer Log
+# TAB 4 – 📜 View Transfer Log
 with tab_objects[3]:
     st.subheader("Transfer Log History")
     df_log = load_transfer_log()
@@ -458,7 +457,7 @@ with tab_objects[3]:
     else:
         st.table(for_display(df_log))
 
-# TAB 5 – Export Files (Admins Only)
+# TAB 5 – ⬇ Export Files (Admins Only)
 if st.session_state.get("role") == "admin" and len(tab_objects) > 4:
     with tab_objects[4]:
         st.subheader("Download Updated Files")
