@@ -1,8 +1,9 @@
 # app.py — Streamlit Tracking Inventory
-# - Header: logo + title + Logout aligned at far-right (near Share), consistent size
 # - Persistent login via signed URL token (st.query_params)
+# - Header: logo + title + Logout aligned far-right (near Share), matched size
 # - Times New Roman styling + no ghost input
-# - Fixed Export (no unclosed parentheses)
+# - No deprecated 'use_column_width' usage
+# - Fixed Export block
 
 import streamlit as st
 import pandas as pd
@@ -24,8 +25,8 @@ TAGLINE_TEXT = "Tracking Inventory Management System"
 LOGO_FILE = "assets/company_logo.png"
 ICON_FILE = "assets/favicon.png"
 
-LOGO_WIDTH  = 140           # px
-TITLE_SIZE  = 44            # px
+LOGO_WIDTH  = 140        # px (logo size)
+TITLE_SIZE  = 44         # px (title size)
 EMOJI_FALLBACK = "🖥️"
 
 # ========================
@@ -61,7 +62,7 @@ html, body, .stApp, .stApp * {{
 .brand-title {{ font-weight:700; font-size:{TITLE_SIZE}px; margin:0; line-height:1.1; }}
 .brand-tag   {{ margin:2px 0 0; color:#64748b; font-weight:400; }}
 
-/* Logo size */
+/* Logo size (we set width in st.image, this is a fallback) */
 .brand-logo {{ width:{LOGO_WIDTH}px; height:auto; }}
 
 /* Make buttons compact like top-right controls */
@@ -90,7 +91,7 @@ html, body, .stApp, .stApp * {{
 .stTextInput input {{ border-radius:10px !important; }}
 
 /* Optional chrome + subtle bg */
-body {{ background:#fafafa; }}
+body {{ background: #fafafa; }}
 #MainMenu, footer {{visibility:hidden;}}
 
 /* Hide any stray empty input after header (safety) */
@@ -170,18 +171,13 @@ try_auto_login_from_url()
 # ========================
 # Header (logo | title | spacer | logout aligned right)
 # ========================
-def img_to_base64(path: str) -> str:
-    if os.path.exists(path):
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode("utf-8")
-    return ""
-
 def show_header():
     c_logo, c_text, c_spacer, c_btn = st.columns([0.12, 0.68, 0.10, 0.10])
 
     with c_logo:
         if os.path.exists(LOGO_FILE):
-            st.image(LOGO_FILE, use_column_width=False, output_format="PNG", width=LOGO_WIDTH)
+            # IMPORTANT: no use_column_width here to avoid deprecation
+            st.image(LOGO_FILE, width=LOGO_WIDTH)
         else:
             st.markdown(f"<div style='font-size:44px;line-height:1'>{EMOJI_FALLBACK}</div>", unsafe_allow_html=True)
 
@@ -196,16 +192,15 @@ def show_header():
         st.empty()  # pushes the button to the far right (visually next to Share)
 
     with c_btn:
-        # Style scope via class on the column
+        # Scope style via class on the column
         st.markdown("<div class='logout-col'></div>", unsafe_allow_html=True)
         if st.session_state.get("authenticated"):
             if st.button("Logout", use_container_width=True, key="logout_btn"):
-                # Clear only auth flags and URL token; no full session clear
+                # Clear only auth flags and URL token
                 st.session_state["authenticated"] = False
                 st.session_state["role"] = None
                 st.session_state["username"] = ""
                 clear_auth_query_params()
-                # Rerun to immediately show login card
                 st.rerun()
 
     st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
