@@ -12,8 +12,8 @@ from PIL import Image
 # ========================
 # ---- Branding / Assets
 # ========================
-APP_TITLE   = "Tracking Inventory Management System"
-APP_TAGLINE = "Internal tool • AdvancedConstruction"
+APP_TITLE   = "AdvancedConstruction"
+APP_TAGLINE = "Tracking Inventory Management System"
 EMOJI_FALLBACK = "🖥️"
 
 # Your local absolute files (exist only on your Mac)
