@@ -1,4 +1,4 @@
-# app.py — Streamlit Tracking Inventory (branded, robust session & assets)
+# app.py — Streamlit Tracking Inventory (robust session + branding)
 
 import streamlit as st
 import pandas as pd
@@ -7,56 +7,37 @@ from io import BytesIO
 import json
 import os
 import shutil
-import glob
 from PIL import Image
 
 # ========================
-# Helpers (assets)
+# ---- Branding / Assets
 # ========================
-def first_existing(paths):
-    """Return the first existing path from a list, else None."""
-    for p in paths:
-        if p and os.path.exists(p.strip()):
-            return p.strip()
-    return None
-
-def resolve_image(path_or_dir, exts=("png","ico","jpg","jpeg","webp")):
-    """If given a dir, pick first image inside. If file, return it. Else None."""
-    if not path_or_dir:
-        return None
-    p = path_or_dir.strip()
-    if os.path.isfile(p):
-        return p
-    if os.path.isdir(p):
-        for ext in exts:
-            matches = sorted(glob.glob(os.path.join(p, f"*.{ext}")))
-            if matches:
-                return matches[0]
-    return None
-
-# ========================
-# Branding / Paths
-# (include your absolute paths AND repo paths; we pick what exists)
-# ========================
-APP_TITLE = "Tracking Inventory Management System"
+APP_TITLE   = "Tracking Inventory Management System"
 APP_TAGLINE = "Internal tool • AdvancedConstruction"
 EMOJI_FALLBACK = "🖥️"
 
-# Your local Mac paths:
-USER_LOGO_ABS   = "/Users/ahmed/Downloads/Logo.png"
-USER_ICON_ABS   = "/Users/ahmed/Downloads/PC.png"
+# Your local absolute files (exist only on your Mac)
+USER_LOGO_ABS = "/Users/ahmed/Downloads/Logo.png"
+USER_ICON_ABS = "/Users/ahmed/Downloads/PC.png"
 
-# Repo paths (recommended for deploy / Streamlit Cloud)
-REPO_LOGO       = "assets/company_logo.png"
-REPO_ICON       = "assets/favicon.png"
-os.makedirs("assets", exist_ok=True)  # ensure folder exists
+# Repo files (recommended for deploy)
+REPO_LOGO = "assets/company_logo.png"
+REPO_ICON = "assets/favicon.png"
+os.makedirs("assets", exist_ok=True)  # ensure folder exists for deploy
 
-# Pick actual files to use
-LOGO_FILE = resolve_image(first_existing([USER_LOGO_ABS, REPO_LOGO]) or "")
-ICON_FILE = resolve_image(first_existing([USER_ICON_ABS, REPO_ICON]) or "")
+def pick_asset(abs_path: str, repo_path: str) -> str | None:
+    """Prefer absolute path if it exists, else repo path if it exists, else None."""
+    if abs_path and os.path.exists(abs_path):
+        return abs_path
+    if repo_path and os.path.exists(repo_path):
+        return repo_path
+    return None
+
+LOGO_FILE = pick_asset(USER_LOGO_ABS, REPO_LOGO)
+ICON_FILE = pick_asset(USER_ICON_ABS, REPO_ICON)
 
 # ========================
-# Page config (must be first Streamlit call)
+# ---- Page Config (first Streamlit call)
 # ========================
 st.set_page_config(
     page_title="Tracking Inventory System",
@@ -65,111 +46,51 @@ st.set_page_config(
 )
 
 # ========================
-# Session State — initialize EARLY and SAFELY
+# ---- Session defaults (set early; avoid AttributeError)
 # ========================
-# Always set defaults, even if one key exists but others don't
-DEFAULT_STATE = {"authenticated": False, "role": None, "username": ""}
-for k, v in DEFAULT_STATE.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
+st.session_state.setdefault("authenticated", False)
+st.session_state.setdefault("role", None)
+st.session_state.setdefault("username", "")
 
 # ========================
-# Minimal CSS polish
+# ---- Light CSS polish
 # ========================
-st.markdown(
-    """
-    <style>
-      .block-container { padding-top: 2rem; }
-      .stButton>button { border-radius: 10px; font-weight: 600; padding: 0.5rem 1rem; }
-      .stTextInput input { border-radius: 10px !important; }
-      #MainMenu {visibility: hidden;} footer {visibility: hidden;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<style>
+  .block-container { padding-top: 2rem; }
+  .stButton>button { border-radius: 10px; font-weight: 600; padding: 0.5rem 1rem; }
+  .stTextInput input { border-radius: 10px !important; }
+  #MainMenu {visibility: hidden;} footer {visibility: hidden;}
+</style>
+""", unsafe_allow_html=True)
 
 # ========================
-# Load Users from Secrets
+# ---- Users from Secrets
 # ========================
 try:
     USERS = json.loads(st.secrets["users_json"])  # [{"username":"admin","password":"123","role":"admin"}, ...]
-except Exception as e:
-    st.error("Missing or invalid `users_json` in `st.secrets`. Add it in your deployment settings.")
+except Exception:
+    st.error("Missing or invalid `users_json` in `st.secrets`. Add something like:\n"
+             '[{"username":"admin","password":"123","role":"admin"}]')
     st.stop()
 
-# ========================
-# File Paths
-# ========================
-INVENTORY_FILE = "truckinventory.xlsx"
-TRANSFER_LOG_FILE = "transferlog.xlsx"
-BACKUP_FOLDER = "backups"
-os.makedirs(BACKUP_FOLDER, exist_ok=True)
-
-# ========================
-# Helper Functions
-# ========================
-def backup_file(file_path):
-    """Create timestamped backup of a file."""
-    if os.path.exists(file_path):
-        backup_name = f"{BACKUP_FOLDER}/{os.path.basename(file_path).split('.')[0]}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-        shutil.copy(file_path, backup_name)
-
-def normalize_columns_for_display(df):
-    """Convert object/datetime columns to strings to avoid ArrowTypeError in Streamlit."""
-    for col in df.columns:
-        if df[col].dtype == "object" or str(df[col].dtype).startswith("datetime"):
-            df[col] = df[col].astype(str)
-    return df
-
-def ensure_inventory_file():
-    """Create an empty inventory file with expected columns if it doesn't exist."""
-    if not os.path.exists(INVENTORY_FILE):
-        cols = ["Device Type", "Serial Number", "USER", "Previous User", "TO", "Date issued", "Registered by"]
-        pd.DataFrame(columns=cols).to_excel(INVENTORY_FILE, index=False)
-
-def load_inventory():
-    ensure_inventory_file()
-    df = pd.read_excel(INVENTORY_FILE)
-    return normalize_columns_for_display(df)
-
-def load_transfer_log():
-    try:
-        df = pd.read_excel(TRANSFER_LOG_FILE)
-    except FileNotFoundError:
-        df = pd.DataFrame(columns=[
-            "Device Type", "Serial Number", "From owner", "To owner",
-            "Date issued", "Registered by"
-        ])
-        df.to_excel(TRANSFER_LOG_FILE, index=False)
-    return normalize_columns_for_display(df)
-
-def save_inventory(df):
-    backup_file(INVENTORY_FILE)
-    df = normalize_columns_for_display(df)
-    df.to_excel(INVENTORY_FILE, index=False)
-
-def save_transfer_log(df):
-    backup_file(TRANSFER_LOG_FILE)
-    df = normalize_columns_for_display(df)
-    df.to_excel(TRANSFER_LOG_FILE, index=False)
-
-def check_credentials(username, password):
-    """Verify username and password; return role on success, else None."""
+def check_credentials(username: str, password: str):
     for user in USERS:
-        if user["username"] == username and user["password"] == password:
-            return user["role"]
+        if user.get("username") == username and user.get("password") == password:
+            return user.get("role")
     return None
 
+# ========================
+# ---- Header & Sidebar
+# ========================
 def show_header():
     col_logo, col_title = st.columns([1, 9])
     with col_logo:
-        if LOGO_FILE:
+        if LOGO_FILE and os.path.exists(LOGO_FILE):
             st.image(LOGO_FILE, width=70)
         else:
-            st.markdown(
-                f"<div style='font-size:56px;line-height:1'>{EMOJI_FALLBACK}</div>",
-                unsafe_allow_html=True
-            )
+            st.markdown(f"<div style='font-size:56px;line-height:1'>{EMOJI_FALLBACK}</div>",
+                        unsafe_allow_html=True)
     with col_title:
         st.markdown(
             f"<h1 style='margin-bottom:2px'>{APP_TITLE}</h1>"
@@ -177,44 +98,85 @@ def show_header():
             unsafe_allow_html=True
         )
 
-# ========================
-# Sidebar (branding)
-# ========================
 with st.sidebar:
-    if LOGO_FILE:
+    if LOGO_FILE and os.path.exists(LOGO_FILE):
         st.image(LOGO_FILE, use_column_width=True)
     else:
         st.markdown(f"### {EMOJI_FALLBACK} {APP_TITLE}")
-    st.caption(f"Favicon: {os.path.basename(ICON_FILE) if ICON_FILE else EMOJI_FALLBACK}")
-    st.caption(f"Logo: {os.path.basename(LOGO_FILE) if LOGO_FILE else 'not found'}")
+
+show_header()
 
 # ========================
-# Login / Session State
+# ---- Files & Helpers
 # ========================
-show_header()  # header on top
+INVENTORY_FILE = "truckinventory.xlsx"
+TRANSFER_LOG_FILE = "transferlog.xlsx"
+BACKUP_FOLDER = "backups"
+os.makedirs(BACKUP_FOLDER, exist_ok=True)
 
+def backup_file(file_path):
+    if os.path.exists(file_path):
+        base = os.path.basename(file_path).split(".")[0]
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        shutil.copy(file_path, f"{BACKUP_FOLDER}/{base}_{ts}.xlsx")
+
+def normalize_columns_for_display(df: pd.DataFrame) -> pd.DataFrame:
+    for col in df.columns:
+        if df[col].dtype == "object" or str(df[col].dtype).startswith("datetime"):
+            df[col] = df[col].astype(str)
+    return df
+
+def ensure_inventory_file():
+    if not os.path.exists(INVENTORY_FILE):
+        cols = ["Device Type", "Serial Number", "USER", "Previous User", "TO", "Date issued", "Registered by"]
+        pd.DataFrame(columns=cols).to_excel(INVENTORY_FILE, index=False)
+
+def load_inventory() -> pd.DataFrame:
+    ensure_inventory_file()
+    df = pd.read_excel(INVENTORY_FILE)
+    return normalize_columns_for_display(df)
+
+def load_transfer_log() -> pd.DataFrame:
+    if not os.path.exists(TRANSFER_LOG_FILE):
+        pd.DataFrame(columns=[
+            "Device Type", "Serial Number", "From owner", "To owner",
+            "Date issued", "Registered by"
+        ]).to_excel(TRANSFER_LOG_FILE, index=False)
+    df = pd.read_excel(TRANSFER_LOG_FILE)
+    return normalize_columns_for_display(df)
+
+def save_inventory(df: pd.DataFrame):
+    backup_file(INVENTORY_FILE)
+    normalize_columns_for_display(df).to_excel(INVENTORY_FILE, index=False)
+
+def save_transfer_log(df: pd.DataFrame):
+    backup_file(TRANSFER_LOG_FILE)
+    normalize_columns_for_display(df).to_excel(TRANSFER_LOG_FILE, index=False)
+
+# ========================
+# ---- Auth (Login / Logout)
+# ========================
 if not st.session_state.get("authenticated", False):
     st.subheader("Sign in")
-    username = st.text_input("Username", placeholder="your.username")
-    password = st.text_input("Password", type="password", placeholder="••••••••")
+    in_user = st.text_input("Username", placeholder="your.username")
+    in_pass = st.text_input("Password", type="password", placeholder="••••••••")
     login_col, _ = st.columns([1, 5])
     with login_col:
         if st.button("Login", type="primary"):
-            role = check_credentials(username, password)
+            role = check_credentials(in_user, in_pass)
             if role:
                 st.session_state["authenticated"] = True
                 st.session_state["role"] = role
-                st.session_state["username"] = username
-                st.success(f"✅ Logged in as {username} ({role})")
+                st.session_state["username"] = in_user
+                st.success(f"✅ Logged in as {in_user} ({role})")
                 st.rerun()
             else:
                 st.error("❌ Invalid username or password")
     st.stop()
 
-# Sidebar user block & logout (visible after login)
 with st.sidebar:
     st.markdown("---")
-    st.markdown(f"**User:** {st.session_state.get('username','')}")  # SAFE GET
+    st.markdown(f"**User:** {st.session_state.get('username','')}")
     st.markdown(f"**Role:** {st.session_state.get('role','')}")
     if st.button("Log out"):
         for k in ("authenticated", "role", "username"):
@@ -223,11 +185,11 @@ with st.sidebar:
         st.rerun()
 
 # ========================
-# Tabs
+# ---- Tabs
 # ========================
 tabs = ["📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
 if st.session_state.get("role") == "admin":
-    tabs.append("⬇ Export Files")  # Export tab only for admins
+    tabs.append("⬇ Export Files")
 
 tab_objects = st.tabs(tabs)
 
@@ -246,7 +208,7 @@ with tab_objects[1]:
 
     serial_number = st.text_input("Enter Serial Number")
     new_owner = st.text_input("Enter NEW Owner's Name")
-    registered_by = st.session_state.get("username", "")  # SAFE GET
+    registered_by = st.session_state.get("username", "")
 
     if st.button("Transfer Now", type="primary"):
         if not serial_number.strip() or not new_owner.strip():
@@ -290,7 +252,6 @@ with tab_objects[1]:
             }
             df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
 
-            # Save updated files
             save_inventory(df_inventory)
             save_transfer_log(df_log)
 
@@ -312,24 +273,24 @@ if st.session_state.get("role") == "admin" and len(tab_objects) > 3:
 
         # Inventory
         df_inventory = load_inventory()
-        output_inv = BytesIO()
-        with pd.ExcelWriter(output_inv, engine="openpyxl") as writer:
+        out_inv = BytesIO()
+        with pd.ExcelWriter(out_inv, engine="openpyxl") as writer:
             df_inventory.to_excel(writer, index=False)
         st.download_button(
             label="⬇ Download Inventory",
-            data=output_inv.getvalue(),
+            data=out_inv.getvalue(),
             file_name="truckinventory_updated.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
         # Transfer Log
         df_log = load_transfer_log()
-        output_log = BytesIO()
-        with pd.ExcelWriter(output_log, engine="openpyxl") as writer:
+        out_log = BytesIO()
+        with pd.ExcelWriter(out_log, engine="openpyxl") as writer:
             df_log.to_excel(writer, index=False)
         st.download_button(
             label="⬇ Download Transfer Log",
-            data=output_log.getvalue(),
+            data=out_log.getvalue(),
             file_name="transferlog_updated.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
