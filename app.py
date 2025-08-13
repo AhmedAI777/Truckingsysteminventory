@@ -27,7 +27,7 @@ TOP_PADDING_REM  = 3                                             # ← Space fro
 MAX_CONTENT_W    = 1500                                          # ← Page max width (px)
 
 # --- Logo controls ---
-LOGO_FILE        = "assets/company_logo.png"                       # ← Path to logo image
+LOGO_FILE        = "assets/company_logo.jpeg"                       # ← Path to logo image
 LOGO_WIDTH_PX    = 400                                              # ← Logo width in px (try 120–220)
 LOGO_HEIGHT_PX   = 85                                            # ← Set an int (e.g., 60/80) or None to auto
 LOGO_ALT_EMOJI   = "🖥️"                                           # ← Fallback if file missing
@@ -45,8 +45,6 @@ ICON_FILE        = "assets/favicon.png"                             # ← Path t
 
 # --- Security / Login persistence ---
 # Put these in .streamlit/secrets.toml for production:
-# auth_secret = "a-very-long-random-string"
-# users_json = '[{"username":"admin","password":"123","role":"admin"}]'
 AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")      # ← Replace in secrets for production
 
 # ============================
