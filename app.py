@@ -1,6 +1,6 @@
 # app.py — Streamlit Tracking Inventory
-# Persistent login across refresh using signed URL token + explicit Logout
-# Times New Roman styling + no ghost input
+# Persistent login via signed URL token (using st.query_params)
+# Times New Roman styling + no ghost input + explicit Logout
 
 import streamlit as st
 import pandas as pd
@@ -88,7 +88,7 @@ if "username" not in st.session_state:
 # ========================
 # Secrets / Users
 # ========================
-AUTH_SECRET = st.secrets.get("auth_secret", "change-me")  # set a strong value in secrets.toml
+AUTH_SECRET = st.secrets.get("auth_secret", "change-me")  # set strong value in secrets.toml
 
 try:
     USERS = json.loads(st.secrets["users_json"])
@@ -104,7 +104,7 @@ def get_user_role(username: str):
     return None
 
 # ========================
-# Token helpers (URL-based persistence)
+# Token helpers (URL-based persistence) — NEW st.query_params
 # ========================
 def make_token(username: str) -> str:
     return hmac.new(
@@ -114,20 +114,21 @@ def make_token(username: str) -> str:
     ).hexdigest()
 
 def set_auth_query_params(username: str):
-    st.experimental_set_query_params(u=username, t=make_token(username))
+    # keep only our params for cleanliness
+    st.query_params.clear()
+    st.query_params.update({"u": username, "t": make_token(username)})
 
 def clear_auth_query_params():
-    # Clears all query params
-    st.experimental_set_query_params()
+    st.query_params.clear()
 
 def try_auto_login_from_url():
     """If URL has valid ?u=<user>&t=<token>, auto-set authenticated session."""
     if st.session_state.get("authenticated"):
         return  # already logged in
 
-    params = st.experimental_get_query_params()
-    u = params.get("u", [None])[0]
-    t = params.get("t", [None])[0]
+    params = st.query_params
+    u = params.get("u")
+    t = params.get("t")
     if not u or not t:
         return
 
@@ -157,11 +158,10 @@ def show_header():
     with r:
         if st.session_state.get("authenticated"):
             if st.button("Log out"):
-                # Clear session flags
+                # Clear session flags and URL token; do NOT clear whole session or rerun
                 st.session_state["authenticated"] = False
                 st.session_state["role"] = None
                 st.session_state["username"] = ""
-                # Clear URL token
                 clear_auth_query_params()
 
     logo_b64 = img_to_base64(LOGO_FILE)
@@ -256,7 +256,7 @@ if not st.session_state.get("authenticated", False):
             st.session_state["authenticated"] = True
             st.session_state["role"] = role
             st.session_state["username"] = in_user
-            # Persist login in URL
+            # Persist login in URL with new API
             set_auth_query_params(in_user)
             st.success(f"✅ Logged in as {in_user} ({role})")
         else:
@@ -360,7 +360,3 @@ if st.session_state.get("role") == "admin" and len(tab_objects) > 3:
             df_log.to_excel(writer, index=False)
         st.download_button(
             label="⬇ Download Transfer Log",
-            data=out_log.getvalue(),
-            file_name="transferlog_updated.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
