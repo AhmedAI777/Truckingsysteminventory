@@ -34,31 +34,38 @@ st.set_page_config(
 # ========================
 st.markdown("""
 <style>
-/* Hide the left sidebar entirely */
+/* Load a clean, bold brand font (change to another Google font if you like) */
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&family=Inter:wght@400;600&display=swap');
+
+/* Hide sidebar (you already collapsed it) */
 [data-testid="stSidebar"] { display: none !important; }
 
 /* Page width & padding */
 .block-container { padding-top: 1.75rem; max-width: 1100px; }
 
-/* Header layout */
+/* Header */
 .app-header { display:flex; align-items:center; gap:14px; }
-.app-header .title-wrap h1 { margin:0; line-height:1.1; font-weight:800; }
-.app-header .title-wrap p { margin:2px 0 0; color:#64748b; }
+.brand-logo { height: 44px; width: auto; border-radius: 8px; }  /* 44px tall logo */
+.title-wrap { display:flex; flex-direction:column; }
+.brand-title {
+  font-family: "Montserrat", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
+  font-weight: 800; letter-spacing: -0.01em; font-size: 38px; margin: 0;
+}
+.brand-tag {
+  margin: 2px 0 0; color:#64748b;
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
+}
 
 /* Divider under header */
 .header-divider { height:1px; background:#e5e7eb; margin:12px 0 20px; }
 
-/* Login card */
-.login-card {
-  background:#ffffff; border-radius:14px; padding:22px;
-  box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0;
-}
-
-/* Buttons & inputs polish */
+/* Login card + controls */
+.login-card { background:#fff; border-radius:14px; padding:22px;
+  box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0; }
 .stButton>button { border-radius:10px; font-weight:600; padding:.55rem 1.0rem; }
 .stTextInput input { border-radius:10px !important; }
 
-/* Hide Streamlit chrome if you prefer a cleaner look */
+/* Optional: hide Streamlit chrome */
 #MainMenu {visibility:hidden;} footer {visibility:hidden;}
 </style>
 """, unsafe_allow_html=True)
@@ -89,35 +96,28 @@ def check_credentials(username: str, password: str):
 # ========================
 # Header (logo top-left + title; logout top-right when signed in)
 # ========================
-def render_header():
+def show_header():
+    logo_src = LOGO_FILE if (LOGO_FILE and os.path.exists(LOGO_FILE)) else None
     st.markdown('<div class="app-header">', unsafe_allow_html=True)
-    # Logo
-    if os.path.exists(LOGO_FILE):
-        st.image(LOGO_FILE, width=56)
+
+    # Logo (top-left)
+    if logo_src:
+        st.markdown(f'<img src="{logo_src}" class="brand-logo">', unsafe_allow_html=True)
     else:
-        st.markdown(f"<div style='font-size:48px;line-height:1'>{EMOJI_FALLBACK}</div>", unsafe_allow_html=True)
+        st.markdown('<div style="font-size:44px;line-height:1">🖥️</div>', unsafe_allow_html=True)
 
     # Title + tagline
     st.markdown(
-        f"<div class='title-wrap'><h1>{APP_TITLE}</h1>"
-        f"<p>{APP_TAGLINE}</p></div>",
+        f'<div class="title-wrap">'
+        f'  <h1 class="brand-title">{APP_TITLE}</h1>'
+        f'  <div class="brand-tag">{APP_TAGLINE}</div>'
+        f'</div>',
         unsafe_allow_html=True
     )
 
-    # Push a logout button to the right when authenticated
-    if st.session_state.get("authenticated"):
-        _, col_btn = st.columns([0.82, 0.18])
-        with col_btn:
-            if st.button("Log out"):
-                for k in ("authenticated", "role", "username"):
-                    if k in st.session_state:
-                        del st.session_state[k]
-                st.rerun()
-
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
     st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
 
-render_header()
 
 # ========================
 # Files & Helpers
