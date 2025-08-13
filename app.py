@@ -28,8 +28,8 @@ MAX_CONTENT_W    = 1250                                          # ← Page max 
 
 # --- Logo controls ---
 LOGO_FILE        = "assets/company_logo.png"                       # ← Path to logo image
-LOGO_WIDTH_PX    = 300                                              # ← Logo width in px (try 120–220)
-LOGO_HEIGHT_PX   = 30                                            # ← Set an int (e.g., 60/80) or None to auto
+LOGO_WIDTH_PX    = 500                                              # ← Logo width in px (try 120–220)
+LOGO_HEIGHT_PX   = 90                                            # ← Set an int (e.g., 60/80) or None to auto
 LOGO_ALT_EMOJI   = "🖥️"                                           # ← Fallback if file missing
 
 # --- Title & tagline sizing ---
