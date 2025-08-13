@@ -1,4 +1,4 @@
-# app.py — Streamlit Tracking Inventory (robust session + branding)
+# app.py — Streamlit Tracking Inventory (no sidebar, top-left logo, clean layout)
 
 import streamlit as st
 import pandas as pd
@@ -7,117 +7,126 @@ from io import BytesIO
 import json
 import os
 import shutil
-from PIL import Image  # ok to keep even if not strictly needed
 
 # ========================
-# ---- Branding / Assets
+# Branding / Assets
 # ========================
 APP_TITLE   = "AdvancedConstruction"
 APP_TAGLINE = "Tracking Inventory Management System"
 EMOJI_FALLBACK = "🖥️"
 
-# Your local absolute files (exist only on your Mac)
-USER_LOGO_ABS = "/Users/ahmed/Downloads/Logo.png"
-USER_ICON_ABS = "/Users/ahmed/Downloads/PC.png"
-
-# Repo files (recommended for deploy)
-REPO_LOGO = "assets/company_logo.png"
-REPO_ICON = "assets/favicon.png"
-os.makedirs("assets", exist_ok=True)  # ensure folder exists for deploy
-
-def pick_asset(abs_path: str, repo_path: str) -> str | None:
-    """Prefer absolute path if it exists, else repo path if it exists, else None."""
-    if abs_path and os.path.exists(abs_path):
-        return abs_path
-    if repo_path and os.path.exists(repo_path):
-        return repo_path
-    return None
-
-LOGO_FILE = pick_asset(USER_LOGO_ABS, REPO_LOGO)
-ICON_FILE = pick_asset(USER_ICON_ABS, REPO_ICON)
+# Use repo images (you already have these)
+LOGO_FILE = "assets/company_logo.png"
+ICON_FILE = "assets/favicon.png"
 
 # ========================
-# ---- Page Config (first Streamlit call)
+# Page Config (first Streamlit call)
 # ========================
 st.set_page_config(
     page_title="Tracking Inventory System",
-    page_icon=ICON_FILE if ICON_FILE else EMOJI_FALLBACK,  # use path or emoji
+    page_icon=ICON_FILE if os.path.exists(ICON_FILE) else EMOJI_FALLBACK,
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 # ========================
-# ---- Session defaults (set early; avoid AttributeError)
+# Global CSS (hide sidebar, nicer header + login card)
+# ========================
+st.markdown("""
+<style>
+/* Hide the left sidebar entirely */
+[data-testid="stSidebar"] { display: none !important; }
+
+/* Page width & padding */
+.block-container { padding-top: 1.75rem; max-width: 1100px; }
+
+/* Header layout */
+.app-header { display:flex; align-items:center; gap:14px; }
+.app-header .title-wrap h1 { margin:0; line-height:1.1; font-weight:800; }
+.app-header .title-wrap p { margin:2px 0 0; color:#64748b; }
+
+/* Divider under header */
+.header-divider { height:1px; background:#e5e7eb; margin:12px 0 20px; }
+
+/* Login card */
+.login-card {
+  background:#ffffff; border-radius:14px; padding:22px;
+  box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0;
+}
+
+/* Buttons & inputs polish */
+.stButton>button { border-radius:10px; font-weight:600; padding:.55rem 1.0rem; }
+.stTextInput input { border-radius:10px !important; }
+
+/* Hide Streamlit chrome if you prefer a cleaner look */
+#MainMenu {visibility:hidden;} footer {visibility:hidden;}
+</style>
+""", unsafe_allow_html=True)
+
+# ========================
+# Session defaults (avoid AttributeError)
 # ========================
 st.session_state.setdefault("authenticated", False)
 st.session_state.setdefault("role", None)
 st.session_state.setdefault("username", "")
 
 # ========================
-# ---- Light CSS polish
-# ========================
-st.markdown("""
-<style>
-  .block-container { padding-top: 2rem; }
-  .stButton>button { border-radius: 10px; font-weight: 600; padding: 0.5rem 1rem; }
-  .stTextInput input { border-radius: 10px !important; }
-  #MainMenu {visibility: hidden;} footer {visibility: hidden;}
-</style>
-""", unsafe_allow_html=True)
-
-# ========================
-# ---- Users from Secrets
+# Users (from secrets)
 # ========================
 try:
-    USERS = json.loads(st.secrets["users_json"])  # [{"username":"admin","password":"123","role":"admin"}, ...]
+    USERS = json.loads(st.secrets["users_json"])
 except Exception:
-    st.error("Missing or invalid `users_json` in `st.secrets`. Add something like:\n"
+    st.error("Missing `users_json` in secrets. Example: "
              '[{"username":"admin","password":"123","role":"admin"}]')
     st.stop()
 
 def check_credentials(username: str, password: str):
-    for user in USERS:
-        if user.get("username") == username and user.get("password") == password:
-            return user.get("role")
+    for u in USERS:
+        if u.get("username") == username and u.get("password") == password:
+            return u.get("role")
     return None
 
 # ========================
-# ---- Header & Sidebar
+# Header (logo top-left + title; logout top-right when signed in)
 # ========================
-def show_header():
-    col_logo, col_title = st.columns([1, 9])
-    with col_logo:
-        if LOGO_FILE and os.path.exists(LOGO_FILE):
-            st.image(LOGO_FILE, width=70)
-        else:
-            st.markdown(f"<div style='font-size:56px;line-height:1'>{EMOJI_FALLBACK}</div>",
-                        unsafe_allow_html=True)
-    with col_title:
-        st.markdown(
-            f"<h1 style='margin-bottom:2px'>{APP_TITLE}</h1>"
-            f"<p style='color:#64748b;margin-top:0'>{APP_TAGLINE}</p>",
-            unsafe_allow_html=True
-        )
-
-with st.sidebar:
-    if LOGO_FILE and os.path.exists(LOGO_FILE):
-        st.image(LOGO_FILE, use_column_width=True)
+def render_header():
+    st.markdown('<div class="app-header">', unsafe_allow_html=True)
+    # Logo
+    if os.path.exists(LOGO_FILE):
+        st.image(LOGO_FILE, width=56)
     else:
-        st.markdown(f"### {EMOJI_FALLBACK} {APP_TITLE}")
+        st.markdown(f"<div style='font-size:48px;line-height:1'>{EMOJI_FALLBACK}</div>", unsafe_allow_html=True)
 
-show_header()
+    # Title + tagline
+    st.markdown(
+        f"<div class='title-wrap'><h1>{APP_TITLE}</h1>"
+        f"<p>{APP_TAGLINE}</p></div>",
+        unsafe_allow_html=True
+    )
+
+    # Push a logout button to the right when authenticated
+    if st.session_state.get("authenticated"):
+        _, col_btn = st.columns([0.82, 0.18])
+        with col_btn:
+            if st.button("Log out"):
+                for k in ("authenticated", "role", "username"):
+                    if k in st.session_state:
+                        del st.session_state[k]
+                st.rerun()
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
+
+render_header()
 
 # ========================
-# ---- Files & Helpers
+# Files & Helpers
 # ========================
 INVENTORY_FILE = "truckinventory.xlsx"
-
-# Use whichever transfer log file exists; otherwise default to transferlog.xlsx
 TRANSFER_LOG_PRIMARY = "transferlog.xlsx"
 TRANSFER_LOG_ALT = "transferlogin.xlsx"
-TRANSFER_LOG_FILE = (
-    TRANSFER_LOG_PRIMARY if os.path.exists(TRANSFER_LOG_PRIMARY)
-    else (TRANSFER_LOG_ALT if os.path.exists(TRANSFER_LOG_ALT) else TRANSFER_LOG_PRIMARY)
-)
+TRANSFER_LOG_FILE = (TRANSFER_LOG_PRIMARY if os.path.exists(TRANSFER_LOG_PRIMARY)
+                     else (TRANSFER_LOG_ALT if os.path.exists(TRANSFER_LOG_ALT) else TRANSFER_LOG_PRIMARY))
 
 BACKUP_FOLDER = "backups"
 os.makedirs(BACKUP_FOLDER, exist_ok=True)
@@ -128,10 +137,10 @@ def backup_file(file_path):
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         shutil.copy(file_path, f"{BACKUP_FOLDER}/{base}_{ts}.xlsx")
 
-def normalize_columns_for_display(df: pd.DataFrame) -> pd.DataFrame:
-    for col in df.columns:
-        if df[col].dtype == "object" or str(df[col].dtype).startswith("datetime"):
-            df[col] = df[col].astype(str)
+def normalize_for_display(df: pd.DataFrame) -> pd.DataFrame:
+    for c in df.columns:
+        if df[c].dtype == "object" or str(df[c].dtype).startswith("datetime"):
+            df[c] = df[c].astype(str)
     return df
 
 def ensure_inventory_file():
@@ -146,60 +155,47 @@ def ensure_transfer_log_file():
 
 def load_inventory() -> pd.DataFrame:
     ensure_inventory_file()
-    df = pd.read_excel(INVENTORY_FILE)
-    return normalize_columns_for_display(df)
+    return normalize_for_display(pd.read_excel(INVENTORY_FILE))
 
 def load_transfer_log() -> pd.DataFrame:
     ensure_transfer_log_file()
-    df = pd.read_excel(TRANSFER_LOG_FILE)
-    return normalize_columns_for_display(df)
+    return normalize_for_display(pd.read_excel(TRANSFER_LOG_FILE))
 
 def save_inventory(df: pd.DataFrame):
     backup_file(INVENTORY_FILE)
-    normalize_columns_for_display(df).to_excel(INVENTORY_FILE, index=False)
+    normalize_for_display(df).to_excel(INVENTORY_FILE, index=False)
 
 def save_transfer_log(df: pd.DataFrame):
     backup_file(TRANSFER_LOG_FILE)
-    normalize_columns_for_display(df).to_excel(TRANSFER_LOG_FILE, index=False)
+    normalize_for_display(df).to_excel(TRANSFER_LOG_FILE, index=False)
 
 # ========================
-# ---- Auth (Login / Logout)
+# Auth (centered login card)
 # ========================
 if not st.session_state.get("authenticated", False):
+    st.markdown('<div class="login-card">', unsafe_allow_html=True)
     st.subheader("Sign in")
     in_user = st.text_input("Username", placeholder="your.username")
     in_pass = st.text_input("Password", type="password", placeholder="••••••••")
-    login_col, _ = st.columns([1, 5])
-    with login_col:
-        if st.button("Login", type="primary"):
-            role = check_credentials(in_user, in_pass)
-            if role:
-                st.session_state["authenticated"] = True
-                st.session_state["role"] = role
-                st.session_state["username"] = in_user
-                st.success(f"✅ Logged in as {in_user} ({role})")
-                st.rerun()
-            else:
-                st.error("❌ Invalid username or password")
+    if st.button("Login", type="primary"):
+        role = check_credentials(in_user, in_pass)
+        if role:
+            st.session_state["authenticated"] = True
+            st.session_state["role"] = role
+            st.session_state["username"] = in_user
+            st.success(f"✅ Logged in as {in_user} ({role})")
+            st.rerun()
+        else:
+            st.error("❌ Invalid username or password")
+    st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
-with st.sidebar:
-    st.markdown("---")
-    st.markdown(f"**User:** {st.session_state.get('username','')}")
-    st.markdown(f"**Role:** {st.session_state.get('role','')}")
-    if st.button("Log out"):
-        for k in ("authenticated", "role", "username"):
-            if k in st.session_state:
-                del st.session_state[k]
-        st.rerun()
-
 # ========================
-# ---- Tabs
+# Tabs (main app)
 # ========================
 tabs = ["📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
 if st.session_state.get("role") == "admin":
     tabs.append("⬇ Export Files")
-
 tab_objects = st.tabs(tabs)
 
 # TAB 1 – View Inventory
@@ -214,31 +210,24 @@ with tab_objects[0]:
 # TAB 2 – Transfer Device
 with tab_objects[1]:
     st.subheader("Register Ownership Transfer")
-
     serial_number = st.text_input("Enter Serial Number")
     new_owner = st.text_input("Enter NEW Owner's Name")
     registered_by = st.session_state.get("username", "")
-
     if st.button("Transfer Now", type="primary"):
         if not serial_number.strip() or not new_owner.strip():
             st.error("⚠ All fields are required.")
             st.stop()
-
         df_inventory = load_inventory()
         df_log = load_transfer_log()
-
         if "Serial Number" not in df_inventory.columns:
             st.error("Inventory file is missing 'Serial Number' column.")
             st.stop()
-
         if serial_number not in df_inventory["Serial Number"].values:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
             idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
             from_owner = df_inventory.loc[idx, "USER"] if "USER" in df_inventory.columns else ""
             device_type = df_inventory.loc[idx, "Device Type"] if "Device Type" in df_inventory.columns else ""
-
-            # Update inventory
             if "Previous User" in df_inventory.columns:
                 df_inventory.loc[idx, "Previous User"] = from_owner
             if "USER" in df_inventory.columns:
@@ -249,8 +238,6 @@ with tab_objects[1]:
                 df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             if "Registered by" in df_inventory.columns:
                 df_inventory.loc[idx, "Registered by"] = registered_by
-
-            # Append to transfer log
             log_entry = {
                 "Device Type": device_type,
                 "Serial Number": serial_number,
@@ -260,10 +247,8 @@ with tab_objects[1]:
                 "Registered by": registered_by
             }
             df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
-
             save_inventory(df_inventory)
             save_transfer_log(df_log)
-
             st.success(f"✅ Transfer logged: {from_owner} → {new_owner}")
 
 # TAB 3 – View Transfer Log
@@ -279,8 +264,6 @@ with tab_objects[2]:
 if st.session_state.get("role") == "admin" and len(tab_objects) > 3:
     with tab_objects[3]:
         st.subheader("Download Updated Files")
-
-        # Inventory
         df_inventory = load_inventory()
         out_inv = BytesIO()
         with pd.ExcelWriter(out_inv, engine="openpyxl") as writer:
@@ -289,10 +272,8 @@ if st.session_state.get("role") == "admin" and len(tab_objects) > 3:
             label="⬇ Download Inventory",
             data=out_inv.getvalue(),
             file_name="truckinventory_updated.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
-        # Transfer Log
         df_log = load_transfer_log()
         out_log = BytesIO()
         with pd.ExcelWriter(out_log, engine="openpyxl") as writer:
@@ -301,5 +282,5 @@ if st.session_state.get("role") == "admin" and len(tab_objects) > 3:
             label="⬇ Download Transfer Log",
             data=out_log.getvalue(),
             file_name="transferlog_updated.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
