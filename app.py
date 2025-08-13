@@ -1,9 +1,11 @@
 # app.py — Tracking Inventory System (Streamlit)
+# ✅ New tab: "📝 Register Inventory" to add hardware columns
+# ✅ Auto-add missing columns to existing Excel
 # ✅ Clean header + easy knobs (logo size/placement, fonts, spacing)
 # ✅ Logout row UNDER the header (right-aligned)
 # ✅ Persistent login across refresh (signed token using st.query_params)
 # ✅ Arrow-safe display for mixed-type columns
-# ✅ No deprecated API calls (no experimental_rerun, no use_column_width)
+# ✅ No deprecated API calls
 
 import streamlit as st
 import pandas as pd
@@ -20,16 +22,16 @@ import hashlib
 # ============================
 # 🔧 EASY CONTROLS — Tweak these
 # ============================
-APP_TITLE        = "Tracking Inventory Management System"          # ← Title text
-APP_TAGLINE      = "Advanced Construction"                         # ← Subtitle text
+APP_TITLE        = "AdvancedConstruction"                          # ← Title text
+APP_TAGLINE      = "Tracking Inventory Management System"          # ← Subtitle text
 FONT_FAMILY      = "Times New Roman"                               # ← Global font (system-safe)
-TOP_PADDING_REM  = 2.5                                             # ← Space from very top of page
-MAX_CONTENT_W    = 1300                                            # ← Page max width (px)
+TOP_PADDING_REM  = 1.8                                             # ← Space from very top of page
+MAX_CONTENT_W    = 1100                                            # ← Page max width (px)
 
 # --- Logo controls ---
-LOGO_FILE        = "assets/company_logo.jpeg"                       # ← Path to logo image
-LOGO_WIDTH_PX    = 400                                              # ← Logo width in px (try 120–220)
-LOGO_HEIGHT_PX   = 85                                            # ← Set an int (e.g., 60/80) or None to auto
+LOGO_FILE        = "assets/company_logo.png"                       # ← Path to logo image
+LOGO_WIDTH_PX    = 160                                              # ← Logo width in px (try 120–220)
+LOGO_HEIGHT_PX   = None                                            # ← Set an int (e.g., 60/80) or None to auto
 LOGO_ALT_EMOJI   = "🖥️"                                           # ← Fallback if file missing
 
 # --- Title & tagline sizing ---
@@ -45,6 +47,8 @@ ICON_FILE        = "assets/favicon.png"                             # ← Path t
 
 # --- Security / Login persistence ---
 # Put these in .streamlit/secrets.toml for production:
+# auth_secret = "a-very-long-random-string"
+# users_json = '[{"username":"admin","password":"123","role":"admin"}]'
 AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")      # ← Replace in secrets for production
 
 # ============================
@@ -256,6 +260,15 @@ TRANSFER_LOG_FILE      = TRANSFER_LOG_PRIMARY if os.path.exists(TRANSFER_LOG_PRI
 BACKUP_FOLDER          = "backups"
 os.makedirs(BACKUP_FOLDER, exist_ok=True)
 
+# --- New: required hardware columns for Register tab ---
+HW_COLUMNS = [
+    "Serial Number", "Device Type", "Brand", "Model", "CPU",
+    "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size"
+]
+# meta columns already used elsewhere in app
+META_COLUMNS = ["USER", "Previous User", "TO", "Date issued", "Registered by"]
+ALL_INVENTORY_COLUMNS = HW_COLUMNS + META_COLUMNS
+
 def backup_file(file_path):
     if os.path.exists(file_path):
         base = os.path.basename(file_path).split(".")[0]
@@ -264,8 +277,7 @@ def backup_file(file_path):
 
 def ensure_inventory_file():
     if not os.path.exists(INVENTORY_FILE):
-        cols = ["Device Type", "Serial Number", "USER", "Previous User", "TO", "Date issued", "Registered by"]
-        pd.DataFrame(columns=cols).to_excel(INVENTORY_FILE, index=False)
+        pd.DataFrame(columns=ALL_INVENTORY_COLUMNS).to_excel(INVENTORY_FILE, index=False)
 
 def ensure_transfer_log_file():
     if not os.path.exists(TRANSFER_LOG_FILE):
@@ -274,7 +286,16 @@ def ensure_transfer_log_file():
 
 def load_inventory() -> pd.DataFrame:
     ensure_inventory_file()
-    return pd.read_excel(INVENTORY_FILE)
+    df = pd.read_excel(INVENTORY_FILE)
+    # Auto-add any missing columns to existing file
+    for col in ALL_INVENTORY_COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+    # re-order columns nicely (hardware first, then meta, then any extras)
+    ordered = [c for c in ALL_INVENTORY_COLUMNS if c in df.columns] + \
+              [c for c in df.columns if c not in ALL_INVENTORY_COLUMNS]
+    df = df[ordered]
+    return df
 
 def load_transfer_log() -> pd.DataFrame:
     ensure_transfer_log_file()
@@ -315,25 +336,75 @@ if not st.session_state.get("authenticated", False):
 # ============================
 # TABS (main app)
 # ============================
-tabs = ["📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
+# Order: View Inventory | Register Inventory | Transfer Device | View Transfer Log | (Export Files)
+tabs = ["📦 View Inventory", "📝 Register Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
 if st.session_state.get("role") == "admin":
     tabs.append("⬇ Export Files")
 tab_objects = st.tabs(tabs)
 
 # TAB 1 – View Inventory
 with tab_objects[0]:
-    st.subheader("Main Inventory")
+    st.subheader("Current Inventory")
     df_inventory = load_inventory()
     if st.session_state.get("role") == "admin":
         st.dataframe(for_display(df_inventory), use_container_width=True)
     else:
         st.table(for_display(df_inventory))
 
-# TAB 2 – Transfer Device
+# TAB 2 – 📝 Register Inventory (NEW)
 with tab_objects[1]:
-    st.subheader("Transfer Ownership ")
+    st.subheader("Register New Inventory Item")
+    with st.form("register_inventory_form", clear_on_submit=False):
+        c1, c2 = st.columns(2)
+        with c1:
+            r_serial = st.text_input("Serial Number *")
+            r_device = st.text_input("Device Type *")
+            r_brand  = st.text_input("Brand")
+            r_model  = st.text_input("Model")
+            r_cpu    = st.text_input("CPU")
+        with c2:
+            r_hdd1   = st.text_input("Hard Drive 1")
+            r_hdd2   = st.text_input("Hard Drive 2")
+            r_mem    = st.text_input("Memory")
+            r_gpu    = st.text_input("GPU")
+            r_screen = st.text_input("Screen Size")
+        submitted = st.form_submit_button("Save Item")
+    if submitted:
+        if not r_serial.strip() or not r_device.strip():
+            st.error("Serial Number and Device Type are required.")
+        else:
+            inv = load_inventory()
+            if r_serial.strip() in inv["Serial Number"].astype(str).values:
+                st.error(f"Serial Number '{r_serial}' already exists.")
+            else:
+                new_row = {
+                    "Serial Number": r_serial.strip(),
+                    "Device Type":   r_device.strip(),
+                    "Brand":         r_brand.strip(),
+                    "Model":         r_model.strip(),
+                    "CPU":           r_cpu.strip(),
+                    "Hard Drive 1":  r_hdd1.strip(),
+                    "Hard Drive 2":  r_hdd2.strip(),
+                    "Memory":        r_mem.strip(),
+                    "GPU":           r_gpu.strip(),
+                    "Screen Size":   r_screen.strip(),
+                    # meta columns
+                    "USER":          "",
+                    "Previous User": "",
+                    "TO":            "",
+                    "Date issued":   "",
+                    "Registered by": st.session_state.get("username",""),
+                }
+                inv = pd.concat([inv, pd.DataFrame([new_row])], ignore_index=True)
+                save_inventory(inv)
+                st.success("✅ Inventory item registered.")
+                st.info("Tip: use ‘Transfer Device’ tab to assign this item to a user later.")
+
+# TAB 3 – Transfer Device
+with tab_objects[2]:
+    st.subheader("Register Ownership Transfer")
     serial_number  = st.text_input("Enter Serial Number")
-    new_owner      = st.text_input("Enter  New Name")
+    new_owner      = st.text_input("Enter NEW Owner's Name")
     registered_by  = st.session_state.get("username", "")
     if st.button("Transfer Now", type="primary"):
         if not serial_number.strip() or not new_owner.strip():
@@ -347,10 +418,10 @@ with tab_objects[1]:
             st.error("Inventory file is missing 'Serial Number' column.")
             st.stop()
 
-        if serial_number not in df_inventory["Serial Number"].values:
+        if serial_number not in df_inventory["Serial Number"].astype(str).values:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
-            idx         = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
+            idx         = df_inventory[df_inventory["Serial Number"].astype(str) == serial_number].index[0]
             from_owner  = df_inventory.loc[idx, "USER"] if "USER" in df_inventory.columns else ""
             device_type = df_inventory.loc[idx, "Device Type"] if "Device Type" in df_inventory.columns else ""
 
@@ -374,13 +445,12 @@ with tab_objects[1]:
                 "Registered by": registered_by
             }
             df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
-
             save_inventory(df_inventory)
             save_transfer_log(df_log)
             st.success(f"✅ Transfer logged: {from_owner} → {new_owner}")
 
-# TAB 3 – View Transfer Log
-with tab_objects[2]:
+# TAB 4 – View Transfer Log
+with tab_objects[3]:
     st.subheader("Transfer Log History")
     df_log = load_transfer_log()
     if st.session_state.get("role") == "admin":
@@ -388,9 +458,9 @@ with tab_objects[2]:
     else:
         st.table(for_display(df_log))
 
-# TAB 4 – Export Files (Admins Only)
-if st.session_state.get("role") == "admin" and len(tab_objects) > 3:
-    with tab_objects[3]:
+# TAB 5 – Export Files (Admins Only)
+if st.session_state.get("role") == "admin" and len(tab_objects) > 4:
+    with tab_objects[4]:
         st.subheader("Download Updated Files")
 
         # Inventory export
