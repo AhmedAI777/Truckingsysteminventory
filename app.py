@@ -331,9 +331,9 @@ with tab_objects[0]:
 
 # TAB 2 – Transfer Device
 with tab_objects[1]:
-    st.subheader("Register Ownership Transfer")
+    st.subheader("Transfer Ownership ")
     serial_number  = st.text_input("Enter Serial Number")
-    new_owner      = st.text_input("Enter NEW Owner's Name")
+    new_owner      = st.text_input("Enter  New Name")
     registered_by  = st.session_state.get("username", "")
     if st.button("Transfer Now", type="primary"):
         if not serial_number.strip() or not new_owner.strip():
