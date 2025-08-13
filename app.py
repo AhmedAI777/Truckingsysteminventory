@@ -13,7 +13,7 @@ import base64
 # ========================
 # Branding / Assets
 # ========================
-APP_TITLE   = "AdvancedConstruction"
+APP_TITLE   = "Advanced Construction"
 APP_TAGLINE = "Tracking Inventory Management System"
 EMOJI_FALLBACK = "🖥️"
 
@@ -47,15 +47,15 @@ st.markdown("""
 .header-row {
   display: flex; align-items: center; gap: 16px; margin-top: .3rem;
 }
-.brand-logo { width: 200px; height: auto; } /* adjust for bigger/smaller */
+.brand-logo { width: 600px; height: auto; } /* adjust for bigger/smaller */
 .brand-text-block { display: flex; flex-direction: column; justify-content: center; }
 .brand-title {
-  font-family: "Montserrat", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
+  font-family: "Montserrat", ui-sans-serif, system-ui, -apple-system, "Times New Roman";
   font-weight: 800; letter-spacing: -0.01em; font-size: 40px; margin: 0;
 }
 .brand-tag {
   margin: 2px 0 0; color:#64748b;
-  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Times New Roman";
   font-weight: 500;
 }
 .header-divider { height:1px; background:#e5e7eb; margin:14px 0 20px; }
