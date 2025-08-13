@@ -1,4 +1,5 @@
 # app.py — Streamlit Tracking Inventory
+# Persistent login across refresh + explicit Logout (no auto-logout on refresh)
 # Global Times New Roman font + removed ghost input box
 
 import streamlit as st
@@ -13,7 +14,7 @@ import base64
 # ========================
 # Header / Branding Config
 # ========================
-TITLE_TEXT   = "Advanced Construction"
+TITLE_TEXT   = "AdvancedConstruction"
 TAGLINE_TEXT = "Tracking Inventory Management System"
 
 LOGO_FILE = "assets/company_logo.png"
@@ -105,14 +106,16 @@ def img_to_base64(path: str) -> str:
     return ""
 
 def show_header():
-    # logout button right if logged in
+    # top bar: logout button on the right (when authenticated)
     _, _, r = st.columns([0.85, 0.05, 0.10])
     with r:
         if st.session_state.get("authenticated"):
+            # IMPORTANT: Do NOT st.rerun() and do NOT clear whole session;
+            # just flip the auth flags so refresh doesn't log out automatically.
             if st.button("Log out"):
-                for k in ("authenticated", "role", "username"):
-                    st.session_state.pop(k, None)
-                st.rerun()
+                st.session_state["authenticated"] = False
+                st.session_state["role"] = None
+                st.session_state["username"] = ""
 
     logo_b64 = img_to_base64(LOGO_FILE)
     logo_html = f'<img src="data:image/png;base64,{logo_b64}" class="brand-logo"/>' if logo_b64 else ""
@@ -131,17 +134,20 @@ def show_header():
     st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
 
 # ========================
-# Session defaults
+# Session defaults (persistent across refresh)
 # ========================
-st.session_state.setdefault("authenticated", False)
-st.session_state.setdefault("role", None)
-st.session_state.setdefault("username", "")
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+if "role" not in st.session_state:
+    st.session_state["role"] = None
+if "username" not in st.session_state:
+    st.session_state["username"] = ""
 
 # ========================
 # Users (from secrets)
 # ========================
 try:
-    USERS = json.loads(st.secrets["users_json"])
+    USERS = json.loads(st.secrets["users_json"])  # [{"username":"admin","password":"123","role":"admin"}, ...]
 except Exception:
     st.error("Missing `users_json` in secrets. Example: "
              '[{"username":"admin","password":"123","role":"admin"}]')
@@ -153,7 +159,7 @@ def check_credentials(username: str, password: str):
             return u.get("role")
     return None
 
-# Show header
+# Render header early (so Logout is always visible when logged in)
 show_header()
 
 # ========================
@@ -209,7 +215,7 @@ def save_transfer_log(df: pd.DataFrame):
     normalize_for_display(df).to_excel(TRANSFER_LOG_FILE, index=False)
 
 # ========================
-# Auth
+# Auth (login card)
 # ========================
 if not st.session_state.get("authenticated", False):
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
@@ -223,14 +229,14 @@ if not st.session_state.get("authenticated", False):
             st.session_state["role"] = role
             st.session_state["username"] = in_user
             st.success(f"✅ Logged in as {in_user} ({role})")
-            st.rerun()
+            # No rerun needed; Streamlit will rerun automatically
         else:
             st.error("❌ Invalid username or password")
     st.markdown('</div>', unsafe_allow_html=True)
     st.stop()
 
 # ========================
-# Tabs
+# Tabs (main app)
 # ========================
 tabs = ["📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
 if st.session_state.get("role") == "admin":
