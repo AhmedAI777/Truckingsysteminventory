@@ -47,7 +47,7 @@ st.markdown("""
 .header-row {
   display: flex; align-items: center; gap: 16px; margin-top: .3rem;
 }
-.brand-logo { width: 120px; height: auto; } /* adjust for bigger/smaller */
+.brand-logo { width: 200px; height: auto; } /* adjust for bigger/smaller */
 .brand-text-block { display: flex; flex-direction: column; justify-content: center; }
 .brand-title {
   font-family: "Montserrat", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
