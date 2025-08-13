@@ -24,7 +24,7 @@ APP_TITLE        = "Advanced Construction"                          # ← Title 
 APP_TAGLINE      = "Tracking Inventory Management System"          # ← Subtitle text
 FONT_FAMILY      = "Times New Roman"                               # ← Global font (system-safe)
 TOP_PADDING_REM  = 3                                             # ← Space from very top of page
-MAX_CONTENT_W    = 1500                                          # ← Page max width (px)
+MAX_CONTENT_W    = 1300                                          # ← Page max width (px)
 
 # --- Logo controls ---
 LOGO_FILE        = "assets/company_logo.jpeg"                       # ← Path to logo image
