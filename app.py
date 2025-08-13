@@ -1,9 +1,9 @@
-# app.py — Streamlit Tracking Inventory
-# - Persistent login via signed URL token (st.query_params)
-# - Header: logo + title + Logout aligned far-right (near Share)
-# - Times New Roman styling and tidy spacing
-# - No experimental_rerun, no use_column_width
-# - Arrow-safe UI rendering (for_display) to avoid mixed-type errors
+# app.py — Tracking Inventory System (Streamlit)
+# ✅ Clean header + easy knobs (logo size/placement, fonts, spacing)
+# ✅ Logout row UNDER the header (right-aligned)
+# ✅ Persistent login across refresh (signed token using st.query_params)
+# ✅ Arrow-safe display for mixed-type columns
+# ✅ No deprecated API calls (no experimental_rerun, no use_column_width)
 
 import streamlit as st
 import pandas as pd
@@ -17,70 +17,113 @@ import base64
 import hmac
 import hashlib
 
-# ========================
-# Branding / Header Config
-# ========================
-APP_TITLE   = "AdvancedConstruction"
-APP_TAGLINE = "Tracking Inventory Management System"
+# ============================
+# 🔧 EASY CONTROLS — Tweak these
+# ============================
+APP_TITLE        = "AdvancedConstruction"                          # ← Title text
+APP_TAGLINE      = "Tracking Inventory Management System"          # ← Subtitle text
+FONT_FAMILY      = "Times New Roman"                               # ← Global font (system-safe)
+TOP_PADDING_REM  = 1.8                                             # ← Space from very top of page
+MAX_CONTENT_W    = 1100                                            # ← Page max width (px)
 
-LOGO_FILE = "assets/company_logo.png"
-ICON_FILE = "assets/favicon.png"
+# --- Logo controls ---
+LOGO_FILE        = "assets/company_logo.png"                       # ← Path to logo image
+LOGO_WIDTH_PX    = 160                                              # ← Logo width in px (try 120–220)
+LOGO_HEIGHT_PX   = None                                            # ← Set an int (e.g., 60/80) or None to auto
+LOGO_ALT_EMOJI   = "🖥️"                                           # ← Fallback if file missing
 
-LOGO_WIDTH  = 120        # px for header logo
-TITLE_SIZE  = 44         # px for title
-EMOJI_FALLBACK = "🖥️"
+# --- Title & tagline sizing ---
+TITLE_SIZE_PX    = 46                                               # ← Title font-size (px)
+TAGLINE_SIZE_PX  = 16                                               # ← Tagline font-size (px)
 
-# ========================
-# Page Config
-# ========================
+# --- Spacing around header ---
+GAP_BELOW_HEADER_PX = 16                                            # ← Space below header divider
+LOGOUT_ROW_TOP_MARG = 8                                             # ← Top margin (px) before Logout row
+
+# --- Favicon (optional) ---
+ICON_FILE        = "assets/favicon.png"                             # ← Path to favicon (or leave missing)
+
+# --- Security / Login persistence ---
+# Put these in .streamlit/secrets.toml for production:
+# auth_secret = "a-very-long-random-string"
+# users_json = '[{"username":"admin","password":"123","role":"admin"}]'
+AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")      # ← Replace in secrets for production
+
+# ============================
+# STREAMLIT PAGE CONFIG
+# ============================
 st.set_page_config(
     page_title="Tracking Inventory System",
-    page_icon=ICON_FILE if os.path.exists(ICON_FILE) else EMOJI_FALLBACK,
+    page_icon=ICON_FILE if os.path.exists(ICON_FILE) else LOGO_ALT_EMOJI,
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-# ========================
-# CSS — Times New Roman + header/button polish + spacing
-# ========================
+# ============================
+# GLOBAL CSS (uses the knobs above)
+# ============================
 st.markdown(f"""
 <style>
+/* Global font */
 html, body, .stApp, .stApp * {{
-  font-family: "Times New Roman", Times, serif !important;
+  font-family: "{FONT_FAMILY}", Times, serif !important;
 }}
+
+/* Hide the sidebar completely */
 [data-testid="stSidebar"] {{ display: none !important; }}
 
+/* Page container padding & width */
 .block-container {{
-  padding-top: 1.6rem;   /* comfortable, not too big */
-  max-width: 1100px;
+  padding-top: {TOP_PADDING_REM}rem;
+  max-width: {MAX_CONTENT_W}px;
 }}
 
-/* Header row handled by columns; just size/logo/text styles here */
-.brand-logo {{ width: {LOGO_WIDTH}px; height:auto; }}
-.brand-title {{ font-weight:700; font-size:{TITLE_SIZE}px; margin:0; line-height:1.1; }}
-.brand-tag   {{ margin:2px 0 0; color:#64748b; font-weight:400; }}
-.header-divider {{ height:1px; background:#e5e7eb; margin:12px 0 18px; }}
+.brand-title {{
+  font-weight: 700;
+  font-size: {TITLE_SIZE_PX}px;   /* ← change TITLE_SIZE_PX above */
+  margin: 0;
+  line-height: 1.1;
+}}
+.brand-tag {{
+  margin: 2px 0 0;
+  color: #64748b;
+  font-weight: 400;
+  font-size: {TAGLINE_SIZE_PX}px; /* ← change TAGLINE_SIZE_PX above */
+}}
 
-/* Buttons */
+.header-divider {{
+  height: 1px;
+  background: #e5e7eb;
+  margin: 10px 0 {GAP_BELOW_HEADER_PX}px;  /* ← change GAP_BELOW_HEADER_PX above */
+}}
+
+.logout-row {{ margin-top: {LOGOUT_ROW_TOP_MARG}px; }}  /* ← change LOGOUT_ROW_TOP_MARG above */
+
+/* Button sizing/shape consistent with Streamlit toolbar */
 .stButton > button {{
-  height: 38px; padding: 0 .9rem; border-radius: 8px; font-weight: 600;
+  height: 38px;
+  padding: 0 .9rem;
+  border-radius: 8px;
+  font-weight: 600;
 }}
 .logout-col .stButton > button {{
-  background:#f3f4f6; color:#111827; border:1px solid #e5e7eb;
+  background: #f3f4f6;
+  color: #111827;
+  border: 1px solid #e5e7eb;
 }}
-.logout-col .stButton > button:hover {{ background:#e5e7eb; }}
+.logout-col .stButton > button:hover {{ background: #e5e7eb; }}
 
-/* Tabs + subheaders spacing */
+/* Tiny breathing room for tabs & subheaders */
 .stTabs {{ margin-top: 6px; }}
 section[tabindex="0"] h2 {{ margin-top: 8px; }}
 
-#MainMenu, footer {{ visibility:hidden; }}
+#MainMenu, footer {{ visibility: hidden; }}
 </style>
 """, unsafe_allow_html=True)
 
-# ========================
-# Session defaults
-# ========================
+# ============================
+# SESSION DEFAULTS
+# ============================
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "role" not in st.session_state:
@@ -88,16 +131,16 @@ if "role" not in st.session_state:
 if "username" not in st.session_state:
     st.session_state["username"] = ""
 
-# ========================
-# Secrets / Users
-# ========================
-AUTH_SECRET = st.secrets.get("auth_secret", "change-me")  # set strong value in .streamlit/secrets.toml
-
+# ============================
+# USERS (from secrets)
+# ============================
 try:
     USERS = json.loads(st.secrets["users_json"])
 except Exception:
-    st.error("Missing `users_json` in secrets. Example: "
-             '[{"username":"admin","password":"123","role":"admin"}]')
+    st.error(
+        "Missing `users_json` in secrets. Example: "
+        '`[{"username":"admin","password":"123","role":"admin"}]`'
+    )
     st.stop()
 
 def get_user_role(username: str):
@@ -106,9 +149,9 @@ def get_user_role(username: str):
             return u.get("role")
     return None
 
-# ========================
-# Token helpers (URL-based persistence) — st.query_params
-# ========================
+# ============================
+# URL TOKEN (persistent login across refresh)
+# ============================
 def make_token(username: str) -> str:
     return hmac.new(
         AUTH_SECRET.encode("utf-8"),
@@ -117,7 +160,6 @@ def make_token(username: str) -> str:
     ).hexdigest()
 
 def set_auth_query_params(username: str):
-    # Keep URL clean with only our needed params
     st.query_params.clear()
     st.query_params.update({"u": username, "t": make_token(username)})
 
@@ -125,7 +167,6 @@ def clear_auth_query_params():
     st.query_params.clear()
 
 def try_auto_login_from_url():
-    """If URL has valid ?u=<user>&t=<token>, set authenticated session after refresh."""
     if st.session_state.get("authenticated"):
         return
     params = st.query_params
@@ -133,29 +174,53 @@ def try_auto_login_from_url():
     t = params.get("t")
     if not u or not t:
         return
-    expected = make_token(u)
-    if hmac.compare_digest(t, expected):
+    if hmac.compare_digest(t, make_token(u)):
         role = get_user_role(u)
         if role:
             st.session_state["authenticated"] = True
             st.session_state["username"] = u
             st.session_state["role"] = role
 
-# Try auto-login BEFORE UI renders
 try_auto_login_from_url()
 
-# ========================
-# Header (logo | title | spacer | logout aligned right)
-# ========================
+# ============================
+# SMALL UTILS
+# ============================
+def img_to_base64(path: str) -> str | None:
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+    return None
+
+def logo_html(src_path: str, width_px: int, height_px: int | None, alt_emoji: str) -> str:
+    """
+    Renders logo with exact width/height via HTML (so you can control BOTH).
+    - Set height_px to None to keep aspect ratio (auto height).
+    """
+    b64 = img_to_base64(src_path)
+    if not b64:
+        return f"<div style='font-size:{int(width_px*0.7)}px;line-height:1'>{alt_emoji}</div>"
+    h_style = f"height:{height_px}px;" if height_px else ""
+    return f"<img src='data:image/png;base64,{b64}' alt='logo' style='width:{width_px}px;{h_style}display:block;'/>"
+
+# Arrow-safe display-only copy (keeps NaN empty, casts to str)
+def for_display(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    out = out.replace({np.nan: ""})
+    for c in out.columns:
+        out[c] = out[c].astype(str)
+    return out
+
+# ============================
+# HEADER (row1: logo+title, row2: logout right)
+# ============================
 def show_header():
-    c_logo, c_text, c_spacer, c_btn = st.columns([0.12, 0.68, 0.10, 0.10])
-
+    # Row 1 — Logo + Text
+    c_logo, c_text = st.columns([0.16, 0.84])
     with c_logo:
-        if os.path.exists(LOGO_FILE):
-            st.image(LOGO_FILE, width=LOGO_WIDTH)  # fixed width (no deprecated param)
-        else:
-            st.markdown(f"<div style='font-size:44px;line-height:1'>{EMOJI_FALLBACK}</div>", unsafe_allow_html=True)
-
+        st.markdown(logo_html(LOGO_FILE, LOGO_WIDTH_PX, LOGO_HEIGHT_PX, LOGO_ALT_EMOJI), unsafe_allow_html=True)
     with c_text:
         st.markdown(
             f"<h1 class='brand-title'>{APP_TITLE}</h1>"
@@ -163,11 +228,10 @@ def show_header():
             unsafe_allow_html=True
         )
 
-    with c_spacer:
-        st.empty()  # push logout fully to the right (near Share)
-
-    with c_btn:
-        st.markdown("<div class='logout-col'></div>", unsafe_allow_html=True)
+    # Row 2 — Logout (right-aligned, below header)
+    s, btn = st.columns([0.85, 0.15])
+    with btn:
+        st.markdown("<div class='logout-col logout-row'>", unsafe_allow_html=True)
         if st.session_state.get("authenticated"):
             if st.button("Logout", use_container_width=True, key="logout_btn"):
                 st.session_state["authenticated"] = False
@@ -175,23 +239,23 @@ def show_header():
                 st.session_state["username"] = ""
                 clear_auth_query_params()
                 st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
+    # Divider under both rows
     st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
 
 show_header()
 
-# ========================
-# Files & Helpers
-# ========================
-INVENTORY_FILE = "truckinventory.xlsx"
-TRANSFER_LOG_PRIMARY = "transferlog.xlsx"
-TRANSFER_LOG_ALT = "transferlogin.xlsx"
-TRANSFER_LOG_FILE = (
-    TRANSFER_LOG_PRIMARY if os.path.exists(TRANSFER_LOG_PRIMARY)
-    else (TRANSFER_LOG_ALT if os.path.exists(TRANSFER_LOG_ALT) else TRANSFER_LOG_PRIMARY)
-)
+# ============================
+# FILES & HELPERS
+# ============================
+INVENTORY_FILE         = "truckinventory.xlsx"
+TRANSFER_LOG_PRIMARY   = "transferlog.xlsx"
+TRANSFER_LOG_ALT       = "transferlogin.xlsx"
+TRANSFER_LOG_FILE      = TRANSFER_LOG_PRIMARY if os.path.exists(TRANSFER_LOG_PRIMARY) else (
+                         TRANSFER_LOG_ALT if os.path.exists(TRANSFER_LOG_ALT) else TRANSFER_LOG_PRIMARY)
 
-BACKUP_FOLDER = "backups"
+BACKUP_FOLDER          = "backups"
 os.makedirs(BACKUP_FOLDER, exist_ok=True)
 
 def backup_file(file_path):
@@ -226,19 +290,9 @@ def save_transfer_log(df: pd.DataFrame):
     backup_file(TRANSFER_LOG_FILE)
     df.to_excel(TRANSFER_LOG_FILE, index=False)
 
-# Arrow-safe display-only copy (keeps NaN as empty strings and casts to str)
-def for_display(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return df
-    out = df.copy()
-    out = out.replace({np.nan: ""})
-    for c in out.columns:
-        out[c] = out[c].astype(str)
-    return out
-
-# ========================
-# Auth (login card)
-# ========================
+# ============================
+# AUTH (login card)
+# ============================
 if not st.session_state.get("authenticated", False):
     st.subheader("Sign in")
     in_user = st.text_input("Username", placeholder="your.username")
@@ -247,7 +301,8 @@ if not st.session_state.get("authenticated", False):
         role = None
         for u in USERS:
             if u.get("username") == in_user and u.get("password") == in_pass:
-                role = u.get("role"); break
+                role = u.get("role")
+                break
         if role:
             st.session_state["authenticated"] = True
             st.session_state["role"] = role
@@ -259,9 +314,9 @@ if not st.session_state.get("authenticated", False):
             st.error("❌ Invalid username or password")
     st.stop()
 
-# ========================
-# Tabs (main app)
-# ========================
+# ============================
+# TABS (main app)
+# ============================
 tabs = ["📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
 if st.session_state.get("role") == "admin":
     tabs.append("⬇ Export Files")
@@ -279,16 +334,16 @@ with tab_objects[0]:
 # TAB 2 – Transfer Device
 with tab_objects[1]:
     st.subheader("Register Ownership Transfer")
-    serial_number = st.text_input("Enter Serial Number")
-    new_owner = st.text_input("Enter NEW Owner's Name")
-    registered_by = st.session_state.get("username", "")
+    serial_number  = st.text_input("Enter Serial Number")
+    new_owner      = st.text_input("Enter NEW Owner's Name")
+    registered_by  = st.session_state.get("username", "")
     if st.button("Transfer Now", type="primary"):
         if not serial_number.strip() or not new_owner.strip():
             st.error("⚠ All fields are required.")
             st.stop()
 
         df_inventory = load_inventory()
-        df_log = load_transfer_log()
+        df_log       = load_transfer_log()
 
         if "Serial Number" not in df_inventory.columns:
             st.error("Inventory file is missing 'Serial Number' column.")
@@ -297,7 +352,7 @@ with tab_objects[1]:
         if serial_number not in df_inventory["Serial Number"].values:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
-            idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
+            idx         = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
             from_owner  = df_inventory.loc[idx, "USER"] if "USER" in df_inventory.columns else ""
             device_type = df_inventory.loc[idx, "Device Type"] if "Device Type" in df_inventory.columns else ""
 
@@ -306,7 +361,7 @@ with tab_objects[1]:
             if "USER" in df_inventory.columns:
                 df_inventory.loc[idx, "USER"] = new_owner
             if "TO" in df_inventory.columns:
-                df_inventory.loc[idx, "TO"] = new_owner
+                df_inventory.loc[idx, "TO"]  = new_owner
             if "Date issued" in df_inventory.columns:
                 df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
             if "Registered by" in df_inventory.columns:
@@ -321,6 +376,7 @@ with tab_objects[1]:
                 "Registered by": registered_by
             }
             df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
+
             save_inventory(df_inventory)
             save_transfer_log(df_log)
             st.success(f"✅ Transfer logged: {from_owner} → {new_owner}")
