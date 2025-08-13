@@ -322,7 +322,7 @@ tab_objects = st.tabs(tabs)
 
 # TAB 1 – View Inventory
 with tab_objects[0]:
-    st.subheader("Current Inventory")
+    st.subheader("Main Inventory")
     df_inventory = load_inventory()
     if st.session_state.get("role") == "admin":
         st.dataframe(for_display(df_inventory), use_container_width=True)
