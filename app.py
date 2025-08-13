@@ -1,4 +1,4 @@
-# app.py — Streamlit Tracking Inventory (no sidebar, top-left logo, clean layout)
+# app.py — Streamlit Tracking Inventory (no sidebar, top-left logo, custom font)
 
 import streamlit as st
 import pandas as pd
@@ -24,39 +24,35 @@ ICON_FILE = "assets/favicon.png"
 # ========================
 st.set_page_config(
     page_title="Tracking Inventory System",
-    page_icon=ICON_FILE if os.path.exists(ICON_FILE) else EMOJI_FALLBACK,
+    page_icon=ICON_FILE if os.path.exists(ICON_FILE) else EMOJI_FALLBACK,  # path or emoji
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
 # ========================
-# Global CSS (hide sidebar, nicer header + login card)
+# Global CSS (hide sidebar, nicer header + login card, custom fonts)
 # ========================
 st.markdown("""
 <style>
-/* Load a clean, bold brand font (change to another Google font if you like) */
-@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&family=Inter:wght@400;600&display=swap');
+/* Load brand fonts (change to any Google font you like) */
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&family=Inter:wght@400;500;600&display=swap');
 
-/* Hide sidebar (you already collapsed it) */
+/* Hide the left sidebar completely */
 [data-testid="stSidebar"] { display: none !important; }
 
 /* Page width & padding */
-.block-container { padding-top: 1.75rem; max-width: 1100px; }
+.block-container { padding-top: 1.6rem; max-width: 1100px; }
 
-/* Header */
-.app-header { display:flex; align-items:center; gap:14px; }
-.brand-logo { height: 44px; width: auto; border-radius: 8px; }  /* 44px tall logo */
-.title-wrap { display:flex; flex-direction:column; }
+/* Header layout */
 .brand-title {
   font-family: "Montserrat", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
   font-weight: 800; letter-spacing: -0.01em; font-size: 38px; margin: 0;
 }
 .brand-tag {
-  margin: 2px 0 0; color:#64748b;
+  margin: 3px 0 0; color:#64748b;
   font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
+  font-weight: 500;
 }
-
-/* Divider under header */
 .header-divider { height:1px; background:#e5e7eb; margin:12px 0 20px; }
 
 /* Login card + controls */
@@ -81,7 +77,7 @@ st.session_state.setdefault("username", "")
 # Users (from secrets)
 # ========================
 try:
-    USERS = json.loads(st.secrets["users_json"])
+    USERS = json.loads(st.secrets["users_json"])  # [{"username":"admin","password":"123","role":"admin"}, ...]
 except Exception:
     st.error("Missing `users_json` in secrets. Example: "
              '[{"username":"admin","password":"123","role":"admin"}]')
@@ -94,30 +90,37 @@ def check_credentials(username: str, password: str):
     return None
 
 # ========================
-# Header (logo top-left + title; logout top-right when signed in)
+# Header (logo top-left + title/tagline + optional logout top-right)
 # ========================
 def show_header():
-    logo_src = LOGO_FILE if (LOGO_FILE and os.path.exists(LOGO_FILE)) else None
-    st.markdown('<div class="app-header">', unsafe_allow_html=True)
+    # 3-column header: logo | title | logout
+    c_logo, c_text, c_btn = st.columns([0.11, 0.74, 0.15])
 
-    # Logo (top-left)
-    if logo_src:
-        st.markdown(f'<img src="{logo_src}" class="brand-logo">', unsafe_allow_html=True)
-    else:
-        st.markdown('<div style="font-size:44px;line-height:1">🖥️</div>', unsafe_allow_html=True)
+    with c_logo:
+        if os.path.exists(LOGO_FILE):
+            # Adjust width for your taste (48–64 is good)
+            st.image(LOGO_FILE, width=56)
+        else:
+            st.markdown("<div style='font-size:44px;line-height:1'>🖥️</div>", unsafe_allow_html=True)
 
-    # Title + tagline
-    st.markdown(
-        f'<div class="title-wrap">'
-        f'  <h1 class="brand-title">{APP_TITLE}</h1>'
-        f'  <div class="brand-tag">{APP_TAGLINE}</div>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
+    with c_text:
+        st.markdown(
+            f"<h1 class='brand-title'>{APP_TITLE}</h1>"
+            f"<div class='brand-tag'>{APP_TAGLINE}</div>",
+            unsafe_allow_html=True
+        )
 
-    st.markdown('</div>', unsafe_allow_html=True)
+    with c_btn:
+        if st.session_state.get("authenticated"):
+            if st.button("Log out"):
+                for k in ("authenticated", "role", "username"):
+                    if k in st.session_state:
+                        del st.session_state[k]
+                st.rerun()
+
     st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
 
+show_header()
 
 # ========================
 # Files & Helpers
@@ -125,8 +128,10 @@ def show_header():
 INVENTORY_FILE = "truckinventory.xlsx"
 TRANSFER_LOG_PRIMARY = "transferlog.xlsx"
 TRANSFER_LOG_ALT = "transferlogin.xlsx"
-TRANSFER_LOG_FILE = (TRANSFER_LOG_PRIMARY if os.path.exists(TRANSFER_LOG_PRIMARY)
-                     else (TRANSFER_LOG_ALT if os.path.exists(TRANSFER_LOG_ALT) else TRANSFER_LOG_PRIMARY))
+TRANSFER_LOG_FILE = (
+    TRANSFER_LOG_PRIMARY if os.path.exists(TRANSFER_LOG_PRIMARY)
+    else (TRANSFER_LOG_ALT if os.path.exists(TRANSFER_LOG_ALT) else TRANSFER_LOG_PRIMARY)
+)
 
 BACKUP_FOLDER = "backups"
 os.makedirs(BACKUP_FOLDER, exist_ok=True)
