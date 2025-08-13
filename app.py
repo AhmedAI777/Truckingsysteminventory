@@ -1,5 +1,5 @@
 # app.py — Streamlit Tracking Inventory
-# Flexible header (change logo place/size/font/alignment via variables)
+# Flexible header (Times New Roman + easy size/place controls) + no 'assets' mkdir
 
 import streamlit as st
 import pandas as pd
@@ -13,38 +13,36 @@ import base64
 # ========================
 # Header / Branding Config (edit these only)
 # ========================
-TITLE_TEXT   = "Advanced Construction"
+TITLE_TEXT   = "AdvancedConstruction"
 TAGLINE_TEXT = "Tracking Inventory Management System"
 
-# Logo & favicon paths
+# Logo & favicon paths (folder must already exist; we do NOT create it here)
 LOGO_FILE = "assets/company_logo.png"
 ICON_FILE = "assets/favicon.png"
 
 # Easy styling knobs
-LOGO_WIDTH  = 350                 # px
-TITLE_FONT  = "Times New Roman"        # Google Font name
+LOGO_WIDTH  = 140                 # px
+TITLE_FONT  = "Times New Roman"   # system font
 TITLE_SIZE  = 44                  # px
 ALIGNMENT   = "left"              # "left" | "center" | "right"
 
-favicon = "🖥️"             # used if favicon not found
+EMOJI_FALLBACK = "🖥️"             # used if favicon not found
 
 # ========================
 # Page Config (first Streamlit call)
 # ========================
 st.set_page_config(
     page_title="Tracking Inventory System",
-    page_icon=ICON_FILE if os.path.exists(ICON_FILE) else favicon,
+    page_icon=ICON_FILE if os.path.exists(ICON_FILE) else EMOJI_FALLBACK,
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
 # ========================
-# Global CSS (uses variables above)
+# Global CSS (Times New Roman; no Google Fonts import)
 # ========================
 st.markdown(f"""
 <style>
-# @import url('https://fonts.googleapis.com/css2?family={TITLE_FONT.replace(" ", "+")}:wght@700;800&family=Inter:wght@400;500;600&display=swap');
-
 /* Hide sidebar */
 [data-testid="stSidebar"] {{ display: none !important; }}
 
@@ -61,15 +59,16 @@ st.markdown(f"""
 .brand-logo {{ width: {LOGO_WIDTH}px; height: auto; }}
 .brand-text-block {{ display: flex; flex-direction: column; justify-content: center; }}
 .brand-title {{
-  font-family: "{TITLE_FONT}", ui-sans-serif, system-ui, -apple-system, "Times New Roman";
+  font-family: "{TITLE_FONT}", "Times New Roman", Times, serif;
   font-weight: 800;
   letter-spacing: -0.01em;
   font-size: {TITLE_SIZE}px;
   margin: 0;
 }}
 .brand-tag {{
-  margin: 2px 0 0; color:#64748b;
-  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Times New Roman";
+  margin: 2px 0 0;
+  color:#64748b;
+  font-family: "Times New Roman", Times, serif;
   font-weight: 500;
 }}
 .header-divider {{ height:1px; background:#e5e7eb; margin:14px 0 20px; }}
@@ -162,7 +161,7 @@ TRANSFER_LOG_FILE = (
 )
 
 BACKUP_FOLDER = "backups"
-os.makedirs(BACKUP_FOLDER, exist_ok=True)
+os.makedirs(BACKUP_FOLDER, exist_ok=True)  # safe: won't error if exists
 
 def backup_file(file_path):
     if os.path.exists(file_path):
