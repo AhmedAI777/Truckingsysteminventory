@@ -1,6 +1,8 @@
 # app.py — Streamlit Tracking Inventory
-# Persistent login via signed URL token (using st.query_params)
-# Times New Roman styling + no ghost input + explicit Logout
+# - Header: logo + title + Logout aligned at far-right (near Share), consistent size
+# - Persistent login via signed URL token (st.query_params)
+# - Times New Roman styling + no ghost input
+# - Fixed Export (no unclosed parentheses)
 
 import streamlit as st
 import pandas as pd
@@ -14,7 +16,7 @@ import hmac
 import hashlib
 
 # ========================
-# Header / Branding Config
+# Branding / Header Config
 # ========================
 TITLE_TEXT   = "AdvancedConstruction"
 TAGLINE_TEXT = "Tracking Inventory Management System"
@@ -22,9 +24,8 @@ TAGLINE_TEXT = "Tracking Inventory Management System"
 LOGO_FILE = "assets/company_logo.png"
 ICON_FILE = "assets/favicon.png"
 
-LOGO_WIDTH  = 140
-TITLE_SIZE  = 44
-ALIGNMENT   = "left"  # "left" | "center" | "right"
+LOGO_WIDTH  = 140           # px
+TITLE_SIZE  = 44            # px
 EMOJI_FALLBACK = "🖥️"
 
 # ========================
@@ -38,45 +39,70 @@ st.set_page_config(
 )
 
 # ========================
-# CSS — Times New Roman + cleanup
+# CSS — Times New Roman + header/button polish
 # ========================
 st.markdown(f"""
 <style>
+/* Global font */
 html, body, .stApp, .stApp * {{
   font-family: "Times New Roman", Times, serif !important;
 }}
+
+/* Hide sidebar completely */
 [data-testid="stSidebar"] {{ display: none !important; }}
-.block-container {{ padding-top: 1.4rem; max-width: 1100px; }}
 
-/* Header */
-.header-row {{
-  display: flex; align-items: center; gap: 16px;
-  justify-content: {"flex-start" if ALIGNMENT=="left" else "center" if ALIGNMENT=="center" else "flex-end"};
+/* Page width & padding */
+.block-container {{ padding-top: 1.1rem; max-width: 1100px; }}
+
+/* Header divider */
+.header-divider {{ height:1px; background:#e5e7eb; margin:12px 0 16px; }}
+
+/* Header title/tagline */
+.brand-title {{ font-weight:700; font-size:{TITLE_SIZE}px; margin:0; line-height:1.1; }}
+.brand-tag   {{ margin:2px 0 0; color:#64748b; font-weight:400; }}
+
+/* Logo size */
+.brand-logo {{ width:{LOGO_WIDTH}px; height:auto; }}
+
+/* Make buttons compact like top-right controls */
+.stButton > button {{
+  height: 38px;               /* close to Share menu height */
+  padding: 0 .9rem;
+  border-radius: 8px;
+  font-weight: 600;
 }}
-.brand-logo {{ width: {LOGO_WIDTH}px; height: auto; }}
-.brand-text-block {{ display: flex; flex-direction: column; justify-content: center; }}
-.brand-title {{ font-weight: 700; font-size: {TITLE_SIZE}px; margin: 0; }}
-.brand-tag {{ margin: 2px 0 0; color:#64748b; font-weight: 400; }}
-.header-divider {{ height:1px; background:#e5e7eb; margin:14px 0 20px; }}
 
-/* Login card + inputs */
-.login-card {{ background:#fff; border-radius:14px; padding:22px;
-  box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0; }}
-.stButton>button {{ border-radius:10px; font-weight:600; padding:.55rem 1.0rem; }}
+/* Specific color for Logout so it's visible but clean */
+.logout-col .stButton > button {{
+  background:#f3f4f6;
+  color:#111827;
+  border:1px solid #e5e7eb;
+}}
+.logout-col .stButton > button:hover {{
+  background:#e5e7eb;
+}}
+
+/* Login card */
+.login-card {{
+  background:#fff; border-radius:14px; padding:22px;
+  box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0;
+}}
 .stTextInput input {{ border-radius:10px !important; }}
 
-body {{ background: #fafafa; }}
+/* Optional chrome + subtle bg */
+body {{ background:#fafafa; }}
 #MainMenu, footer {{visibility:hidden;}}
 
-/* Hide any stray empty input after header */
+/* Hide any stray empty input after header (safety) */
 .header-divider ~ div [data-testid="stTextInput"]:first-of-type input[placeholder=""] {{
-  display:none !important; visibility:hidden !important; height:0 !important; padding:0 !important; margin:0 !important; border:0 !important; box-shadow:none !important;
+  display:none !important; visibility:hidden !important; height:0 !important;
+  padding:0 !important; margin:0 !important; border:0 !important; box-shadow:none !important;
 }}
 </style>
 """, unsafe_allow_html=True)
 
 # ========================
-# Session defaults (persistent across refresh)
+# Session defaults
 # ========================
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
@@ -88,7 +114,7 @@ if "username" not in st.session_state:
 # ========================
 # Secrets / Users
 # ========================
-AUTH_SECRET = st.secrets.get("auth_secret", "change-me")  # set strong value in secrets.toml
+AUTH_SECRET = st.secrets.get("auth_secret", "change-me")  # set strong value in .streamlit/secrets.toml
 
 try:
     USERS = json.loads(st.secrets["users_json"])
@@ -104,7 +130,7 @@ def get_user_role(username: str):
     return None
 
 # ========================
-# Token helpers (URL-based persistence) — NEW st.query_params
+# Token helpers (URL-based persistence) — st.query_params
 # ========================
 def make_token(username: str) -> str:
     return hmac.new(
@@ -114,7 +140,7 @@ def make_token(username: str) -> str:
     ).hexdigest()
 
 def set_auth_query_params(username: str):
-    # keep only our params for cleanliness
+    # Keep URL clean with only our needed params
     st.query_params.clear()
     st.query_params.update({"u": username, "t": make_token(username)})
 
@@ -122,16 +148,14 @@ def clear_auth_query_params():
     st.query_params.clear()
 
 def try_auto_login_from_url():
-    """If URL has valid ?u=<user>&t=<token>, auto-set authenticated session."""
+    """If URL has valid ?u=<user>&t=<token>, auto-set authenticated session after refresh."""
     if st.session_state.get("authenticated"):
-        return  # already logged in
-
+        return
     params = st.query_params
     u = params.get("u")
     t = params.get("t")
     if not u or not t:
         return
-
     expected = make_token(u)
     if hmac.compare_digest(t, expected):
         role = get_user_role(u)
@@ -140,11 +164,11 @@ def try_auto_login_from_url():
             st.session_state["username"] = u
             st.session_state["role"] = role
 
-# Try auto-login BEFORE rendering UI
+# Try auto-login BEFORE UI renders
 try_auto_login_from_url()
 
 # ========================
-# Header
+# Header (logo | title | spacer | logout aligned right)
 # ========================
 def img_to_base64(path: str) -> str:
     if os.path.exists(path):
@@ -153,38 +177,44 @@ def img_to_base64(path: str) -> str:
     return ""
 
 def show_header():
-    # Right-aligned logout button (only when authenticated)
-    _, _, r = st.columns([0.85, 0.05, 0.10])
-    with r:
+    c_logo, c_text, c_spacer, c_btn = st.columns([0.12, 0.68, 0.10, 0.10])
+
+    with c_logo:
+        if os.path.exists(LOGO_FILE):
+            st.image(LOGO_FILE, use_column_width=False, output_format="PNG", width=LOGO_WIDTH)
+        else:
+            st.markdown(f"<div style='font-size:44px;line-height:1'>{EMOJI_FALLBACK}</div>", unsafe_allow_html=True)
+
+    with c_text:
+        st.markdown(
+            f"<h1 class='brand-title'>{TITLE_TEXT}</h1>"
+            f"<div class='brand-tag'>{TAGLINE_TEXT}</div>",
+            unsafe_allow_html=True
+        )
+
+    with c_spacer:
+        st.empty()  # pushes the button to the far right (visually next to Share)
+
+    with c_btn:
+        # Style scope via class on the column
+        st.markdown("<div class='logout-col'></div>", unsafe_allow_html=True)
         if st.session_state.get("authenticated"):
-            if st.button("Log out"):
-                # Clear session flags and URL token; do NOT clear whole session or rerun
+            if st.button("Logout", use_container_width=True, key="logout_btn"):
+                # Clear only auth flags and URL token; no full session clear
                 st.session_state["authenticated"] = False
                 st.session_state["role"] = None
                 st.session_state["username"] = ""
                 clear_auth_query_params()
+                # Rerun to immediately show login card
+                st.rerun()
 
-    logo_b64 = img_to_base64(LOGO_FILE)
-    logo_html = f'<img src="data:image/png;base64,{logo_b64}" class="brand-logo"/>' if logo_b64 else ""
-    st.markdown(
-        f"""
-        <div class="header-row">
-            {logo_html}
-            <div class="brand-text-block">
-                <h1 class="brand-title">{TITLE_TEXT}</h1>
-                <div class="brand-tag">{TAGLINE_TEXT}</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
     st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
 
-# Render header (shows Logout when logged in)
+# Render header
 show_header()
 
 # ========================
-# File paths & helpers
+# Files & Helpers
 # ========================
 INVENTORY_FILE = "truckinventory.xlsx"
 TRANSFER_LOG_PRIMARY = "transferlog.xlsx"
@@ -244,20 +274,15 @@ if not st.session_state.get("authenticated", False):
     in_user = st.text_input("Username", placeholder="your.username")
     in_pass = st.text_input("Password", type="password", placeholder="••••••••")
     if st.button("Login", type="primary"):
-        # Check creds
         role = None
         for u in USERS:
             if u.get("username") == in_user and u.get("password") == in_pass:
-                role = u.get("role")
-                break
-
+                role = u.get("role"); break
         if role:
-            # Set session flags
             st.session_state["authenticated"] = True
             st.session_state["role"] = role
             st.session_state["username"] = in_user
-            # Persist login in URL with new API
-            set_auth_query_params(in_user)
+            set_auth_query_params(in_user)  # persist via URL
             st.success(f"✅ Logged in as {in_user} ({role})")
         else:
             st.error("❌ Invalid username or password")
@@ -338,6 +363,7 @@ with tab_objects[2]:
         st.dataframe(df_log, use_container_width=True)
     else:
         st.table(df_log)
+
 # TAB 4 – Export Files (Admins Only)
 if st.session_state.get("role") == "admin" and len(tab_objects) > 3:
     with tab_objects[3]:
