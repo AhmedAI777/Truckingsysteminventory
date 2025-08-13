@@ -1,6 +1,6 @@
 # app.py — Streamlit Tracking Inventory
-# Persistent login across refresh + explicit Logout (no auto-logout on refresh)
-# Global Times New Roman font + removed ghost input box
+# Persistent login across refresh using signed URL token + explicit Logout
+# Times New Roman styling + no ghost input
 
 import streamlit as st
 import pandas as pd
@@ -10,6 +10,8 @@ import json
 import os
 import shutil
 import base64
+import hmac
+import hashlib
 
 # ========================
 # Header / Branding Config
@@ -23,7 +25,6 @@ ICON_FILE = "assets/favicon.png"
 LOGO_WIDTH  = 140
 TITLE_SIZE  = 44
 ALIGNMENT   = "left"  # "left" | "center" | "right"
-
 EMOJI_FALLBACK = "🖥️"
 
 # ========================
@@ -41,63 +42,108 @@ st.set_page_config(
 # ========================
 st.markdown(f"""
 <style>
-/* ===== Global font: Times New Roman ===== */
 html, body, .stApp, .stApp * {{
   font-family: "Times New Roman", Times, serif !important;
 }}
-
-/* Hide sidebar */
 [data-testid="stSidebar"] {{ display: none !important; }}
-
-/* Page width & padding */
 .block-container {{ padding-top: 1.4rem; max-width: 1100px; }}
 
-/* --- Header row --- */
+/* Header */
 .header-row {{
   display: flex; align-items: center; gap: 16px;
   justify-content: {"flex-start" if ALIGNMENT=="left" else "center" if ALIGNMENT=="center" else "flex-end"};
 }}
 .brand-logo {{ width: {LOGO_WIDTH}px; height: auto; }}
 .brand-text-block {{ display: flex; flex-direction: column; justify-content: center; }}
-.brand-title {{
-  font-weight: 700;
-  font-size: {TITLE_SIZE}px;
-  margin: 0;
-}}
-.brand-tag {{
-  margin: 2px 0 0;
-  color:#64748b;
-  font-weight: 400;
-}}
+.brand-title {{ font-weight: 700; font-size: {TITLE_SIZE}px; margin: 0; }}
+.brand-tag {{ margin: 2px 0 0; color:#64748b; font-weight: 400; }}
 .header-divider {{ height:1px; background:#e5e7eb; margin:14px 0 20px; }}
 
 /* Login card + inputs */
-.login-card {{
-  background:#fff; border-radius:14px; padding:22px;
-  box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0;
-}}
+.login-card {{ background:#fff; border-radius:14px; padding:22px;
+  box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0; }}
 .stButton>button {{ border-radius:10px; font-weight:600; padding:.55rem 1.0rem; }}
 .stTextInput input {{ border-radius:10px !important; }}
 
-/* Optional chrome + subtle bg */
 body {{ background: #fafafa; }}
 #MainMenu, footer {{visibility:hidden;}}
 
-/* ===== Remove ghost empty input if present ===== */
+/* Hide any stray empty input after header */
 .header-divider ~ div [data-testid="stTextInput"]:first-of-type input[placeholder=""] {{
-  display: none !important;
-  visibility: hidden !important;
-  height: 0 !important;
-  padding: 0 !important;
-  margin: 0 !important;
-  border: 0 !important;
-  box-shadow: none !important;
+  display:none !important; visibility:hidden !important; height:0 !important; padding:0 !important; margin:0 !important; border:0 !important; box-shadow:none !important;
 }}
 </style>
 """, unsafe_allow_html=True)
 
 # ========================
-# Helpers
+# Session defaults (persistent across refresh)
+# ========================
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+if "role" not in st.session_state:
+    st.session_state["role"] = None
+if "username" not in st.session_state:
+    st.session_state["username"] = ""
+
+# ========================
+# Secrets / Users
+# ========================
+AUTH_SECRET = st.secrets.get("auth_secret", "change-me")  # set a strong value in secrets.toml
+
+try:
+    USERS = json.loads(st.secrets["users_json"])
+except Exception:
+    st.error("Missing `users_json` in secrets. Example: "
+             '[{"username":"admin","password":"123","role":"admin"}]')
+    st.stop()
+
+def get_user_role(username: str):
+    for u in USERS:
+        if u.get("username") == username:
+            return u.get("role")
+    return None
+
+# ========================
+# Token helpers (URL-based persistence)
+# ========================
+def make_token(username: str) -> str:
+    return hmac.new(
+        AUTH_SECRET.encode("utf-8"),
+        msg=username.encode("utf-8"),
+        digestmod=hashlib.sha256
+    ).hexdigest()
+
+def set_auth_query_params(username: str):
+    st.experimental_set_query_params(u=username, t=make_token(username))
+
+def clear_auth_query_params():
+    # Clears all query params
+    st.experimental_set_query_params()
+
+def try_auto_login_from_url():
+    """If URL has valid ?u=<user>&t=<token>, auto-set authenticated session."""
+    if st.session_state.get("authenticated"):
+        return  # already logged in
+
+    params = st.experimental_get_query_params()
+    u = params.get("u", [None])[0]
+    t = params.get("t", [None])[0]
+    if not u or not t:
+        return
+
+    expected = make_token(u)
+    if hmac.compare_digest(t, expected):
+        role = get_user_role(u)
+        if role:
+            st.session_state["authenticated"] = True
+            st.session_state["username"] = u
+            st.session_state["role"] = role
+
+# Try auto-login BEFORE rendering UI
+try_auto_login_from_url()
+
+# ========================
+# Header
 # ========================
 def img_to_base64(path: str) -> str:
     if os.path.exists(path):
@@ -106,16 +152,17 @@ def img_to_base64(path: str) -> str:
     return ""
 
 def show_header():
-    # top bar: logout button on the right (when authenticated)
+    # Right-aligned logout button (only when authenticated)
     _, _, r = st.columns([0.85, 0.05, 0.10])
     with r:
         if st.session_state.get("authenticated"):
-            # IMPORTANT: Do NOT st.rerun() and do NOT clear whole session;
-            # just flip the auth flags so refresh doesn't log out automatically.
             if st.button("Log out"):
+                # Clear session flags
                 st.session_state["authenticated"] = False
                 st.session_state["role"] = None
                 st.session_state["username"] = ""
+                # Clear URL token
+                clear_auth_query_params()
 
     logo_b64 = img_to_base64(LOGO_FILE)
     logo_html = f'<img src="data:image/png;base64,{logo_b64}" class="brand-logo"/>' if logo_b64 else ""
@@ -133,33 +180,7 @@ def show_header():
     )
     st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
 
-# ========================
-# Session defaults (persistent across refresh)
-# ========================
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
-if "role" not in st.session_state:
-    st.session_state["role"] = None
-if "username" not in st.session_state:
-    st.session_state["username"] = ""
-
-# ========================
-# Users (from secrets)
-# ========================
-try:
-    USERS = json.loads(st.secrets["users_json"])  # [{"username":"admin","password":"123","role":"admin"}, ...]
-except Exception:
-    st.error("Missing `users_json` in secrets. Example: "
-             '[{"username":"admin","password":"123","role":"admin"}]')
-    st.stop()
-
-def check_credentials(username: str, password: str):
-    for u in USERS:
-        if u.get("username") == username and u.get("password") == password:
-            return u.get("role")
-    return None
-
-# Render header early (so Logout is always visible when logged in)
+# Render header (shows Logout when logged in)
 show_header()
 
 # ========================
@@ -223,13 +244,21 @@ if not st.session_state.get("authenticated", False):
     in_user = st.text_input("Username", placeholder="your.username")
     in_pass = st.text_input("Password", type="password", placeholder="••••••••")
     if st.button("Login", type="primary"):
-        role = check_credentials(in_user, in_pass)
+        # Check creds
+        role = None
+        for u in USERS:
+            if u.get("username") == in_user and u.get("password") == in_pass:
+                role = u.get("role")
+                break
+
         if role:
+            # Set session flags
             st.session_state["authenticated"] = True
             st.session_state["role"] = role
             st.session_state["username"] = in_user
+            # Persist login in URL
+            set_auth_query_params(in_user)
             st.success(f"✅ Logged in as {in_user} ({role})")
-            # No rerun needed; Streamlit will rerun automatically
         else:
             st.error("❌ Invalid username or password")
     st.markdown('</div>', unsafe_allow_html=True)
