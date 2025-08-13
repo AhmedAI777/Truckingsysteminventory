@@ -33,7 +33,7 @@ favicon = "🖥️"             # used if favicon not found
 # ========================
 st.set_page_config(
     page_title="Tracking Inventory System",
-    page_icon=ICON_FILE if os.path.exists(ICON_FILE) else EMOJI_FALLBACK,
+    page_icon=ICON_FILE if os.path.exists(ICON_FILE) else favicon,
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -61,7 +61,7 @@ st.markdown(f"""
 .brand-logo {{ width: {LOGO_WIDTH}px; height: auto; }}
 .brand-text-block {{ display: flex; flex-direction: column; justify-content: center; }}
 .brand-title {{
-  font-family: "{TITLE_FONT}", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
+  font-family: "{TITLE_FONT}", ui-sans-serif, system-ui, -apple-system, "Times New Roman";
   font-weight: 800;
   letter-spacing: -0.01em;
   font-size: {TITLE_SIZE}px;
@@ -69,7 +69,7 @@ st.markdown(f"""
 }}
 .brand-tag {{
   margin: 2px 0 0; color:#64748b;
-  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Times New Roman";
   font-weight: 500;
 }}
 .header-divider {{ height:1px; background:#e5e7eb; margin:14px 0 20px; }}
