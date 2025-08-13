@@ -23,7 +23,7 @@ import hashlib
 APP_TITLE        = "Advanced Construction"                          # ← Title text
 APP_TAGLINE      = "Tracking Inventory Management System"          # ← Subtitle text
 FONT_FAMILY      = "Times New Roman"                               # ← Global font (system-safe)
-TOP_PADDING_REM  = 3                                             # ← Space from very top of page
+TOP_PADDING_REM  = 2.5                                             # ← Space from very top of page
 MAX_CONTENT_W    = 1300                                          # ← Page max width (px)
 
 # --- Logo controls ---
