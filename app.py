@@ -20,11 +20,11 @@ import hashlib
 # ============================
 # 🔧 EASY CONTROLS — Tweak these
 # ============================
-APP_TITLE        = "Advanced Construction"                          # ← Title text
-APP_TAGLINE      = "Tracking Inventory Management System"          # ← Subtitle text
+APP_TITLE        = "Tracking Inventory Management System"          # ← Title text
+APP_TAGLINE      = "Advanced Construction"                         # ← Subtitle text
 FONT_FAMILY      = "Times New Roman"                               # ← Global font (system-safe)
 TOP_PADDING_REM  = 2.5                                             # ← Space from very top of page
-MAX_CONTENT_W    = 1300                                          # ← Page max width (px)
+MAX_CONTENT_W    = 1300                                            # ← Page max width (px)
 
 # --- Logo controls ---
 LOGO_FILE        = "assets/company_logo.jpeg"                       # ← Path to logo image
