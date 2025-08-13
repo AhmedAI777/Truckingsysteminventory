@@ -16,7 +16,7 @@ import hashlib
 # ========================
 # Header / Branding Config
 # ========================
-TITLE_TEXT   = "Advanced Construction"
+TITLE_TEXT   = "AdvancedConstruction"
 TAGLINE_TEXT = "Tracking Inventory Management System"
 
 LOGO_FILE = "assets/company_logo.png"
