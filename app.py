@@ -338,25 +338,33 @@ with tab_objects[2]:
         st.dataframe(df_log, use_container_width=True)
     else:
         st.table(df_log)
-
 # TAB 4 – Export Files (Admins Only)
 if st.session_state.get("role") == "admin" and len(tab_objects) > 3:
     with tab_objects[3]:
         st.subheader("Download Updated Files")
+
+        # Inventory export
         df_inventory = load_inventory()
         out_inv = BytesIO()
         with pd.ExcelWriter(out_inv, engine="openpyxl") as writer:
             df_inventory.to_excel(writer, index=False)
+        out_inv.seek(0)
         st.download_button(
             label="⬇ Download Inventory",
             data=out_inv.getvalue(),
             file_name="truckinventory_updated.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
+        # Transfer log export
         df_log = load_transfer_log()
         out_log = BytesIO()
         with pd.ExcelWriter(out_log, engine="openpyxl") as writer:
             df_log.to_excel(writer, index=False)
+        out_log.seek(0)
         st.download_button(
             label="⬇ Download Transfer Log",
+            data=out_log.getvalue(),
+            file_name="transferlog_updated.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
