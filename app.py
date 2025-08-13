@@ -1,4 +1,5 @@
-# app.py — Streamlit Tracking Inventory (centered brand header + working logo)
+# app.py — Streamlit Tracking Inventory
+# (Left-aligned header row with bigger logo, no duplicate logo, polished UI)
 
 import streamlit as st
 import pandas as pd
@@ -16,63 +17,63 @@ APP_TITLE   = "AdvancedConstruction"
 APP_TAGLINE = "Tracking Inventory Management System"
 EMOJI_FALLBACK = "🖥️"
 
-# Use repo images
-LOGO_FILE = "assets/company_logo.png"
-ICON_FILE = "assets/favicon.png"
+LOGO_FILE = "assets/company_logo.png"   # put your logo here
+ICON_FILE = "assets/favicon.png"        # optional favicon
 
 # ========================
 # Page Config (first Streamlit call)
 # ========================
 st.set_page_config(
     page_title="Tracking Inventory System",
-    page_icon=ICON_FILE if os.path.exists(ICON_FILE) else EMOJI_FALLBACK,  # path or emoji
+    page_icon=ICON_FILE if os.path.exists(ICON_FILE) else EMOJI_FALLBACK,
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
 # ========================
-# Global CSS (hide sidebar, centered header, custom fonts)
+# Global CSS (hide sidebar, nice header/login, custom fonts)
 # ========================
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&family=Inter:wght@400;500;600&display=swap');
 
+/* Hide the left sidebar completely */
 [data-testid="stSidebar"] { display: none !important; }
-.block-container { padding-top: 1.6rem; max-width: 1100px; }
 
-/* --- centered header --- */
-.header-wrap{
-  display:flex; flex-direction:column; align-items:center; justify-content:center;
-  text-align:center; gap:6px; margin-top:.3rem;
+/* Page width & padding */
+.block-container { padding-top: 1.4rem; max-width: 1100px; }
+
+/* --- header row (left aligned) --- */
+.header-row {
+  display: flex; align-items: center; gap: 16px; margin-top: .3rem;
 }
-.brand-logo{ width:72px; height:auto; }
+.brand-logo { width: 120px; height: auto; } /* adjust for bigger/smaller */
+.brand-text-block { display: flex; flex-direction: column; justify-content: center; }
 .brand-title {
-  font-family:"Montserrat", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
-  font-weight:800; letter-spacing:-0.01em; font-size:38px; margin:0;
+  font-family: "Montserrat", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
+  font-weight: 800; letter-spacing: -0.01em; font-size: 40px; margin: 0;
 }
 .brand-tag {
-  margin:0; color:#64748b;
-  font-family:"Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
-  font-weight:500;
+  margin: 2px 0 0; color:#64748b;
+  font-family: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI";
+  font-weight: 500;
 }
 .header-divider { height:1px; background:#e5e7eb; margin:14px 0 20px; }
 
-/* login card + inputs */
-.login-card {
-  background:#fff; border-radius:14px; padding:22px;
-  box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0;
-}
+/* Login card + controls */
+.login-card { background:#fff; border-radius:14px; padding:22px;
+  box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0; }
 .stButton>button { border-radius:10px; font-weight:600; padding:.55rem 1.0rem; }
 .stTextInput input { border-radius:10px !important; }
 
-/* subtle page polish */
+/* Optional: hide Streamlit chrome + subtle bg */
 body { background: #fafafa; }
 #MainMenu, footer {visibility:hidden;}
 </style>
 """, unsafe_allow_html=True)
 
 # ========================
-# Small helper: reliable logo display
+# Helper: reliable logo display (avoids relative-path issues)
 # ========================
 def img_to_base64(path: str) -> str:
     if os.path.exists(path):
@@ -81,7 +82,7 @@ def img_to_base64(path: str) -> str:
     return ""
 
 # ========================
-# Session defaults (avoid AttributeError)
+# Session defaults
 # ========================
 st.session_state.setdefault("authenticated", False)
 st.session_state.setdefault("role", None)
@@ -104,32 +105,32 @@ def check_credentials(username: str, password: str):
     return None
 
 # ========================
-# Header (centered brand + optional logout top-right)
+# Header (left-aligned logo + text; logout at top-right when logged in)
 # ========================
 def show_header():
-    # logout button stays top-right when logged in
-    top_l, top_c, top_r = st.columns([0.33, 0.34, 0.33])
-    with top_r:
+    # top bar for logout button on the right
+    _l, _c, r = st.columns([0.85, 0.05, 0.10])
+    with r:
         if st.session_state.get("authenticated"):
             if st.button("Log out"):
                 for k in ("authenticated", "role", "username"):
                     st.session_state.pop(k, None)
                 st.rerun()
 
-    # centered brand block
+    # Logo + text row (left aligned). No duplicate logo anywhere else.
     logo_b64 = img_to_base64(LOGO_FILE)
     logo_html = (
         f'<img src="data:image/png;base64,{logo_b64}" class="brand-logo"/>'
-        if logo_b64
-        else f"<div style='font-size:44px;line-height:1'>{EMOJI_FALLBACK}</div>"
+        if logo_b64 else f"<div style='font-size:44px;line-height:1'>{EMOJI_FALLBACK}</div>"
     )
-
     st.markdown(
         f"""
-        <div class="header-wrap">
+        <div class="header-row">
             {logo_html}
-            <h1 class="brand-title">{APP_TITLE}</h1>
-            <div class="brand-tag">{APP_TAGLINE}</div>
+            <div class="brand-text-block">
+                <h1 class="brand-title">{APP_TITLE}</h1>
+                <div class="brand-tag">{APP_TAGLINE}</div>
+            </div>
         </div>
         """,
         unsafe_allow_html=True
@@ -191,7 +192,7 @@ def save_transfer_log(df: pd.DataFrame):
     normalize_for_display(df).to_excel(TRANSFER_LOG_FILE, index=False)
 
 # ========================
-# Auth (centered login card)
+# Auth (centered login card on page)
 # ========================
 if not st.session_state.get("authenticated", False):
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
@@ -240,15 +241,18 @@ with tab_objects[1]:
             st.stop()
         df_inventory = load_inventory()
         df_log = load_transfer_log()
+
         if "Serial Number" not in df_inventory.columns:
             st.error("Inventory file is missing 'Serial Number' column.")
             st.stop()
+
         if serial_number not in df_inventory["Serial Number"].values:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
             idx = df_inventory[df_inventory["Serial Number"] == serial_number].index[0]
             from_owner = df_inventory.loc[idx, "USER"] if "USER" in df_inventory.columns else ""
             device_type = df_inventory.loc[idx, "Device Type"] if "Device Type" in df_inventory.columns else ""
+
             if "Previous User" in df_inventory.columns:
                 df_inventory.loc[idx, "Previous User"] = from_owner
             if "USER" in df_inventory.columns:
