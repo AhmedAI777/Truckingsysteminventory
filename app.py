@@ -21,7 +21,7 @@ LOGO_FILE = "assets/company_logo.png"
 ICON_FILE = "assets/favicon.png"
 
 # Easy styling knobs
-LOGO_WIDTH  = 500                 # px
+LOGO_WIDTH  = 350                 # px
 TITLE_FONT  = "Times New Roman"        # Google Font name
 TITLE_SIZE  = 44                  # px
 ALIGNMENT   = "left"              # "left" | "center" | "right"
@@ -43,7 +43,7 @@ st.set_page_config(
 # ========================
 st.markdown(f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family={TITLE_FONT.replace(" ", "+")}:wght@700;800&family=Inter:wght@400;500;600&display=swap');
+# @import url('https://fonts.googleapis.com/css2?family={TITLE_FONT.replace(" ", "+")}:wght@700;800&family=Inter:wght@400;500;600&display=swap');
 
 /* Hide sidebar */
 [data-testid="stSidebar"] {{ display: none !important; }}
