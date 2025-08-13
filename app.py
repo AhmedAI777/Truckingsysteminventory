@@ -7,7 +7,7 @@ from io import BytesIO
 import json
 import os
 import shutil
-from PIL import Image
+from PIL import Image  # ok to keep even if not strictly needed
 
 # ========================
 # ---- Branding / Assets
@@ -41,7 +41,7 @@ ICON_FILE = pick_asset(USER_ICON_ABS, REPO_ICON)
 # ========================
 st.set_page_config(
     page_title="Tracking Inventory System",
-    page_icon=Image.open(ICON_FILE) if ICON_FILE else EMOJI_FALLBACK,
+    page_icon=ICON_FILE if ICON_FILE else EMOJI_FALLBACK,  # use path or emoji
     layout="wide",
 )
 
@@ -110,7 +110,15 @@ show_header()
 # ---- Files & Helpers
 # ========================
 INVENTORY_FILE = "truckinventory.xlsx"
-TRANSFER_LOG_FILE = "transferlog.xlsx"
+
+# Use whichever transfer log file exists; otherwise default to transferlog.xlsx
+TRANSFER_LOG_PRIMARY = "transferlog.xlsx"
+TRANSFER_LOG_ALT = "transferlogin.xlsx"
+TRANSFER_LOG_FILE = (
+    TRANSFER_LOG_PRIMARY if os.path.exists(TRANSFER_LOG_PRIMARY)
+    else (TRANSFER_LOG_ALT if os.path.exists(TRANSFER_LOG_ALT) else TRANSFER_LOG_PRIMARY)
+)
+
 BACKUP_FOLDER = "backups"
 os.makedirs(BACKUP_FOLDER, exist_ok=True)
 
@@ -131,17 +139,18 @@ def ensure_inventory_file():
         cols = ["Device Type", "Serial Number", "USER", "Previous User", "TO", "Date issued", "Registered by"]
         pd.DataFrame(columns=cols).to_excel(INVENTORY_FILE, index=False)
 
+def ensure_transfer_log_file():
+    if not os.path.exists(TRANSFER_LOG_FILE):
+        cols = ["Device Type", "Serial Number", "From owner", "To owner", "Date issued", "Registered by"]
+        pd.DataFrame(columns=cols).to_excel(TRANSFER_LOG_FILE, index=False)
+
 def load_inventory() -> pd.DataFrame:
     ensure_inventory_file()
     df = pd.read_excel(INVENTORY_FILE)
     return normalize_columns_for_display(df)
 
 def load_transfer_log() -> pd.DataFrame:
-    if not os.path.exists(TRANSFER_LOG_FILE):
-        pd.DataFrame(columns=[
-            "Device Type", "Serial Number", "From owner", "To owner",
-            "Date issued", "Registered by"
-        ]).to_excel(TRANSFER_LOG_FILE, index=False)
+    ensure_transfer_log_file()
     df = pd.read_excel(TRANSFER_LOG_FILE)
     return normalize_columns_for_display(df)
 
