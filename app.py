@@ -23,13 +23,13 @@ import hashlib
 APP_TITLE        = "Advanced Construction"                          # ← Title text
 APP_TAGLINE      = "Tracking Inventory Management System"          # ← Subtitle text
 FONT_FAMILY      = "Times New Roman"                               # ← Global font (system-safe)
-TOP_PADDING_REM  = 2.5                                             # ← Space from very top of page
-MAX_CONTENT_W    = 1250                                          # ← Page max width (px)
+TOP_PADDING_REM  = 3                                             # ← Space from very top of page
+MAX_CONTENT_W    = 1500                                          # ← Page max width (px)
 
 # --- Logo controls ---
 LOGO_FILE        = "assets/company_logo.png"                       # ← Path to logo image
-LOGO_WIDTH_PX    = 500                                              # ← Logo width in px (try 120–220)
-LOGO_HEIGHT_PX   = 90                                            # ← Set an int (e.g., 60/80) or None to auto
+LOGO_WIDTH_PX    = 400                                              # ← Logo width in px (try 120–220)
+LOGO_HEIGHT_PX   = 85                                            # ← Set an int (e.g., 60/80) or None to auto
 LOGO_ALT_EMOJI   = "🖥️"                                           # ← Fallback if file missing
 
 # --- Title & tagline sizing ---
