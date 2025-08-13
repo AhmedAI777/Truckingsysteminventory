@@ -7,6 +7,7 @@ from io import BytesIO
 import json
 import os
 import shutil
+import base64
 
 # ========================
 # Branding / Assets
