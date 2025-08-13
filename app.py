@@ -1,5 +1,5 @@
 # app.py — Streamlit Tracking Inventory
-# Flexible header (Times New Roman + easy size/place controls) + no 'assets' mkdir
+# Global Times New Roman font + removed ghost input box
 
 import streamlit as st
 import pandas as pd
@@ -11,25 +11,22 @@ import shutil
 import base64
 
 # ========================
-# Header / Branding Config (edit these only)
+# Header / Branding Config
 # ========================
 TITLE_TEXT   = "AdvancedConstruction"
 TAGLINE_TEXT = "Tracking Inventory Management System"
 
-# Logo & favicon paths (folder must already exist; we do NOT create it here)
 LOGO_FILE = "assets/company_logo.png"
 ICON_FILE = "assets/favicon.png"
 
-# Easy styling knobs
-LOGO_WIDTH  = 140                 # px
-TITLE_FONT  = "Times New Roman"   # system font
-TITLE_SIZE  = 44                  # px
-ALIGNMENT   = "left"              # "left" | "center" | "right"
+LOGO_WIDTH  = 140
+TITLE_SIZE  = 44
+ALIGNMENT   = "left"  # "left" | "center" | "right"
 
-EMOJI_FALLBACK = "🖥️"             # used if favicon not found
+EMOJI_FALLBACK = "🖥️"
 
 # ========================
-# Page Config (first Streamlit call)
+# Page Config
 # ========================
 st.set_page_config(
     page_title="Tracking Inventory System",
@@ -39,63 +36,54 @@ st.set_page_config(
 )
 
 # ========================
-# Global CSS (Times New Roman; no Google Fonts import)
+# CSS — Times New Roman + cleanup
 # ========================
-st.markdown("""
+st.markdown(f"""
 <style>
-/* ===== Global font: force Times New Roman everywhere ===== */
-html, body, .stApp, .stApp * {
+/* ===== Global font: Times New Roman ===== */
+html, body, .stApp, .stApp * {{
   font-family: "Times New Roman", Times, serif !important;
-}
+}}
 
 /* Hide sidebar */
-[data-testid="stSidebar"] { display: none !important; }
+[data-testid="stSidebar"] {{ display: none !important; }}
 
 /* Page width & padding */
-.block-container { padding-top: 1.4rem; max-width: 1100px; }
+.block-container {{ padding-top: 1.4rem; max-width: 1100px; }}
 
-/* --- Header row (logo + text) --- */
-.header-row {
+/* --- Header row --- */
+.header-row {{
   display: flex; align-items: center; gap: 16px;
-  justify-content: flex-start;  /* change if you want center/right */
-}
-.brand-logo { width: 140px; height: auto; }   /* tweak width to resize logo */
-.brand-text-block { display: flex; flex-direction: column; justify-content: center; }
-
-/* Title & tagline (explicit Times, override any old rules) */
-.brand-title {
-  font-family: "Times New Roman", Times, serif !important;
-  font-weight: 700;                /* 700 works better than 800 for TNR */
-  letter-spacing: 0;               /* TNR looks best without negative tracking */
-  font-size: 44px;                 /* change to your taste */
+  justify-content: {"flex-start" if ALIGNMENT=="left" else "center" if ALIGNMENT=="center" else "flex-end"};
+}}
+.brand-logo {{ width: {LOGO_WIDTH}px; height: auto; }}
+.brand-text-block {{ display: flex; flex-direction: column; justify-content: center; }}
+.brand-title {{
+  font-weight: 700;
+  font-size: {TITLE_SIZE}px;
   margin: 0;
-}
-.brand-tag {
+}}
+.brand-tag {{
   margin: 2px 0 0;
   color:#64748b;
-  font-family: "Times New Roman", Times, serif !important;
   font-weight: 400;
-}
-
-/* Divider */
-.header-divider { height:1px; background:#e5e7eb; margin:14px 0 20px; }
+}}
+.header-divider {{ height:1px; background:#e5e7eb; margin:14px 0 20px; }}
 
 /* Login card + inputs */
-.login-card {
+.login-card {{
   background:#fff; border-radius:14px; padding:22px;
   box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0;
-}
-.stButton>button { border-radius:10px; font-weight:600; padding:.55rem 1.0rem; }
-.stTextInput input { border-radius:10px !important; }
+}}
+.stButton>button {{ border-radius:10px; font-weight:600; padding:.55rem 1.0rem; }}
+.stTextInput input {{ border-radius:10px !important; }}
 
 /* Optional chrome + subtle bg */
-body { background: #fafafa; }
-#MainMenu, footer {visibility:hidden;}
+body {{ background: #fafafa; }}
+#MainMenu, footer {{visibility:hidden;}}
 
-/* ===== Kill the stray empty input under the header (if any) ===== */
-/* If some older code left an unlabeled text input right after the header,
-   this hides the FIRST orphan text input that appears before the "Sign in" block. */
-.header-divider ~ div [data-testid="stTextInput"]:first-of-type input[placeholder=""] {
+/* ===== Remove ghost empty input if present ===== */
+.header-divider ~ div [data-testid="stTextInput"]:first-of-type input[placeholder=""] {{
   display: none !important;
   visibility: hidden !important;
   height: 0 !important;
@@ -103,9 +91,44 @@ body { background: #fafafa; }
   margin: 0 !important;
   border: 0 !important;
   box-shadow: none !important;
-}
+}}
 </style>
 """, unsafe_allow_html=True)
+
+# ========================
+# Helpers
+# ========================
+def img_to_base64(path: str) -> str:
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+    return ""
+
+def show_header():
+    # logout button right if logged in
+    _, _, r = st.columns([0.85, 0.05, 0.10])
+    with r:
+        if st.session_state.get("authenticated"):
+            if st.button("Log out"):
+                for k in ("authenticated", "role", "username"):
+                    st.session_state.pop(k, None)
+                st.rerun()
+
+    logo_b64 = img_to_base64(LOGO_FILE)
+    logo_html = f'<img src="data:image/png;base64,{logo_b64}" class="brand-logo"/>' if logo_b64 else ""
+    st.markdown(
+        f"""
+        <div class="header-row">
+            {logo_html}
+            <div class="brand-text-block">
+                <h1 class="brand-title">{TITLE_TEXT}</h1>
+                <div class="brand-tag">{TAGLINE_TEXT}</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
 
 # ========================
 # Session defaults
@@ -118,7 +141,7 @@ st.session_state.setdefault("username", "")
 # Users (from secrets)
 # ========================
 try:
-    USERS = json.loads(st.secrets["users_json"])  # [{"username":"admin","password":"123","role":"admin"}, ...]
+    USERS = json.loads(st.secrets["users_json"])
 except Exception:
     st.error("Missing `users_json` in secrets. Example: "
              '[{"username":"admin","password":"123","role":"admin"}]')
@@ -130,11 +153,11 @@ def check_credentials(username: str, password: str):
             return u.get("role")
     return None
 
-# Render header now (after CSS + session state)
+# Show header
 show_header()
 
 # ========================
-# Files & Helpers
+# File paths & helpers
 # ========================
 INVENTORY_FILE = "truckinventory.xlsx"
 TRANSFER_LOG_PRIMARY = "transferlog.xlsx"
@@ -145,7 +168,7 @@ TRANSFER_LOG_FILE = (
 )
 
 BACKUP_FOLDER = "backups"
-os.makedirs(BACKUP_FOLDER, exist_ok=True)  # safe: won't error if exists
+os.makedirs(BACKUP_FOLDER, exist_ok=True)
 
 def backup_file(file_path):
     if os.path.exists(file_path):
@@ -186,7 +209,7 @@ def save_transfer_log(df: pd.DataFrame):
     normalize_for_display(df).to_excel(TRANSFER_LOG_FILE, index=False)
 
 # ========================
-# Auth (login card)
+# Auth
 # ========================
 if not st.session_state.get("authenticated", False):
     st.markdown('<div class="login-card">', unsafe_allow_html=True)
@@ -207,7 +230,7 @@ if not st.session_state.get("authenticated", False):
     st.stop()
 
 # ========================
-# Tabs (main app)
+# Tabs
 # ========================
 tabs = ["📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
 if st.session_state.get("role") == "admin":
