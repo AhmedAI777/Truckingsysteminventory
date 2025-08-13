@@ -41,87 +41,71 @@ st.set_page_config(
 # ========================
 # Global CSS (Times New Roman; no Google Fonts import)
 # ========================
-st.markdown(f"""
+st.markdown("""
 <style>
+/* ===== Global font: force Times New Roman everywhere ===== */
+html, body, .stApp, .stApp * {
+  font-family: "Times New Roman", Times, serif !important;
+}
+
 /* Hide sidebar */
-[data-testid="stSidebar"] {{ display: none !important; }}
+[data-testid="stSidebar"] { display: none !important; }
 
 /* Page width & padding */
-.block-container {{ padding-top: 1.4rem; max-width: 1100px; }}
+.block-container { padding-top: 1.4rem; max-width: 1100px; }
 
 /* --- Header row (logo + text) --- */
-.header-row {{
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  justify-content: {"flex-start" if ALIGNMENT=="left" else "center" if ALIGNMENT=="center" else "flex-end"};
-}}
-.brand-logo {{ width: {LOGO_WIDTH}px; height: auto; }}
-.brand-text-block {{ display: flex; flex-direction: column; justify-content: center; }}
-.brand-title {{
-  font-family: "{TITLE_FONT}", "Times New Roman", Times, serif;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-  font-size: {TITLE_SIZE}px;
+.header-row {
+  display: flex; align-items: center; gap: 16px;
+  justify-content: flex-start;  /* change if you want center/right */
+}
+.brand-logo { width: 140px; height: auto; }   /* tweak width to resize logo */
+.brand-text-block { display: flex; flex-direction: column; justify-content: center; }
+
+/* Title & tagline (explicit Times, override any old rules) */
+.brand-title {
+  font-family: "Times New Roman", Times, serif !important;
+  font-weight: 700;                /* 700 works better than 800 for TNR */
+  letter-spacing: 0;               /* TNR looks best without negative tracking */
+  font-size: 44px;                 /* change to your taste */
   margin: 0;
-}}
-.brand-tag {{
+}
+.brand-tag {
   margin: 2px 0 0;
   color:#64748b;
-  font-family: "Times New Roman", Times, serif;
-  font-weight: 500;
-}}
-.header-divider {{ height:1px; background:#e5e7eb; margin:14px 0 20px; }}
+  font-family: "Times New Roman", Times, serif !important;
+  font-weight: 400;
+}
+
+/* Divider */
+.header-divider { height:1px; background:#e5e7eb; margin:14px 0 20px; }
 
 /* Login card + inputs */
-.login-card {{
+.login-card {
   background:#fff; border-radius:14px; padding:22px;
   box-shadow:0 2px 14px rgba(15,23,42,.08); max-width:560px; margin:14px auto 0;
-}}
-.stButton>button {{ border-radius:10px; font-weight:600; padding:.55rem 1.0rem; }}
-.stTextInput input {{ border-radius:10px !important; }}
+}
+.stButton>button { border-radius:10px; font-weight:600; padding:.55rem 1.0rem; }
+.stTextInput input { border-radius:10px !important; }
 
 /* Optional chrome + subtle bg */
-body {{ background: #fafafa; }}
-#MainMenu, footer {{visibility:hidden;}}
+body { background: #fafafa; }
+#MainMenu, footer {visibility:hidden;}
+
+/* ===== Kill the stray empty input under the header (if any) ===== */
+/* If some older code left an unlabeled text input right after the header,
+   this hides the FIRST orphan text input that appears before the "Sign in" block. */
+.header-divider ~ div [data-testid="stTextInput"]:first-of-type input[placeholder=""] {
+  display: none !important;
+  visibility: hidden !important;
+  height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
 </style>
 """, unsafe_allow_html=True)
-
-# ========================
-# Helpers
-# ========================
-def img_to_base64(path: str) -> str:
-    if os.path.exists(path):
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode("utf-8")
-    return ""
-
-def show_header():
-    # top bar: logout button on the right (when authenticated)
-    _, _, r = st.columns([0.85, 0.05, 0.10])
-    with r:
-        if st.session_state.get("authenticated"):
-            if st.button("Log out"):
-                for k in ("authenticated", "role", "username"):
-                    st.session_state.pop(k, None)
-                st.rerun()
-
-    # logo + text (no duplicate icons)
-    logo_b64 = img_to_base64(LOGO_FILE)
-    logo_html = f'<img src="data:image/png;base64,{logo_b64}" class="brand-logo"/>' if logo_b64 else ""
-    st.markdown(
-        f"""
-        <div class="header-row">
-            {logo_html}
-            <div class="brand-text-block">
-                <h1 class="brand-title">{TITLE_TEXT}</h1>
-                <div class="brand-tag">{TAGLINE_TEXT}</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-    st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
 
 # ========================
 # Session defaults
