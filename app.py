@@ -1102,6 +1102,24 @@ import base64
 import hmac
 import hashlib
 import tempfile
+import gspread
+import streamlit as st
+
+if st.button("🧪 Test Google Sheets connection"):
+    try:
+        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+        sh = gc.open_by_url(st.secrets["sheet_url"])
+        inv = sh.worksheet("Inventory")   # must match tab name
+        vals = inv.get_all_values()
+        st.success(f"Connected as {st.secrets['gcp_service_account']['client_email']}. "
+                   f"Inventory rows (incl. header): {len(vals)}")
+
+        # Optional write test (comment out if you don't want to touch data)
+        # inv.update_acell("A2", "CONNECTION_OK")
+        # st.info("Wrote 'CONNECTION_OK' to Inventory!A2")
+    except Exception as e:
+        st.error(f"Sheets connection failed: {e!r}")
+
 
 # ============================
 # EASY CONTROLS
