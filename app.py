@@ -556,6 +556,10 @@
 # Tabs: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device,
 #       4) 📜 View Transfer Log, 5) ⬇ Export Files
 
+# app.py — Tracking Inventory System (Streamlit)
+# Tabs: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device,
+#       4) 📜 View Transfer Log, 5) ⬇ Export Files
+
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -568,6 +572,7 @@ import shutil
 import base64
 import hmac
 import hashlib
+import tempfile
 
 # ============================
 # EASY CONTROLS
@@ -829,16 +834,31 @@ def bust_transfer_log_cache():
 def load_transfer_log() -> pd.DataFrame:
     return _read_transfer_log_file(TRANSFER_LOG_FILE)
 
-# -------- Atomic Excel write (FIXED: use .xlsx suffix) --------
-def _atomic_write_excel(df: pd.DataFrame, path: str):
+# -------- Atomic Excel write (always .xlsx suffix) --------
+def _atomic_write_excel(df: pd.DataFrame, path: str) -> None:
     """
-    Write to a temporary .xlsx next to the target, then atomically replace.
-    Avoids the 'Invalid extension for engine ... tmp' error.
+    Write DataFrame to a temporary .xlsx next to `path`, then atomically replace `path`.
+    Avoids 'Invalid extension for engine ... tmp' errors.
     """
-    tmp = f"{path}.tmp.xlsx"   # ensure a valid Excel extension
-    with pd.ExcelWriter(tmp, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False)
-    os.replace(tmp, path)
+    target_dir = os.path.dirname(os.path.abspath(path)) or "."
+    os.makedirs(target_dir, exist_ok=True)
+
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=os.path.basename(path) + ".",   # e.g., truckinventory.xlsx.abc123
+        suffix=".tmp.xlsx",                    # ends with .xlsx (required by openpyxl)
+        dir=target_dir
+    )
+    os.close(fd)
+    try:
+        with pd.ExcelWriter(tmp_path, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False)
+        os.replace(tmp_path, path)  # atomic replace
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 def save_inventory(df: pd.DataFrame):
     backup_file(INVENTORY_FILE)
