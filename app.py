@@ -543,27 +543,9 @@
 #         )
 
 
-
-
 # app.py — Tracking Inventory System (Streamlit)
-# ✅ Tabs order: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device, 4) 📜 View Transfer Log, 5) ⬇ Export Files
-# ✅ Register tab saves directly to main inventory (truckinventory.xlsx)
-# ✅ Auto-switch to "View Inventory" after saving (JS helper + session flag)
-# ✅ Transfer tab: Serial Number selectbox with type-to-search + device hint
-# ✅ Persistent login across refresh (signed token using st.query_params)
-# ✅ Atomic Excel writes + cached reads with cache-busting (refresh won’t “lose” new rows)
-# ✅ NaT dates fixed: nice formatting for any date-like columns (no NaT shown)
-
-
-
-# app.py — Tracking Inventory System (Streamlit)
-# ✅ Tabs: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device, 4) 📜 View Transfer Log, 5) ⬇ Export Files
-# ✅ Register saves to main Excel
-# ✅ Auto-switch to "View Inventory" after saving
-# ✅ Transfer: Serial selectbox (type-to-search) + device hint
-# ✅ Persistent login via signed URL query params
-# ✅ Atomic Excel writes + cached reads with cache-busting
-# ✅ Date formatting for display (no NaT)
+# Tabs: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device,
+#       4) 📜 View Transfer Log, 5) ⬇ Export Files
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -579,7 +561,7 @@ import hmac
 import hashlib
 
 # ============================
-# 🔧 EASY CONTROLS — Tweak these
+# EASY CONTROLS
 # ============================
 APP_TITLE        = "Tracking Inventory Management System"
 APP_TAGLINE      = "AdvancedConstruction"
@@ -587,34 +569,31 @@ FONT_FAMILY      = "Times New Roman"
 TOP_PADDING_REM  = 2
 MAX_CONTENT_W    = 1300
 
-# --- Logo controls ---
+# Logo
 LOGO_FILE        = "assets/company_logo.jpeg"
 LOGO_WIDTH_PX    = 400
 LOGO_HEIGHT_PX   = 60
 LOGO_ALT_EMOJI   = "🖥️"
 
-# --- Title & tagline sizing ---
+# Title sizes
 TITLE_SIZE_PX    = 46
 TAGLINE_SIZE_PX  = 16
 
-# --- Spacing ---
+# Spacing
 GAP_BELOW_HEADER_PX = 16
 LOGOUT_ROW_TOP_MARG = 8
 
-# --- Favicon (optional) ---
+# Favicon
 ICON_FILE        = "assets/favicon.png"
 
-# --- Security / Login persistence ---
-# Put in .streamlit/secrets.toml:
-# auth_secret = "a-very-long-random-string"
-# users_json = '[{"username":"admin","password":"123","role":"admin"}]'
+# Auth
 AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")
 
-# --- Date format used everywhere ---
-DATE_FMT = "%Y-%m-%d %H:%M:%S"
+# Dates
+DATE_FMT         = "%Y-%m-%d %H:%M:%S"
 
 # ============================
-# STREAMLIT PAGE CONFIG
+# PAGE CONFIG
 # ============================
 st.set_page_config(
     page_title="Tracking Inventory System",
@@ -674,7 +653,8 @@ def get_user_role(username: str):
 # URL TOKEN (persistent login)
 # ============================
 def make_token(username: str) -> str:
-    return hmac.new(AUTH_SECRET.encode("utf-8"), msg=username.encode("utf-8"), digestmod=hashlib.sha256).hexdigest()
+    return hmac.new(AUTH_SECRET.encode("utf-8"), msg=username.encode("utf-8"),
+                    digestmod=hashlib.sha256).hexdigest()
 
 def set_auth_query_params(username: str):
     st.query_params.clear()
@@ -701,7 +681,7 @@ def try_auto_login_from_url():
 try_auto_login_from_url()
 
 # ============================
-# SMALL UTILS
+# UTILS
 # ============================
 def img_to_base64(path: str) -> str | None:
     if os.path.exists(path):
@@ -716,8 +696,8 @@ def logo_html(src_path: str, width_px: int, height_px: int | None, alt_emoji: st
     h_style = f"height:{height_px}px;" if height_px else ""
     return f"<img src='data:image/png;base64,{b64}' alt='logo' style='width:{width_px}px;{h_style}display:block;'/>"
 
-# Display helper: format dates; hide NaT/nan
 def for_display(df: pd.DataFrame) -> pd.DataFrame:
+    """Format date-like columns and remove NaT/NaN for safe display."""
     if df is None or df.empty:
         return df
     out = df.copy()
@@ -733,8 +713,8 @@ def for_display(df: pd.DataFrame) -> pd.DataFrame:
         out[col] = out[col].astype(str).replace({"NaT": "", "nan": "", "NaN": ""})
     return out
 
-# Client-side tab switch
 def _switch_to_tab_by_text(partial_label: str):
+    """Client-side: click a tab by visible text (used after saving)."""
     components.html(
         f"""
         <script>
@@ -759,14 +739,15 @@ def _switch_to_tab_by_text(partial_label: str):
 def show_header():
     c_logo, c_text = st.columns([0.16, 0.84])
     with c_logo:
-        st.markdown(logo_html(LOGO_FILE, LOGO_WIDTH_PX, LOGO_HEIGHT_PX, LOGO_ALT_EMOJI), unsafe_allow_html=True)
+        st.markdown(logo_html(LOGO_FILE, LOGO_WIDTH_PX, LOGO_HEIGHT_PX, LOGO_ALT_EMOJI),
+                    unsafe_allow_html=True)
     with c_text:
         st.markdown(
             f"<h1 class='brand-title'>{APP_TITLE}</h1>"
             f"<div class='brand-tag'>{APP_TAGLINE}</div>",
             unsafe_allow_html=True
         )
-    s, btn = st.columns([0.85, 0.15])
+    _, btn = st.columns([0.85, 0.15])
     with btn:
         st.markdown("<div class='logout-col logout-row'>", unsafe_allow_html=True)
         if st.session_state.get("authenticated"):
@@ -806,7 +787,6 @@ def backup_file(file_path):
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         shutil.copy(file_path, f"{BACKUP_FOLDER}/{base}_{ts}.xlsx")
 
-# ---- Cached reads + cache busters
 @st.cache_data(show_spinner=False)
 def _read_inventory_file(path: str) -> pd.DataFrame:
     if not os.path.exists(path):
@@ -838,7 +818,6 @@ def bust_transfer_log_cache():
 def load_transfer_log() -> pd.DataFrame:
     return _read_transfer_log_file(TRANSFER_LOG_FILE)
 
-# ---- Atomic writes
 def _atomic_write_excel(df: pd.DataFrame, path: str):
     tmp = f"{path}.tmp"
     with pd.ExcelWriter(tmp, engine="openpyxl") as writer:
@@ -855,7 +834,6 @@ def save_transfer_log(df: pd.DataFrame):
     _atomic_write_excel(df, TRANSFER_LOG_FILE)
     bust_transfer_log_cache()
 
-# ---- Add item to main inventory
 def add_inventory_item(item: dict) -> tuple[bool, str]:
     inv = load_inventory()
     serial = str(item.get("Serial Number", "")).strip()
@@ -906,7 +884,7 @@ _target = st.session_state.pop("__jump_to_tab__", None)
 if _target:
     _switch_to_tab_by_text(_target)
 
-# TAB 1 – 📝 Register Inventory
+# TAB 1 – Register
 with tab_objects[0]:
     st.subheader("Register New Inventory Item")
     with st.form("register_inventory_form", clear_on_submit=False):
@@ -950,7 +928,7 @@ with tab_objects[0]:
         else:
             st.error(f"❌ {msg}")
 
-# TAB 2 – 📦 View Inventory
+# TAB 2 – View Inventory
 with tab_objects[1]:
     st.subheader("Current Inventory")
     df_inventory = load_inventory()
@@ -959,7 +937,7 @@ with tab_objects[1]:
     else:
         st.table(for_display(df_inventory))
 
-# TAB 3 – 🔄 Transfer Device (searchable Serial + hint)
+# TAB 3 – Transfer Device
 with tab_objects[2]:
     st.subheader("Register Ownership Transfer")
 
@@ -1017,7 +995,7 @@ with tab_objects[2]:
             save_transfer_log(df_log)
             st.success(f"✅ Transfer logged: {from_owner} → {new_owner}")
 
-# TAB 4 – 📜 View Transfer Log
+# TAB 4 – Transfer Log
 with tab_objects[3]:
     st.subheader("Transfer Log History")
     df_log = load_transfer_log()
@@ -1026,7 +1004,7 @@ with tab_objects[3]:
     else:
         st.table(for_display(df_log))
 
-# TAB 5 – ⬇ Export Files (Admins Only)
+# TAB 5 – Export (Admins only)
 if st.session_state.get("role") == "admin" and len(tab_objects) > 4:
     with tab_objects[4]:
         st.subheader("Download Updated Files")
@@ -1054,3 +1032,4 @@ if st.session_state.get("role") == "admin" and len(tab_objects) > 4:
             file_name="transferlog_updated.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
