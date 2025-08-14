@@ -28,7 +28,7 @@ TOP_PADDING_REM  = 2                                            # ← Space from
 MAX_CONTENT_W    = 1300                                            # ← Page max width (px)
 
 # --- Logo controls ---
-LOGO_FILE        = "assets/company_logo.png"                       # ← Path to logo image
+LOGO_FILE        = "assets/company_logo.jpeng"                       # ← Path to logo image
 LOGO_WIDTH_PX    = 400                                              # ← Logo width in px (try 120–220)
 LOGO_HEIGHT_PX   = 60                                            # ← Set an int (e.g., 60/80) or None to auto
 LOGO_ALT_EMOJI   = "🖥️"                                           # ← Fallback if file missing
