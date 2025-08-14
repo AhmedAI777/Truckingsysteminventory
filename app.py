@@ -1684,6 +1684,43 @@
 #   users_json = '[{"username":"admin","password":"123","role":"admin"}]'
 #   auth_secret = "change-me"
 
+# app.py — Tracking Inventory System (Streamlit) with Google Sheets backend
+#
+# ✅ One spreadsheet (file) with two tabs is enough:
+#    • Spreadsheet name (file):   truckingsysteminventory   ← (or anything you like)
+#    • Tabs inside the file:      truckinventory, transferlog
+#
+# 🔐 Streamlit Secrets (Cloud → App → Settings → Secrets OR .streamlit/secrets.toml)
+#    Provide EITHER sheet_url OR sheet_name (or sheet_id). Tab names can also come from secrets.
+#
+#   [gcp_service_account]                 # paste your service-account JSON here
+#   type = "service_account"
+#   project_id = "YOUR_PROJECT_ID"
+#   private_key_id = "…"
+#   private_key = "-----BEGIN PRIVATE KEY-----\n…\\n…\n-----END PRIVATE KEY-----\n"
+#   client_email = "…@…iam.gserviceaccount.com"
+#   client_id = "…"
+#   auth_uri = "https://accounts.google.com/o/oauth2/auth"
+#   token_uri = "https://oauth2.googleapis.com/token"
+#   auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+#   client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/…"
+#
+#   # Choose one locator:
+#   sheet_url  = "https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit"
+#   # OR sheet_name = "truckingsysteminventory"
+#   # OR sheet_id   = "<SHEET_ID>"
+#
+#   # Optional: override tab names (defaults below)
+#   # inventory_tab   = "truckinventory"
+#   # transferlog_tab = "transferlog"
+#
+#   # App auth:
+#   users_json = '[{"username":"admin","password":"123","role":"admin"}]'
+#   auth_secret = "change-me"
+#
+# 📦 requirements.txt should include:
+#   streamlit, pandas, numpy, gspread, gspread-dataframe, google-auth, openpyxl
+
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -1692,12 +1729,12 @@ from datetime import datetime
 from io import BytesIO
 import json, os, base64, hmac, hashlib
 
-# Google Sheets
+# Google Sheets libs
 import gspread
 from gspread_dataframe import set_with_dataframe, get_as_dataframe
 
 # ============================
-# EASY CONTROLS
+# EASY CONTROLS (UI)
 # ============================
 APP_TITLE        = "Tracking Inventory Management System"
 APP_TAGLINE      = "AdvancedConstruction"
@@ -1705,7 +1742,7 @@ FONT_FAMILY      = "Times New Roman"
 TOP_PADDING_REM  = 2
 MAX_CONTENT_W    = 1300
 
-LOGO_FILE        = "assets/company_logo.jpeg"   # optional local image
+LOGO_FILE        = "assets/company_logo.jpeg"    # optional local image
 LOGO_WIDTH_PX    = 400
 LOGO_HEIGHT_PX   = 60
 LOGO_ALT_EMOJI   = "🖥️"
@@ -1715,14 +1752,18 @@ TAGLINE_SIZE_PX  = 16
 GAP_BELOW_HEADER_PX = 16
 LOGOUT_ROW_TOP_MARG = 8
 
-ICON_FILE        = "assets/favicon.png"         # optional
+ICON_FILE        = "assets/favicon.png"          # optional
 
-AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")
 DATE_FMT         = "%Y-%m-%d %H:%M:%S"
+AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")
 
-# <<< Use YOUR actual tab names here >>>
-INVENTORY_SHEET   = "truckinventory"    # e.g. "Inventory"
-TRANSFERLOG_SHEET = "transferlog"       # e.g. "TransferLog"
+# Read sheet locator + tab names from secrets (so you can change without editing code)
+SHEET_URL  = st.secrets.get("sheet_url", "").strip()
+SHEET_ID   = st.secrets.get("sheet_id", "").strip()
+SHEET_NAME = st.secrets.get("sheet_name", "").strip()
+
+INVENTORY_SHEET   = st.secrets.get("inventory_tab", "truckinventory")
+TRANSFERLOG_SHEET = st.secrets.get("transferlog_tab", "transferlog")
 
 # ============================
 # PAGE CONFIG & CSS
@@ -1763,7 +1804,7 @@ st.session_state.setdefault("username", "")
 st.session_state.setdefault("__jump_to_tab__", None)
 
 # ============================
-# USERS
+# APP USERS
 # ============================
 try:
     USERS = json.loads(st.secrets["users_json"])
@@ -1779,7 +1820,7 @@ def get_user_role(username: str):
     return None
 
 # ============================
-# URL TOKEN LOGIN
+# URL TOKEN LOGIN (persist across refresh)
 # ============================
 def make_token(username: str) -> str:
     return hmac.new(AUTH_SECRET.encode("utf-8"), msg=username.encode("utf-8"),
@@ -1796,7 +1837,7 @@ def try_auto_login_from_url():
     if st.session_state.get("authenticated"):
         return
     params = st.query_params
-    u = params.get("u"); t = params.get("t")
+    u, t = params.get("u"), params.get("t")
     if not u or not t: return
     if hmac.compare_digest(t, make_token(u)):
         role = get_user_role(u)
@@ -1808,7 +1849,7 @@ def try_auto_login_from_url():
 try_auto_login_from_url()
 
 # ============================
-# UTILS
+# SMALL UTILS
 # ============================
 def img_to_base64(path: str) -> str | None:
     if os.path.exists(path):
@@ -1824,6 +1865,7 @@ def logo_html(src_path: str, width_px: int, height_px: int | None, alt_emoji: st
     return f"<img src='data:image/png;base64,{b64}' alt='logo' style='width:{width_px}px;{h_style}display:block;'/>"
 
 def for_display(df: pd.DataFrame) -> pd.DataFrame:
+    """Make DataFrame Arrow-friendly & format dates; keep empty cells blank."""
     if df is None or df.empty: return df
     out = df.copy()
     for col in out.columns:
@@ -1885,7 +1927,7 @@ def show_header():
 show_header()
 
 # ============================
-# COLUMNS
+# INVENTORY COLUMNS
 # ============================
 HW_COLUMNS = [
     "Serial Number","Device Type","Brand","Model","CPU",
@@ -1898,35 +1940,48 @@ META_COLUMNS = [
 ALL_INVENTORY_COLUMNS = HW_COLUMNS + META_COLUMNS
 
 # ============================
-# GOOGLE SHEETS HELPERS (SILENT CONFIG CHECK)
+# GOOGLE SHEETS HELPERS (silent stop if not configured)
 # ============================
 def _secrets_ok() -> bool:
-    return ("gcp_service_account" in st.secrets) and ("sheet_url" in st.secrets)
+    has_creds  = "gcp_service_account" in st.secrets
+    has_target = bool(SHEET_URL or SHEET_ID or SHEET_NAME)
+    return has_creds and has_target
 
 if not _secrets_ok():
-    # Silent stop (no big error banner)
+    # No loud banner; simply stop rendering (header remains)
     st.stop()
 
 def _gs_client():
     return gspread.service_account_from_dict(st.secrets["gcp_service_account"])
 
+def _open_spreadsheet(gc):
+    if SHEET_URL:
+        return gc.open_by_url(SHEET_URL)
+    if SHEET_ID:
+        return gc.open_by_key(SHEET_ID)
+    if SHEET_NAME:
+        return gc.open(SHEET_NAME)
+    raise RuntimeError("No sheet_url / sheet_id / sheet_name provided.")
+
 def _gs_ws(name: str):
-    gc = _gs_client()
-    sh = gc.open_by_url(st.secrets["sheet_url"])
+    sh = _open_spreadsheet(_gs_client())
     try:
         return sh.worksheet(name)
     except gspread.WorksheetNotFound:
+        # Create tab if missing (first run convenience)
         return sh.add_worksheet(title=name, rows=2000, cols=50)
 
 def _ensure_headers(ws, headers: list[str]):
     vals = ws.get_all_values()
-    if not vals: ws.update("A1", [headers])
+    if not vals:
+        ws.update("A1", [headers])
 
 def _read_sheet(name: str, expected_cols: list[str]) -> pd.DataFrame:
     ws = _gs_ws(name)
     _ensure_headers(ws, expected_cols)
     df = get_as_dataframe(ws, evaluate_formulas=True, header=0, dtype=str)
-    if df is None: df = pd.DataFrame(columns=expected_cols)
+    if df is None:
+        df = pd.DataFrame(columns=expected_cols)
     for c in expected_cols:
         if c not in df.columns: df[c] = ""
     df = df[expected_cols + [c for c in df.columns if c not in expected_cols]]
@@ -1951,7 +2006,7 @@ def save_transfer_log(df: pd.DataFrame):
     _write_sheet(TRANSFERLOG_SHEET, df)
 
 # ============================
-# AUTH
+# AUTH (simple login)
 # ============================
 if not st.session_state.get("authenticated", False):
     st.subheader("Sign in")
@@ -1983,7 +2038,7 @@ tab_objects = st.tabs(tabs)
 _target = st.session_state.pop("__jump_to_tab__", None)
 if _target: _switch_to_tab_by_text(_target)
 
-# TAB 1 — Register (unchanged: full form)
+# TAB 1 — Register
 with tab_objects[0]:
     st.subheader("Register New Inventory Item")
     with st.form("register_inventory_form", clear_on_submit=False):
@@ -2038,11 +2093,15 @@ with tab_objects[1]:
     df_inventory = load_inventory()
     if "Date issued" in df_inventory.columns:
         _ts = pd.to_datetime(df_inventory["Date issued"], errors="coerce")
-        df_inventory = df_inventory.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
+        df_inventory = (
+            df_inventory.assign(_ts=_ts)
+                        .sort_values("_ts", ascending=False, na_position="last")
+                        .drop(columns="_ts")
+        )
     st.dataframe(for_display(df_inventory), use_container_width=True) \
         if st.session_state.get("role")=="admin" else st.table(for_display(df_inventory))
 
-# TAB 3 — Transfer (ONLY Serial Number + New Owner)
+# TAB 3 — Transfer (only Serial Number + New Owner)
 with tab_objects[2]:
     st.subheader("Register Ownership Transfer")
 
@@ -2112,10 +2171,12 @@ with tab_objects[3]:
     st.dataframe(for_display(df_log), use_container_width=True) \
         if st.session_state.get("role")=="admin" else st.table(for_display(df_log))
 
-# TAB 5 — Export (Admins only)
+# TAB 5 — Export (Admins)
 if st.session_state.get("role")=="admin" and len(tab_objects)>4:
     with tab_objects[4]:
         st.subheader("Download Updated Files")
+
+        # Inventory export
         df_inventory = load_inventory()
         out_inv = BytesIO()
         with pd.ExcelWriter(out_inv, engine="openpyxl") as w:
@@ -2125,6 +2186,7 @@ if st.session_state.get("role")=="admin" and len(tab_objects)>4:
                            file_name="inventory_export.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+        # Transfer log export
         df_log = load_transfer_log()
         out_log = BytesIO()
         with pd.ExcelWriter(out_log, engine="openpyxl") as w:
