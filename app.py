@@ -1,5 +1,7 @@
 # app.py — Tracking Inventory System (Streamlit)
 # ✅ Tabs order: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device, 4) 📜 View Transfer Log, 5) ⬇ Export Files
+# ✅ Register tab saves directly to main inventory (truckinventory.xlsx)
+# ✅ Auto-switch to "View Inventory" after saving (JS helper + session flag)
 # ✅ Clean header + easy knobs (logo size/placement, fonts, spacing)
 # ✅ Logout row UNDER the header (right-aligned)
 # ✅ Persistent login across refresh (signed token using st.query_params)
@@ -7,6 +9,7 @@
 # ✅ No deprecated API calls
 
 import streamlit as st
+import streamlit.components.v1 as components  # ← for tab auto-switch helper
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -21,17 +24,17 @@ import hashlib
 # ============================
 # 🔧 EASY CONTROLS — Tweak these
 # ============================
-APP_TITLE        = "Tracking Inventory Management System"                           # ← Title text
-APP_TAGLINE      = "AdvancedConstruction"                         # ← Subtitle text
-FONT_FAMILY      = "Times New Roman"                               # ← Global font (system-safe)
-TOP_PADDING_REM  = 2                                            # ← Space from very top of page
-MAX_CONTENT_W    = 1300                                            # ← Page max width (px)
+APP_TITLE        = "Tracking Inventory Management System"           # ← Title text
+APP_TAGLINE      = "AdvancedConstruction"                           # ← Subtitle text
+FONT_FAMILY      = "Times New Roman"                                # ← Global font (system-safe)
+TOP_PADDING_REM  = 2                                                # ← Space from very top of page
+MAX_CONTENT_W    = 1300                                             # ← Page max width (px)
 
 # --- Logo controls ---
 LOGO_FILE        = "assets/company_logo.jpeg"                       # ← Path to logo image
-LOGO_WIDTH_PX    = 400                                              # ← Logo width in px (try 120–220)
-LOGO_HEIGHT_PX   = 60                                            # ← Set an int (e.g., 60/80) or None to auto
-LOGO_ALT_EMOJI   = "🖥️"                                           # ← Fallback if file missing
+LOGO_WIDTH_PX    = 400                                              # ← Logo width in px (try 120–420)
+LOGO_HEIGHT_PX   = 60                                               # ← Set an int (e.g., 60/80) or None to auto
+LOGO_ALT_EMOJI   = "🖥️"                                             # ← Fallback if file missing
 
 # --- Title & tagline sizing ---
 TITLE_SIZE_PX    = 46                                               # ← Title font-size (px)
@@ -48,7 +51,7 @@ ICON_FILE        = "assets/favicon.png"                             # ← Path t
 # Put these in .streamlit/secrets.toml for production:
 # auth_secret = "a-very-long-random-string"
 # users_json = '[{"username":"admin","password":"123","role":"admin"}]'
-AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")      # ← Replace in secrets for production
+AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")       # ← Replace in secrets for production
 
 # ============================
 # STREAMLIT PAGE CONFIG
@@ -75,13 +78,13 @@ html, body, .stApp, .stApp * {{
 
 /* Page container padding & width */
 .block-container {{
-  padding-top: {TOP_PADDING_REM}rem;
-  max-width: {MAX_CONTENT_W}px;
+  padding-top: {TOP_PADDING_REM}rem;      /* ← change TOP_PADDING_REM above */
+  max-width: {MAX_CONTENT_W}px;           /* ← change MAX_CONTENT_W above */
 }}
 
 .brand-title {{
   font-weight: 700;
-  font-size: {TITLE_SIZE_PX}px;   /* ← change TITLE_SIZE_PX above */
+  font-size: {TITLE_SIZE_PX}px;           /* ← change TITLE_SIZE_PX above */
   margin: 0;
   line-height: 1.1;
 }}
@@ -89,13 +92,13 @@ html, body, .stApp, .stApp * {{
   margin: 2px 0 0;
   color: #64748b;
   font-weight: 400;
-  font-size: {TAGLINE_SIZE_PX}px; /* ← change TAGLINE_SIZE_PX above */
+  font-size: {TAGLINE_SIZE_PX}px;         /* ← change TAGLINE_SIZE_PX above */
 }}
 
 .header-divider {{
   height: 1px;
   background: #e5e7eb;
-  margin: 10px 0 {GAP_BELOW_HEADER_PX}px;  /* ← change GAP_BELOW_HEADER_PX above */
+  margin: 10px 0 {GAP_BELOW_HEADER_PX}px; /* ← change GAP_BELOW_HEADER_PX above */
 }}
 
 .logout-row {{ margin-top: {LOGOUT_ROW_TOP_MARG}px; }}  /* ← change LOGOUT_ROW_TOP_MARG above */
@@ -214,6 +217,30 @@ def for_display(df: pd.DataFrame) -> pd.DataFrame:
         out[c] = out[c].astype(str)
     return out
 
+# === JS helper: click a tab by its visible text (used to jump to "View Inventory") ===
+def _switch_to_tab_by_text(partial_label: str):
+    """Client-side: click the tab whose label contains the given text."""
+    components.html(
+        f"""
+        <script>
+        const wanted = {json.dumps(partial_label)};
+        function clickTab() {{
+          const root = window.parent.document;
+          const tabs = root.querySelectorAll('button[role="tab"]');
+          for (const t of tabs) {{
+            if ((t.innerText || "").trim().includes(wanted)) {{
+              t.click();
+              return;
+            }}
+          }}
+          setTimeout(clickTab, 60); // try again if tabs not ready
+        }}
+        clickTab();
+        </script>
+        """,
+        height=0,
+    )
+
 # ============================
 # HEADER (row1: logo+title, row2: logout right)
 # ============================
@@ -250,7 +277,7 @@ show_header()
 # ============================
 # FILES & HELPERS
 # ============================
-INVENTORY_FILE         = "truckinventory.xlsx"
+INVENTORY_FILE         = "truckinventory.xlsx"                      # ← MAIN INVENTORY FILE
 TRANSFER_LOG_PRIMARY   = "transferlog.xlsx"
 TRANSFER_LOG_ALT       = "transferlogin.xlsx"
 TRANSFER_LOG_FILE      = TRANSFER_LOG_PRIMARY if os.path.exists(TRANSFER_LOG_PRIMARY) else (
@@ -308,6 +335,29 @@ def save_transfer_log(df: pd.DataFrame):
     backup_file(TRANSFER_LOG_FILE)
     df.to_excel(TRANSFER_LOG_FILE, index=False)
 
+# === Helper: SAVE TO MAIN INVENTORY (used by Register tab) ===
+def add_inventory_item(item: dict) -> tuple[bool, str]:
+    """
+    Append one item to the main inventory Excel (truckinventory.xlsx).
+    Returns (ok, message). Prevents duplicate Serial Number.
+    """
+    inv = load_inventory()
+    serial = str(item.get("Serial Number", "")).strip()
+    if not serial:
+        return False, "Serial Number is required."
+
+    # duplicate check
+    if serial in inv["Serial Number"].astype(str).values:
+        return False, f"Serial Number '{serial}' already exists."
+
+    # Make sure all known columns exist in the item; fill missing with empty
+    for col in ALL_INVENTORY_COLUMNS:
+        item.setdefault(col, "")
+
+    inv = pd.concat([inv, pd.DataFrame([item])], ignore_index=True)
+    save_inventory(inv)
+    return True, "Saved to main inventory."
+
 # ============================
 # AUTH (login card)
 # ============================
@@ -333,7 +383,7 @@ if not st.session_state.get("authenticated", False):
     st.stop()
 
 # ============================
-# TABS (main app) — ORDER CHANGED
+# TABS (main app) — ORDER
 # ============================
 # New order: Register | View | Transfer | Log | Export
 tabs = ["📝 Register Inventory", "📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
@@ -341,7 +391,12 @@ if st.session_state.get("role") == "admin":
     tabs.append("⬇ Export Files")
 tab_objects = st.tabs(tabs)
 
-# TAB 1 – 📝 Register Inventory
+# If a previous action asked us to jump to a tab, do it now (client-side click)
+_target = st.session_state.pop("__jump_to_tab__", None)
+if _target:
+    _switch_to_tab_by_text(_target)  # e.g., "View Inventory" or "📦 View Inventory"
+
+# TAB 1 – 📝 Register Inventory  (SAVES TO MAIN INVENTORY + auto-switch)
 with tab_objects[0]:
     st.subheader("Register New Inventory Item")
     with st.form("register_inventory_form", clear_on_submit=False):
@@ -360,35 +415,32 @@ with tab_objects[0]:
             r_screen = st.text_input("Screen Size")
         submitted = st.form_submit_button("Save Item")
     if submitted:
-        if not r_serial.strip() or not r_device.strip():
-            st.error("Serial Number and Device Type are required.")
+        # Build the item dict with meta columns
+        item = {
+            "Serial Number": r_serial.strip(),
+            "Device Type":   r_device.strip(),
+            "Brand":         r_brand.strip(),
+            "Model":         r_model.strip(),
+            "CPU":           r_cpu.strip(),
+            "Hard Drive 1":  r_hdd1.strip(),
+            "Hard Drive 2":  r_hdd2.strip(),
+            "Memory":        r_mem.strip(),
+            "GPU":           r_gpu.strip(),
+            "Screen Size":   r_screen.strip(),
+            "USER":          "",  # default empty; will be filled on transfer
+            "Previous User": "",
+            "TO":            "",
+            "Date issued":   "",  # set now if you want created-at: datetime.now().strftime("%m/%d/%Y %H:%M:%S")
+            "Registered by": st.session_state.get("username",""),
+        }
+        ok, msg = add_inventory_item(item)  # ← SAVE TO MAIN INVENTORY
+        if ok:
+            st.success("✅ Inventory item saved to main inventory.")
+            # Ask the app to jump to the "View Inventory" tab on the next run:
+            st.session_state["__jump_to_tab__"] = "View Inventory"  # or "📦 View Inventory"
+            st.rerun()
         else:
-            inv = load_inventory()
-            if r_serial.strip() in inv["Serial Number"].astype(str).values:
-                st.error(f"Serial Number '{r_serial}' already exists.")
-            else:
-                new_row = {
-                    "Serial Number": r_serial.strip(),
-                    "Device Type":   r_device.strip(),
-                    "Brand":         r_brand.strip(),
-                    "Model":         r_model.strip(),
-                    "CPU":           r_cpu.strip(),
-                    "Hard Drive 1":  r_hdd1.strip(),
-                    "Hard Drive 2":  r_hdd2.strip(),
-                    "Memory":        r_mem.strip(),
-                    "GPU":           r_gpu.strip(),
-                    "Screen Size":   r_screen.strip(),
-                    # meta columns
-                    "USER":          "",
-                    "Previous User": "",
-                    "TO":            "",
-                    "Date issued":   "",
-                    "Registered by": st.session_state.get("username",""),
-                }
-                inv = pd.concat([inv, pd.DataFrame([new_row])], ignore_index=True)
-                save_inventory(inv)
-                st.success("✅ Inventory item registered.")
-                st.info("Tip: use ‘Transfer Device’ tab to assign this item to a user later.")
+            st.error(f"❌ {msg}")
 
 # TAB 2 – 📦 View Inventory
 with tab_objects[1]:
@@ -443,7 +495,9 @@ with tab_objects[2]:
                 "Date issued": datetime.now().strftime("%m/%d/%Y %H:%M:%S"),
                 "Registered by": registered_by
             }
+            # append to transfer log file
             df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
+
             save_inventory(df_inventory)
             save_transfer_log(df_log)
             st.success(f"✅ Transfer logged: {from_owner} → {new_owner}")
