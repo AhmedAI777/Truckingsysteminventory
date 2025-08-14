@@ -1721,6 +1721,41 @@
 # 📦 requirements.txt should include:
 #   streamlit, pandas, numpy, gspread, gspread-dataframe, google-auth, openpyxl
 
+# app.py — Tracking Inventory System (Streamlit) using Google Sheets backend
+#
+# One Google Spreadsheet with two tabs is enough:
+#   • Spreadsheet: any name you like (e.g., "truckingsysteminventory")
+#   • Tabs (worksheets): "truckinventory" and "transferlog"   # can be overridden in Secrets
+#
+# ---- STREAMLIT SECRETS (Cloud: App ▸ Settings ▸ Secrets OR .streamlit/secrets.toml) ----
+#
+# [gcp_service_account]                   # paste your service-account JSON here
+# type = "service_account"
+# project_id = "..."
+# private_key_id = "..."
+# private_key = "-----BEGIN PRIVATE KEY-----\n...\\n...\n-----END PRIVATE KEY-----\n"
+# client_email = "SERVICE_ACCOUNT@YOUR_PROJECT.iam.gserviceaccount.com"
+# client_id = "..."
+# auth_uri = "https://accounts.google.com/o/oauth2/auth"
+# token_uri = "https://oauth2.googleapis.com/token"
+# auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+# client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/..."
+#
+# # Use one (1) of these to locate the spreadsheet:
+# sheet_url  = "https://docs.google.com/spreadsheets/d/<SHEET_ID>/edit"
+# # sheet_id = "<SHEET_ID>"
+# # sheet_name = "truckingsysteminventory"
+#
+# # Optional: override tab names if yours differ
+# # inventory_tab   = "truckinventory"
+# # transferlog_tab = "transferlog"
+#
+# # App login users + secret
+# users_json = '[{"username":"admin","password":"123","role":"admin"}]'
+# auth_secret = "change-me"
+#
+# ----------------------------------------------------------------------------------------
+
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -1732,16 +1767,6 @@ import json, os, base64, hmac, hashlib
 # Google Sheets libs
 import gspread
 from gspread_dataframe import set_with_dataframe, get_as_dataframe
-
-def _secrets_ok() -> bool:
-    has_creds  = "gcp_service_account" in st.secrets
-    has_target = bool(SHEET_URL or SHEET_ID or SHEET_NAME)
-    return has_creds and has_target
-
-if not _secrets_ok():
-    st.error("Missing Sheets config: add 'gcp_service_account' and one of 'sheet_url' / 'sheet_id' / 'sheet_name' to Secrets.")
-    st.stop()
-
 
 # ============================
 # EASY CONTROLS (UI)
@@ -1767,11 +1792,12 @@ ICON_FILE        = "assets/favicon.png"          # optional
 DATE_FMT         = "%Y-%m-%d %H:%M:%S"
 AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")
 
-# Read sheet locator + tab names from secrets (so you can change without editing code)
-SHEET_URL  = st.secrets.get("https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit", "").strip()
-SHEET_ID   = st.secrets.get("1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI", "").strip()
-SHEET_NAME = st.secrets.get("truckingsysteminventory", "").strip()
+# ---- Google Sheets locator (read from Secrets) ----
+SHEET_URL  = st.secrets.get("sheet_url", "").strip()     # e.g. "https://docs.google.com/…/edit"
+SHEET_ID   = st.secrets.get("sheet_id", "").strip()      # e.g. "1SHp6gO…XNHFI"
+SHEET_NAME = st.secrets.get("sheet_name", "").strip()    # e.g. "truckingsysteminventory"
 
+# Tab names (can also be overridden in Secrets)
 INVENTORY_SHEET   = st.secrets.get("inventory_tab", "truckinventory")
 TRANSFERLOG_SHEET = st.secrets.get("transferlog_tab", "transferlog")
 
@@ -1950,7 +1976,7 @@ META_COLUMNS = [
 ALL_INVENTORY_COLUMNS = HW_COLUMNS + META_COLUMNS
 
 # ============================
-# GOOGLE SHEETS HELPERS (silent stop if not configured)
+# GOOGLE SHEETS HELPERS (visible error if not configured)
 # ============================
 def _secrets_ok() -> bool:
     has_creds  = "gcp_service_account" in st.secrets
@@ -1958,7 +1984,8 @@ def _secrets_ok() -> bool:
     return has_creds and has_target
 
 if not _secrets_ok():
-    # No loud banner; simply stop rendering (header remains)
+    st.error("Missing Sheets config: add 'gcp_service_account' and ONE of 'sheet_url' / 'sheet_id' / 'sheet_name' to Secrets. "
+             "Also share the sheet with the service account as Editor.")
     st.stop()
 
 def _gs_client():
@@ -1978,10 +2005,9 @@ def _gs_ws(name: str):
     try:
         return sh.worksheet(name)
     except gspread.WorksheetNotFound:
-        # Create tab if missing (first run convenience)
         return sh.add_worksheet(title=name, rows=2000, cols=50)
 
-def _ensure_headers(ws, headers: list[str]):
+def _ensure_headers(ws, headers):
     vals = ws.get_all_values()
     if not vals:
         ws.update("A1", [headers])
