@@ -1733,6 +1733,16 @@ import json, os, base64, hmac, hashlib
 import gspread
 from gspread_dataframe import set_with_dataframe, get_as_dataframe
 
+def _secrets_ok() -> bool:
+    has_creds  = "gcp_service_account" in st.secrets
+    has_target = bool(SHEET_URL or SHEET_ID or SHEET_NAME)
+    return has_creds and has_target
+
+if not _secrets_ok():
+    st.error("Missing Sheets config: add 'gcp_service_account' and one of 'sheet_url' / 'sheet_id' / 'sheet_name' to Secrets.")
+    st.stop()
+
+
 # ============================
 # EASY CONTROLS (UI)
 # ============================
