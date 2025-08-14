@@ -552,6 +552,9 @@
 # app.py — Tracking Inventory System (Streamlit)
 # Tabs: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device,
 #       4) 📜 View Transfer Log, 5) ⬇ Export Files
+# app.py — Tracking Inventory System (Streamlit)
+# Tabs: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device,
+#       4) 📜 View Transfer Log, 5) ⬇ Export Files
 
 import streamlit as st
 import streamlit.components.v1 as components
