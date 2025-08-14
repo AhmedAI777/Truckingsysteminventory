@@ -546,6 +546,9 @@
 # app.py — Tracking Inventory System (Streamlit)
 # Tabs: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device,
 #       4) 📜 View Transfer Log, 5) ⬇ Export Files
+# app.py — Tracking Inventory System (Streamlit)
+# Tabs: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device,
+#       4) 📜 View Transfer Log, 5) ⬇ Export Files
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -587,6 +590,9 @@ LOGOUT_ROW_TOP_MARG = 8
 ICON_FILE        = "assets/favicon.png"
 
 # Auth
+# Put in .streamlit/secrets.toml:
+# auth_secret = "a-very-long-random-string"
+# users_json = '[{"username":"admin","password":"123","role":"admin"}]'
 AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")
 
 # Dates
@@ -937,7 +943,7 @@ with tab_objects[1]:
     else:
         st.table(for_display(df_inventory))
 
-# TAB 3 – Transfer Device
+# TAB 3 – Transfer Device (SAFE: no IndexError on missing)
 with tab_objects[2]:
     st.subheader("Register Ownership Transfer")
 
@@ -951,10 +957,21 @@ with tab_objects[2]:
     )
     serial_number = None if serial_choice == SERIAL_SENTINEL else serial_choice
 
+    # Safe hint (guard against empty match)
     if serial_number:
-        row = df_inventory[df_inventory["Serial Number"].astype(str) == serial_number].iloc[0]
-        hint = f"Device: {row.get('Device Type','')} • Brand: {row.get('Brand','')} • Model: {row.get('Model','')} • CPU: {row.get('CPU','')}"
-        st.caption(hint)
+        match = df_inventory[df_inventory["Serial Number"].astype(str).str.strip()
+                             == str(serial_number).strip()]
+        if not match.empty:
+            row = match.iloc[0]
+            hint = (
+                f"Device: {row.get('Device Type','')} • "
+                f"Brand: {row.get('Brand','')} • "
+                f"Model: {row.get('Model','')} • "
+                f"CPU: {row.get('CPU','')}"
+            )
+            st.caption(hint)
+        else:
+            st.warning("Selected serial not found in inventory. Try refreshing or check for extra spaces.")
 
     new_owner = st.text_input("Enter NEW Owner's Name")
     registered_by = st.session_state.get("username", "")
@@ -963,10 +980,14 @@ with tab_objects[2]:
     if st.button("Transfer Now", type="primary", disabled=transfer_disabled):
         df_log = load_transfer_log()
 
-        if serial_number not in df_inventory["Serial Number"].astype(str).values:
+        # Safe index lookup
+        mask = df_inventory["Serial Number"].astype(str).str.strip() == str(serial_number).strip()
+        matches = df_inventory.index[mask]
+
+        if len(matches) == 0:
             st.error(f"Device with Serial Number {serial_number} not found!")
         else:
-            idx = df_inventory[df_inventory["Serial Number"].astype(str) == serial_number].index[0]
+            idx = matches[0]
             from_owner  = df_inventory.loc[idx, "USER"] if "USER" in df_inventory.columns else ""
             device_type = df_inventory.loc[idx, "Device Type"] if "Device Type" in df_inventory.columns else ""
 
@@ -1032,4 +1053,3 @@ if st.session_state.get("role") == "admin" and len(tab_objects) > 4:
             file_name="transferlog_updated.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
