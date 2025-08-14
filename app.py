@@ -554,6 +554,17 @@
 # ✅ Atomic Excel writes + cached reads with cache-busting (refresh won’t “lose” new rows)
 # ✅ NaT dates fixed: nice formatting for any date-like columns (no NaT shown)
 
+
+
+# app.py — Tracking Inventory System (Streamlit)
+# ✅ Tabs: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device, 4) 📜 View Transfer Log, 5) ⬇ Export Files
+# ✅ Register saves to main Excel
+# ✅ Auto-switch to "View Inventory" after saving
+# ✅ Transfer: Serial selectbox (type-to-search) + device hint
+# ✅ Persistent login via signed URL query params
+# ✅ Atomic Excel writes + cached reads with cache-busting
+# ✅ Date formatting for display (no NaT)
+
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
@@ -570,37 +581,37 @@ import hashlib
 # ============================
 # 🔧 EASY CONTROLS — Tweak these
 # ============================
-APP_TITLE        = "Tracking Inventory Management System"           # ← Title text
-APP_TAGLINE      = "AdvancedConstruction"                           # ← Subtitle text
-FONT_FAMILY      = "Times New Roman"                                # ← Global font (system-safe)
-TOP_PADDING_REM  = 2                                                # ← Space from very top of page
-MAX_CONTENT_W    = 1300                                             # ← Page max width (px)
+APP_TITLE        = "Tracking Inventory Management System"
+APP_TAGLINE      = "AdvancedConstruction"
+FONT_FAMILY      = "Times New Roman"
+TOP_PADDING_REM  = 2
+MAX_CONTENT_W    = 1300
 
 # --- Logo controls ---
-LOGO_FILE        = "assets/company_logo.jpeg"                       # ← Path to logo image
-LOGO_WIDTH_PX    = 400                                              # ← Logo width in px (try 120–420)
-LOGO_HEIGHT_PX   = 60                                               # ← Set an int (e.g., 60/80) or None to auto
-LOGO_ALT_EMOJI   = "🖥️"                                             # ← Fallback if file missing
+LOGO_FILE        = "assets/company_logo.jpeg"
+LOGO_WIDTH_PX    = 400
+LOGO_HEIGHT_PX   = 60
+LOGO_ALT_EMOJI   = "🖥️"
 
 # --- Title & tagline sizing ---
-TITLE_SIZE_PX    = 46                                               # ← Title font-size (px)
-TAGLINE_SIZE_PX  = 16                                               # ← Tagline font-size (px)
+TITLE_SIZE_PX    = 46
+TAGLINE_SIZE_PX  = 16
 
-# --- Spacing around header ---
-GAP_BELOW_HEADER_PX = 16                                            # ← Space below header divider
-LOGOUT_ROW_TOP_MARG = 8                                             # ← Top margin (px) before Logout row
+# --- Spacing ---
+GAP_BELOW_HEADER_PX = 16
+LOGOUT_ROW_TOP_MARG = 8
 
 # --- Favicon (optional) ---
-ICON_FILE        = "assets/favicon.png"                             # ← Path to favicon (or leave missing)
+ICON_FILE        = "assets/favicon.png"
 
 # --- Security / Login persistence ---
-# Put these in .streamlit/secrets.toml for production:
+# Put in .streamlit/secrets.toml:
 # auth_secret = "a-very-long-random-string"
 # users_json = '[{"username":"admin","password":"123","role":"admin"}]'
-AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")       # ← Replace in secrets for production
+AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")
 
-# --- Date format used everywhere we write/format dates ---
-DATE_FMT = "%Y-%m-%d %H:%M:%S"                                      # ← change if you prefer another format
+# --- Date format used everywhere ---
+DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
 # ============================
 # STREAMLIT PAGE CONFIG
@@ -613,7 +624,7 @@ st.set_page_config(
 )
 
 # ============================
-# GLOBAL CSS (uses the knobs above)
+# GLOBAL CSS
 # ============================
 st.markdown(f"""
 <style>
@@ -621,40 +632,16 @@ html, body, .stApp, .stApp * {{
   font-family: "{FONT_FAMILY}", Times, serif !important;
 }}
 [data-testid="stSidebar"] {{ display: none !important; }}
-
-.block-container {{
-  padding-top: {TOP_PADDING_REM}rem;
-  max-width: {MAX_CONTENT_W}px;
-}}
-
-.brand-title {{
-  font-weight: 700;
-  font-size: {TITLE_SIZE_PX}px;
-  margin: 0;
-  line-height: 1.1;
-}}
-.brand-tag {{
-  margin: 2px 0 0;
-  color: #64748b;
-  font-weight: 400;
-  font-size: {TAGLINE_SIZE_PX}px;
-}}
-
-.header-divider {{
-  height: 1px;
-  background: #e5e7eb;
-  margin: 10px 0 {GAP_BELOW_HEADER_PX}px;
-}}
-
-.logout-row {{ margin-top: {LOGOUT_ROW_TOP_MARG}px; }}
-
-.stButton > button {{ height: 38px; padding: 0 .9rem; border-radius: 8px; font-weight: 600; }}
+.block-container {{ padding-top:{TOP_PADDING_REM}rem; max-width:{MAX_CONTENT_W}px; }}
+.brand-title {{ font-weight:700; font-size:{TITLE_SIZE_PX}px; margin:0; line-height:1.1; }}
+.brand-tag {{ margin:2px 0 0; color:#64748b; font-weight:400; font-size:{TAGLINE_SIZE_PX}px; }}
+.header-divider {{ height:1px; background:#e5e7eb; margin:10px 0 {GAP_BELOW_HEADER_PX}px; }}
+.logout-row {{ margin-top:{LOGOUT_ROW_TOP_MARG}px; }}
+.stButton > button {{ height:38px; padding:0 .9rem; border-radius:8px; font-weight:600; }}
 .logout-col .stButton > button {{ background:#f3f4f6; color:#111827; border:1px solid #e5e7eb; }}
 .logout-col .stButton > button:hover {{ background:#e5e7eb; }}
-
-.stTabs {{ margin-top: 6px; }}
-section[tabindex="0"] h2 {{ margin-top: 8px; }}
-
+.stTabs {{ margin-top:6px; }}
+section[tabindex="0"] h2 {{ margin-top:8px; }}
 #MainMenu, footer {{ visibility: hidden; }}
 </style>
 """, unsafe_allow_html=True)
@@ -665,6 +652,7 @@ section[tabindex="0"] h2 {{ margin-top: 8px; }}
 st.session_state.setdefault("authenticated", False)
 st.session_state.setdefault("role", None)
 st.session_state.setdefault("username", "")
+st.session_state.setdefault("__jump_to_tab__", None)
 
 # ============================
 # USERS (from secrets)
@@ -683,7 +671,7 @@ def get_user_role(username: str):
     return None
 
 # ============================
-# URL TOKEN (persistent login across refresh)
+# URL TOKEN (persistent login)
 # ============================
 def make_token(username: str) -> str:
     return hmac.new(AUTH_SECRET.encode("utf-8"), msg=username.encode("utf-8"), digestmod=hashlib.sha256).hexdigest()
@@ -728,14 +716,11 @@ def logo_html(src_path: str, width_px: int, height_px: int | None, alt_emoji: st
     h_style = f"height:{height_px}px;" if height_px else ""
     return f"<img src='data:image/png;base64,{b64}' alt='logo' style='width:{width_px}px;{h_style}display:block;'/>"
 
-# Arrow-safe display (formats dates; hides NaT/NaN)
+# Display helper: format dates; hide NaT/nan
 def for_display(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
-
     out = df.copy()
-
-    # 1) Convert datetime dtypes to formatted strings
     for col in out.columns:
         try:
             if np.issubdtype(out[col].dtype, np.datetime64) or ("date" in col.lower()):
@@ -743,15 +728,12 @@ def for_display(df: pd.DataFrame) -> pd.DataFrame:
                 out[col] = s.dt.strftime(DATE_FMT)
         except Exception:
             pass
-
-    # 2) Clean missing values and any literal NaT/nan text
     out = out.replace({np.nan: ""})
     for col in out.columns:
         out[col] = out[col].astype(str).replace({"NaT": "", "nan": "", "NaN": ""})
-
     return out
 
-# === JS helper: click a tab by its visible text (used to jump to "View Inventory") ===
+# Client-side tab switch
 def _switch_to_tab_by_text(partial_label: str):
     components.html(
         f"""
@@ -761,10 +743,7 @@ def _switch_to_tab_by_text(partial_label: str):
           const root = window.parent.document;
           const tabs = root.querySelectorAll('button[role="tab"]');
           for (const t of tabs) {{
-            if ((t.innerText || "").trim().includes(wanted)) {{
-              t.click();
-              return;
-            }}
+            if ((t.innerText || "").trim().includes(wanted)) {{ t.click(); return; }}
           }}
           setTimeout(clickTab, 60);
         }}
@@ -775,7 +754,7 @@ def _switch_to_tab_by_text(partial_label: str):
     )
 
 # ============================
-# HEADER (row1: logo+title, row2: logout right)
+# HEADER
 # ============================
 def show_header():
     c_logo, c_text = st.columns([0.16, 0.84])
@@ -787,7 +766,6 @@ def show_header():
             f"<div class='brand-tag'>{APP_TAGLINE}</div>",
             unsafe_allow_html=True
         )
-
     s, btn = st.columns([0.85, 0.15])
     with btn:
         st.markdown("<div class='logout-col logout-row'>", unsafe_allow_html=True)
@@ -799,7 +777,6 @@ def show_header():
                 clear_auth_query_params()
                 st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
-
     st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
 
 show_header()
@@ -807,7 +784,7 @@ show_header()
 # ============================
 # FILES & HELPERS
 # ============================
-INVENTORY_FILE         = "truckinventory.xlsx"                      # ← MAIN INVENTORY FILE
+INVENTORY_FILE         = "truckinventory.xlsx"
 TRANSFER_LOG_PRIMARY   = "transferlog.xlsx"
 TRANSFER_LOG_ALT       = "transferlogin.xlsx"
 TRANSFER_LOG_FILE      = TRANSFER_LOG_PRIMARY if os.path.exists(TRANSFER_LOG_PRIMARY) else (
@@ -816,7 +793,6 @@ TRANSFER_LOG_FILE      = TRANSFER_LOG_PRIMARY if os.path.exists(TRANSFER_LOG_PRI
 BACKUP_FOLDER          = "backups"
 os.makedirs(BACKUP_FOLDER, exist_ok=True)
 
-# Hardware columns + meta we maintain
 HW_COLUMNS = [
     "Serial Number", "Device Type", "Brand", "Model", "CPU",
     "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size"
@@ -830,7 +806,7 @@ def backup_file(file_path):
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         shutil.copy(file_path, f"{BACKUP_FOLDER}/{base}_{ts}.xlsx")
 
-# ============ CACHED READS + CACHE BUSTERS ============
+# ---- Cached reads + cache busters
 @st.cache_data(show_spinner=False)
 def _read_inventory_file(path: str) -> pd.DataFrame:
     if not os.path.exists(path):
@@ -862,7 +838,7 @@ def bust_transfer_log_cache():
 def load_transfer_log() -> pd.DataFrame:
     return _read_transfer_log_file(TRANSFER_LOG_FILE)
 
-# ============ ATOMIC WRITES ============
+# ---- Atomic writes
 def _atomic_write_excel(df: pd.DataFrame, path: str):
     tmp = f"{path}.tmp"
     with pd.ExcelWriter(tmp, engine="openpyxl") as writer:
@@ -879,19 +855,16 @@ def save_transfer_log(df: pd.DataFrame):
     _atomic_write_excel(df, TRANSFER_LOG_FILE)
     bust_transfer_log_cache()
 
-# === Helper: SAVE TO MAIN INVENTORY (used by Register tab) ===
+# ---- Add item to main inventory
 def add_inventory_item(item: dict) -> tuple[bool, str]:
     inv = load_inventory()
     serial = str(item.get("Serial Number", "")).strip()
     if not serial:
         return False, "Serial Number is required."
-
     if serial in inv["Serial Number"].astype(str).values:
         return False, f"Serial Number '{serial}' already exists."
-
     for col in ALL_INVENTORY_COLUMNS:
         item.setdefault(col, "")
-
     inv = pd.concat([inv, pd.DataFrame([item])], ignore_index=True)
     save_inventory(inv)
     return True, "Saved to main inventory."
@@ -921,14 +894,14 @@ if not st.session_state.get("authenticated", False):
     st.stop()
 
 # ============================
-# TABS (main app)
+# TABS
 # ============================
 tabs = ["📝 Register Inventory", "📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
 if st.session_state.get("role") == "admin":
     tabs.append("⬇ Export Files")
 tab_objects = st.tabs(tabs)
 
-# Handle auto-jump request from previous run (e.g., after save)
+# Handle auto-jump (after save)
 _target = st.session_state.pop("__jump_to_tab__", None)
 if _target:
     _switch_to_tab_by_text(_target)
@@ -963,18 +936,16 @@ with tab_objects[0]:
             "Memory":        r_mem.strip(),
             "GPU":           r_gpu.strip(),
             "Screen Size":   r_screen.strip(),
-            # meta
             "USER":          "",
             "Previous User": "",
             "TO":            "",
-            # set created-at time so you never see NaT
             "Date issued":   datetime.now().strftime(DATE_FMT),
             "Registered by": st.session_state.get("username",""),
         }
         ok, msg = add_inventory_item(item)
         if ok:
             st.success("✅ Inventory item saved to main inventory.")
-            st.session_state["__jump_to_tab__"] = "View Inventory"  # auto-switch next run
+            st.session_state["__jump_to_tab__"] = "View Inventory"
             st.rerun()
         else:
             st.error(f"❌ {msg}")
@@ -983,10 +954,12 @@ with tab_objects[0]:
 with tab_objects[1]:
     st.subheader("Current Inventory")
     df_inventory = load_inventory()
-    st.dataframe(for_display(df_inventory), use_container_width=True) \
-        if st.session_state.get("role") == "admin" else st.table(for_display(df_inventory))
+    if st.session_state.get("role") == "admin":
+        st.dataframe(for_display(df_inventory), use_container_width=True)
+    else:
+        st.table(for_display(df_inventory))
 
-# TAB 3 – 🔄 Transfer Device (with Serial Number type-to-search + hint)
+# TAB 3 – 🔄 Transfer Device (searchable Serial + hint)
 with tab_objects[2]:
     st.subheader("Register Ownership Transfer")
 
@@ -1025,7 +998,6 @@ with tab_objects[2]:
                 df_inventory.loc[idx, "USER"] = new_owner
             if "TO" in df_inventory.columns:
                 df_inventory.loc[idx, "TO"]  = new_owner
-            # write timestamp as string in our unified format
             if "Date issued" in df_inventory.columns:
                 df_inventory.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
             if "Registered by" in df_inventory.columns:
@@ -1049,8 +1021,10 @@ with tab_objects[2]:
 with tab_objects[3]:
     st.subheader("Transfer Log History")
     df_log = load_transfer_log()
-    st.dataframe(for_display(df_log), use_container_width=True) \
-        if st.session_state.get("role") == "admin" else st.table(for_display(df_log))
+    if st.session_state.get("role") == "admin":
+        st.dataframe(for_display(df_log), use_container_width=True)
+    else:
+        st.table(for_display(df_log))
 
 # TAB 5 – ⬇ Export Files (Admins Only)
 if st.session_state.get("role") == "admin" and len(tab_objects) > 4:
