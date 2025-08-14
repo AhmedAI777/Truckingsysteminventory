@@ -1678,13 +1678,11 @@
 
 
 # app.py — Tracking Inventory System (Streamlit) + Google Sheets backend
-# Prereqs in secrets:
-#   [gcp_service_account]  # full JSON from your service-account key
+# Secrets required (Streamlit Cloud → App → Settings → Secrets OR .streamlit/secrets.toml):
+#   [gcp_service_account]    # full JSON from your service-account key
 #   sheet_url = "https://docs.google.com/spreadsheets/d/<YOUR_SHEET_ID>/edit"
 #   users_json = '[{"username":"admin","password":"123","role":"admin"}]'
 #   auth_secret = "change-me"
-#
-# If your sheet tabs are named differently, change INVENTORY_SHEET / TRANSFERLOG_SHEET below.
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -1707,7 +1705,7 @@ FONT_FAMILY      = "Times New Roman"
 TOP_PADDING_REM  = 2
 MAX_CONTENT_W    = 1300
 
-LOGO_FILE        = "assets/company_logo.jpeg"   # optional; falls back to emoji
+LOGO_FILE        = "assets/company_logo.jpeg"   # optional local image
 LOGO_WIDTH_PX    = 400
 LOGO_HEIGHT_PX   = 60
 LOGO_ALT_EMOJI   = "🖥️"
@@ -1723,8 +1721,8 @@ AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")
 DATE_FMT         = "%Y-%m-%d %H:%M:%S"
 
 # <<< Use YOUR actual tab names here >>>
-INVENTORY_SHEET   = "truckinventory"
-TRANSFERLOG_SHEET = "transferlog"
+INVENTORY_SHEET   = "truckinventory"    # e.g. "Inventory"
+TRANSFERLOG_SHEET = "transferlog"       # e.g. "TransferLog"
 
 # ============================
 # PAGE CONFIG & CSS
@@ -1899,21 +1897,15 @@ META_COLUMNS = [
 ]
 ALL_INVENTORY_COLUMNS = HW_COLUMNS + META_COLUMNS
 
-PERSON_COLS = ["USER","Department","Email Address","Contact Number","Location","Office","Notes"]
-
 # ============================
-# GOOGLE SHEETS HELPERS (with secrets guard)
+# GOOGLE SHEETS HELPERS (SILENT CONFIG CHECK)
 # ============================
-def _secrets_check_ok() -> bool:
-    miss = []
-    if "gcp_service_account" not in st.secrets: miss.append("gcp_service_account")
-    if "sheet_url" not in st.secrets: miss.append("sheet_url")
-    if miss:
-        st.error("Missing secrets: " + ", ".join(miss))
-        st.stop()
-    return True
+def _secrets_ok() -> bool:
+    return ("gcp_service_account" in st.secrets) and ("sheet_url" in st.secrets)
 
-_secrets_check_ok()
+if not _secrets_ok():
+    # Silent stop (no big error banner)
+    st.stop()
 
 def _gs_client():
     return gspread.service_account_from_dict(st.secrets["gcp_service_account"])
@@ -1991,7 +1983,7 @@ tab_objects = st.tabs(tabs)
 _target = st.session_state.pop("__jump_to_tab__", None)
 if _target: _switch_to_tab_by_text(_target)
 
-# TAB 1 — Register
+# TAB 1 — Register (unchanged: full form)
 with tab_objects[0]:
     st.subheader("Register New Inventory Item")
     with st.form("register_inventory_form", clear_on_submit=False):
@@ -2050,10 +2042,12 @@ with tab_objects[1]:
     st.dataframe(for_display(df_inventory), use_container_width=True) \
         if st.session_state.get("role")=="admin" else st.table(for_display(df_inventory))
 
-# TAB 3 — Transfer
+# TAB 3 — Transfer (ONLY Serial Number + New Owner)
 with tab_objects[2]:
     st.subheader("Register Ownership Transfer")
+
     df_inventory = load_inventory()
+
     serial_options = sorted(df_inventory["Serial Number"].astype(str).dropna().unique().tolist())
     sentinel = "— Select Serial Number —"
     pick = st.selectbox("Serial Number", [sentinel] + serial_options, help="Start typing to filter the list.")
@@ -2072,32 +2066,25 @@ with tab_objects[2]:
     elif serial_number:
         st.warning("Selected serial not found.")
 
-    with st.form("transfer_form", clear_on_submit=False):
-        new_owner = st.text_input("New Owner (required)", value="" if match.empty else str(match.iloc[0].get("USER","") or ""))
-        st.markdown("**New owner details** (optional)")
-        inputs = {}
-        existing = [c for c in PERSON_COLS if c!="USER" and c in df_inventory.columns]
-        left, right = st.columns(2)
-        for i, col in enumerate(existing):
-            val = "" if match.empty else str(match.iloc[0].get(col,"") or "")
-            with (left if i%2==0 else right):
-                inputs[col] = st.text_input(col, value=val, key=f"tx_{col}")
-        ok = st.form_submit_button("Transfer Now")
+    new_owner = st.text_input("New Owner (required)")
+    submit_transfer = st.button("Transfer Now", type="primary", disabled=not (serial_number and new_owner.strip()))
 
-    if ok:
-        if not serial_number: st.error("Choose a Serial Number.")
-        elif not new_owner.strip(): st.error("New Owner is required.")
-        elif match.empty: st.error(f"Serial {serial_number} not found!")
+    if submit_transfer:
+        if match.empty:
+            st.error(f"Device with Serial Number {serial_number} not found!")
         else:
             prev_user = str(df_inventory.loc[idx,"USER"]) if "USER" in df_inventory.columns else ""
+
+            # Move current user -> Previous User
             if "Previous User" in df_inventory.columns: df_inventory.loc[idx,"Previous User"] = prev_user
+            # Set new owner
             if "USER" in df_inventory.columns: df_inventory.loc[idx,"USER"] = new_owner.strip()
-            if "TO" in df_inventory.columns: df_inventory.loc[idx,"TO"] = new_owner.strip()
-            for col,val in inputs.items():
-                if col in df_inventory.columns: df_inventory.loc[idx,col] = val.strip()
+            if "TO" in df_inventory.columns:   df_inventory.loc[idx,"TO"]   = new_owner.strip()
+            # Stamp time and registrar
             if "Date issued" in df_inventory.columns: df_inventory.loc[idx,"Date issued"] = datetime.now().strftime(DATE_FMT)
             if "Registered by" in df_inventory.columns: df_inventory.loc[idx,"Registered by"] = st.session_state.get("username","")
 
+            # Log it
             df_log = load_transfer_log()
             device_type = df_inventory.loc[idx,"Device Type"] if "Device Type" in df_inventory.columns else ""
             log_entry = {
@@ -2109,8 +2096,11 @@ with tab_objects[2]:
                 "Registered by": st.session_state.get("username",""),
             }
             df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
-            save_inventory(df_inventory); save_transfer_log(df_log)
-            st.success(f"✅ Transfer saved. {prev_user or '(blank)'} → {new_owner.strip()}")
+
+            save_inventory(df_inventory)
+            save_transfer_log(df_log)
+
+            st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
 
 # TAB 4 — Transfer Log
 with tab_objects[3]:
@@ -2122,7 +2112,7 @@ with tab_objects[3]:
     st.dataframe(for_display(df_log), use_container_width=True) \
         if st.session_state.get("role")=="admin" else st.table(for_display(df_log))
 
-# TAB 5 — Export
+# TAB 5 — Export (Admins only)
 if st.session_state.get("role")=="admin" and len(tab_objects)>4:
     with tab_objects[4]:
         st.subheader("Download Updated Files")
