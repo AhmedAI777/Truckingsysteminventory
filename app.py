@@ -550,14 +550,12 @@
 # ✅ Register tab saves directly to main inventory (truckinventory.xlsx)
 # ✅ Auto-switch to "View Inventory" after saving (JS helper + session flag)
 # ✅ Transfer tab: Serial Number selectbox with type-to-search + device hint
-# ✅ Clean header + easy knobs (logo size/placement, fonts, spacing)
-# ✅ Logout row UNDER the header (right-aligned)
 # ✅ Persistent login across refresh (signed token using st.query_params)
-# ✅ Arrow-safe display for mixed-type columns
-# ✅ No deprecated API calls
+# ✅ Atomic Excel writes + cached reads with cache-busting (refresh won’t “lose” new rows)
+# ✅ NaT dates fixed: nice formatting for any date-like columns (no NaT shown)
 
 import streamlit as st
-import streamlit.components.v1 as components  # ← for tab auto-switch helper
+import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -601,6 +599,9 @@ ICON_FILE        = "assets/favicon.png"                             # ← Path t
 # users_json = '[{"username":"admin","password":"123","role":"admin"}]'
 AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")       # ← Replace in secrets for production
 
+# --- Date format used everywhere we write/format dates ---
+DATE_FMT = "%Y-%m-%d %H:%M:%S"                                      # ← change if you prefer another format
+
 # ============================
 # STREAMLIT PAGE CONFIG
 # ============================
@@ -616,23 +617,19 @@ st.set_page_config(
 # ============================
 st.markdown(f"""
 <style>
-/* Global font */
 html, body, .stApp, .stApp * {{
   font-family: "{FONT_FAMILY}", Times, serif !important;
 }}
-
-/* Hide the sidebar completely */
 [data-testid="stSidebar"] {{ display: none !important; }}
 
-/* Page container padding & width */
 .block-container {{
-  padding-top: {TOP_PADDING_REM}rem;      /* ← change TOP_PADDING_REM above */
-  max-width: {MAX_CONTENT_W}px;           /* ← change MAX_CONTENT_W above */
+  padding-top: {TOP_PADDING_REM}rem;
+  max-width: {MAX_CONTENT_W}px;
 }}
 
 .brand-title {{
   font-weight: 700;
-  font-size: {TITLE_SIZE_PX}px;           /* ← change TITLE_SIZE_PX above */
+  font-size: {TITLE_SIZE_PX}px;
   margin: 0;
   line-height: 1.1;
 }}
@@ -640,32 +637,21 @@ html, body, .stApp, .stApp * {{
   margin: 2px 0 0;
   color: #64748b;
   font-weight: 400;
-  font-size: {TAGLINE_SIZE_PX}px;         /* ← change TAGLINE_SIZE_PX above */
+  font-size: {TAGLINE_SIZE_PX}px;
 }}
 
 .header-divider {{
   height: 1px;
   background: #e5e7eb;
-  margin: 10px 0 {GAP_BELOW_HEADER_PX}px; /* ← change GAP_BELOW_HEADER_PX above */
+  margin: 10px 0 {GAP_BELOW_HEADER_PX}px;
 }}
 
-.logout-row {{ margin-top: {LOGOUT_ROW_TOP_MARG}px; }}  /* ← change LOGOUT_ROW_TOP_MARG above */
+.logout-row {{ margin-top: {LOGOUT_ROW_TOP_MARG}px; }}
 
-/* Button sizing/shape consistent with Streamlit toolbar */
-.stButton > button {{
-  height: 38px;
-  padding: 0 .9rem;
-  border-radius: 8px;
-  font-weight: 600;
-}}
-.logout-col .stButton > button {{
-  background: #f3f4f6;
-  color: #111827;
-  border: 1px solid #e5e7eb;
-}}
-.logout-col .stButton > button:hover {{ background: #e5e7eb; }}
+.stButton > button {{ height: 38px; padding: 0 .9rem; border-radius: 8px; font-weight: 600; }}
+.logout-col .stButton > button {{ background:#f3f4f6; color:#111827; border:1px solid #e5e7eb; }}
+.logout-col .stButton > button:hover {{ background:#e5e7eb; }}
 
-/* Tiny breathing room for tabs & subheaders */
 .stTabs {{ margin-top: 6px; }}
 section[tabindex="0"] h2 {{ margin-top: 8px; }}
 
@@ -676,12 +662,9 @@ section[tabindex="0"] h2 {{ margin-top: 8px; }}
 # ============================
 # SESSION DEFAULTS
 # ============================
-if "authenticated" not in st.session_state:
-    st.session_state["authenticated"] = False
-if "role" not in st.session_state:
-    st.session_state["role"] = None
-if "username" not in st.session_state:
-    st.session_state["username"] = ""
+st.session_state.setdefault("authenticated", False)
+st.session_state.setdefault("role", None)
+st.session_state.setdefault("username", "")
 
 # ============================
 # USERS (from secrets)
@@ -689,10 +672,8 @@ if "username" not in st.session_state:
 try:
     USERS = json.loads(st.secrets["users_json"])
 except Exception:
-    st.error(
-        "Missing `users_json` in secrets. Example: "
-        '`[{"username":"admin","password":"123","role":"admin"}]`'
-    )
+    st.error("Missing `users_json` in secrets. Example: "
+             '`[{"username":"admin","password":"123","role":"admin"}]`')
     st.stop()
 
 def get_user_role(username: str):
@@ -705,11 +686,7 @@ def get_user_role(username: str):
 # URL TOKEN (persistent login across refresh)
 # ============================
 def make_token(username: str) -> str:
-    return hmac.new(
-        AUTH_SECRET.encode("utf-8"),
-        msg=username.encode("utf-8"),
-        digestmod=hashlib.sha256
-    ).hexdigest()
+    return hmac.new(AUTH_SECRET.encode("utf-8"), msg=username.encode("utf-8"), digestmod=hashlib.sha256).hexdigest()
 
 def set_auth_query_params(username: str):
     st.query_params.clear()
@@ -745,29 +722,37 @@ def img_to_base64(path: str) -> str | None:
     return None
 
 def logo_html(src_path: str, width_px: int, height_px: int | None, alt_emoji: str) -> str:
-    """
-    Renders logo with exact width/height via HTML (so you can control BOTH).
-    - Set height_px to None to keep aspect ratio (auto height).
-    """
     b64 = img_to_base64(src_path)
     if not b64:
         return f"<div style='font-size:{int(width_px*0.7)}px;line-height:1'>{alt_emoji}</div>"
     h_style = f"height:{height_px}px;" if height_px else ""
     return f"<img src='data:image/png;base64,{b64}' alt='logo' style='width:{width_px}px;{h_style}display:block;'/>"
 
-# Arrow-safe display-only copy (keeps NaN empty, casts to str)
+# Arrow-safe display (formats dates; hides NaT/NaN)
 def for_display(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
+
     out = df.copy()
+
+    # 1) Convert datetime dtypes to formatted strings
+    for col in out.columns:
+        try:
+            if np.issubdtype(out[col].dtype, np.datetime64) or ("date" in col.lower()):
+                s = pd.to_datetime(out[col], errors="coerce")
+                out[col] = s.dt.strftime(DATE_FMT)
+        except Exception:
+            pass
+
+    # 2) Clean missing values and any literal NaT/nan text
     out = out.replace({np.nan: ""})
-    for c in out.columns:
-        out[c] = out[c].astype(str)
+    for col in out.columns:
+        out[col] = out[col].astype(str).replace({"NaT": "", "nan": "", "NaN": ""})
+
     return out
 
 # === JS helper: click a tab by its visible text (used to jump to "View Inventory") ===
 def _switch_to_tab_by_text(partial_label: str):
-    """Client-side: click the tab whose label contains the given text."""
     components.html(
         f"""
         <script>
@@ -781,7 +766,7 @@ def _switch_to_tab_by_text(partial_label: str):
               return;
             }}
           }}
-          setTimeout(clickTab, 60); // try again if tabs not ready
+          setTimeout(clickTab, 60);
         }}
         clickTab();
         </script>
@@ -793,7 +778,6 @@ def _switch_to_tab_by_text(partial_label: str):
 # HEADER (row1: logo+title, row2: logout right)
 # ============================
 def show_header():
-    # Row 1 — Logo + Text
     c_logo, c_text = st.columns([0.16, 0.84])
     with c_logo:
         st.markdown(logo_html(LOGO_FILE, LOGO_WIDTH_PX, LOGO_HEIGHT_PX, LOGO_ALT_EMOJI), unsafe_allow_html=True)
@@ -804,7 +788,6 @@ def show_header():
             unsafe_allow_html=True
         )
 
-    # Row 2 — Logout (right-aligned, below header)
     s, btn = st.columns([0.85, 0.15])
     with btn:
         st.markdown("<div class='logout-col logout-row'>", unsafe_allow_html=True)
@@ -817,7 +800,6 @@ def show_header():
                 st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
-    # Divider under both rows
     st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
 
 show_header()
@@ -834,12 +816,11 @@ TRANSFER_LOG_FILE      = TRANSFER_LOG_PRIMARY if os.path.exists(TRANSFER_LOG_PRI
 BACKUP_FOLDER          = "backups"
 os.makedirs(BACKUP_FOLDER, exist_ok=True)
 
-# --- Required hardware columns for Register tab ---
+# Hardware columns + meta we maintain
 HW_COLUMNS = [
     "Serial Number", "Device Type", "Brand", "Model", "CPU",
     "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size"
 ]
-# Meta columns already used elsewhere in app
 META_COLUMNS = ["USER", "Previous User", "TO", "Date issued", "Registered by"]
 ALL_INVENTORY_COLUMNS = HW_COLUMNS + META_COLUMNS
 
@@ -849,56 +830,65 @@ def backup_file(file_path):
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         shutil.copy(file_path, f"{BACKUP_FOLDER}/{base}_{ts}.xlsx")
 
-def ensure_inventory_file():
-    if not os.path.exists(INVENTORY_FILE):
-        pd.DataFrame(columns=ALL_INVENTORY_COLUMNS).to_excel(INVENTORY_FILE, index=False)
-
-def ensure_transfer_log_file():
-    if not os.path.exists(TRANSFER_LOG_FILE):
-        cols = ["Device Type", "Serial Number", "From owner", "To owner", "Date issued", "Registered by"]
-        pd.DataFrame(columns=cols).to_excel(TRANSFER_LOG_FILE, index=False)
-
-def load_inventory() -> pd.DataFrame:
-    ensure_inventory_file()
-    df = pd.read_excel(INVENTORY_FILE)
-    # Auto-add any missing columns to existing file
+# ============ CACHED READS + CACHE BUSTERS ============
+@st.cache_data(show_spinner=False)
+def _read_inventory_file(path: str) -> pd.DataFrame:
+    if not os.path.exists(path):
+        pd.DataFrame(columns=ALL_INVENTORY_COLUMNS).to_excel(path, index=False)
+    df = pd.read_excel(path)
     for col in ALL_INVENTORY_COLUMNS:
         if col not in df.columns:
             df[col] = ""
-    # Re-order columns nicely (hardware first, then meta, then any extras)
     ordered = [c for c in ALL_INVENTORY_COLUMNS if c in df.columns] + \
               [c for c in df.columns if c not in ALL_INVENTORY_COLUMNS]
-    df = df[ordered]
-    return df
+    return df[ordered]
+
+def bust_inventory_cache():
+    _read_inventory_file.clear()
+
+def load_inventory() -> pd.DataFrame:
+    return _read_inventory_file(INVENTORY_FILE)
+
+@st.cache_data(show_spinner=False)
+def _read_transfer_log_file(path: str) -> pd.DataFrame:
+    if not os.path.exists(path):
+        pd.DataFrame(columns=["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"])\
+          .to_excel(path, index=False)
+    return pd.read_excel(path)
+
+def bust_transfer_log_cache():
+    _read_transfer_log_file.clear()
 
 def load_transfer_log() -> pd.DataFrame:
-    ensure_transfer_log_file()
-    return pd.read_excel(TRANSFER_LOG_FILE)
+    return _read_transfer_log_file(TRANSFER_LOG_FILE)
+
+# ============ ATOMIC WRITES ============
+def _atomic_write_excel(df: pd.DataFrame, path: str):
+    tmp = f"{path}.tmp"
+    with pd.ExcelWriter(tmp, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False)
+    os.replace(tmp, path)
 
 def save_inventory(df: pd.DataFrame):
     backup_file(INVENTORY_FILE)
-    df.to_excel(INVENTORY_FILE, index=False)
+    _atomic_write_excel(df, INVENTORY_FILE)
+    bust_inventory_cache()
 
 def save_transfer_log(df: pd.DataFrame):
     backup_file(TRANSFER_LOG_FILE)
-    df.to_excel(TRANSFER_LOG_FILE, index=False)
+    _atomic_write_excel(df, TRANSFER_LOG_FILE)
+    bust_transfer_log_cache()
 
 # === Helper: SAVE TO MAIN INVENTORY (used by Register tab) ===
 def add_inventory_item(item: dict) -> tuple[bool, str]:
-    """
-    Append one item to the main inventory Excel (truckinventory.xlsx).
-    Returns (ok, message). Prevents duplicate Serial Number.
-    """
     inv = load_inventory()
     serial = str(item.get("Serial Number", "")).strip()
     if not serial:
         return False, "Serial Number is required."
 
-    # duplicate check
     if serial in inv["Serial Number"].astype(str).values:
         return False, f"Serial Number '{serial}' already exists."
 
-    # Make sure all known columns exist in the item; fill missing with empty
     for col in ALL_INVENTORY_COLUMNS:
         item.setdefault(col, "")
 
@@ -923,7 +913,7 @@ if not st.session_state.get("authenticated", False):
             st.session_state["authenticated"] = True
             st.session_state["role"] = role
             st.session_state["username"] = in_user
-            set_auth_query_params(in_user)  # persist via URL
+            set_auth_query_params(in_user)
             st.success(f"✅ Logged in as {in_user} ({role})")
             st.rerun()
         else:
@@ -931,20 +921,19 @@ if not st.session_state.get("authenticated", False):
     st.stop()
 
 # ============================
-# TABS (main app) — ORDER
+# TABS (main app)
 # ============================
-# New order: Register | View | Transfer | Log | Export
 tabs = ["📝 Register Inventory", "📦 View Inventory", "🔄 Transfer Device", "📜 View Transfer Log"]
 if st.session_state.get("role") == "admin":
     tabs.append("⬇ Export Files")
 tab_objects = st.tabs(tabs)
 
-# If a previous action asked us to jump to a tab, do it now (client-side click)
+# Handle auto-jump request from previous run (e.g., after save)
 _target = st.session_state.pop("__jump_to_tab__", None)
 if _target:
-    _switch_to_tab_by_text(_target)  # e.g., "View Inventory" or "📦 View Inventory"
+    _switch_to_tab_by_text(_target)
 
-# TAB 1 – 📝 Register Inventory  (SAVES TO MAIN INVENTORY + auto-switch)
+# TAB 1 – 📝 Register Inventory
 with tab_objects[0]:
     st.subheader("Register New Inventory Item")
     with st.form("register_inventory_form", clear_on_submit=False):
@@ -963,7 +952,6 @@ with tab_objects[0]:
             r_screen = st.text_input("Screen Size")
         submitted = st.form_submit_button("Save Item")
     if submitted:
-        # Build the item dict with meta columns
         item = {
             "Serial Number": r_serial.strip(),
             "Device Type":   r_device.strip(),
@@ -975,17 +963,18 @@ with tab_objects[0]:
             "Memory":        r_mem.strip(),
             "GPU":           r_gpu.strip(),
             "Screen Size":   r_screen.strip(),
-            "USER":          "",  # default empty; will be filled on transfer
+            # meta
+            "USER":          "",
             "Previous User": "",
             "TO":            "",
-            "Date issued":   "",  # set now if you want created-at: datetime.now().strftime("%m/%d/%Y %H:%M:%S")
+            # set created-at time so you never see NaT
+            "Date issued":   datetime.now().strftime(DATE_FMT),
             "Registered by": st.session_state.get("username",""),
         }
-        ok, msg = add_inventory_item(item)  # ← SAVE TO MAIN INVENTORY
+        ok, msg = add_inventory_item(item)
         if ok:
             st.success("✅ Inventory item saved to main inventory.")
-            # Ask the app to jump to the "View Inventory" tab on the next run:
-            st.session_state["__jump_to_tab__"] = "View Inventory"  # or "📦 View Inventory"
+            st.session_state["__jump_to_tab__"] = "View Inventory"  # auto-switch next run
             st.rerun()
         else:
             st.error(f"❌ {msg}")
@@ -994,17 +983,14 @@ with tab_objects[0]:
 with tab_objects[1]:
     st.subheader("Current Inventory")
     df_inventory = load_inventory()
-    if st.session_state.get("role") == "admin":
-        st.dataframe(for_display(df_inventory), use_container_width=True)
-    else:
-        st.table(for_display(df_inventory))
+    st.dataframe(for_display(df_inventory), use_container_width=True) \
+        if st.session_state.get("role") == "admin" else st.table(for_display(df_inventory))
 
 # TAB 3 – 🔄 Transfer Device (with Serial Number type-to-search + hint)
 with tab_objects[2]:
     st.subheader("Register Ownership Transfer")
 
     df_inventory = load_inventory()
-    # Build searchable options of existing serial numbers
     serial_options = sorted(df_inventory["Serial Number"].astype(str).dropna().unique().tolist())
     SERIAL_SENTINEL = "— Select Serial Number —"
     serial_choice = st.selectbox(
@@ -1014,7 +1000,6 @@ with tab_objects[2]:
     )
     serial_number = None if serial_choice == SERIAL_SENTINEL else serial_choice
 
-    # Show a small hint of the chosen device (to confirm selection)
     if serial_number:
         row = df_inventory[df_inventory["Serial Number"].astype(str) == serial_number].iloc[0]
         hint = f"Device: {row.get('Device Type','')} • Brand: {row.get('Brand','')} • Model: {row.get('Model','')} • CPU: {row.get('CPU','')}"
@@ -1022,8 +1007,6 @@ with tab_objects[2]:
 
     new_owner = st.text_input("Enter NEW Owner's Name")
     registered_by = st.session_state.get("username", "")
-
-    # Disable button until valid values entered
     transfer_disabled = not (serial_number and new_owner.strip())
 
     if st.button("Transfer Now", type="primary", disabled=transfer_disabled):
@@ -1042,8 +1025,9 @@ with tab_objects[2]:
                 df_inventory.loc[idx, "USER"] = new_owner
             if "TO" in df_inventory.columns:
                 df_inventory.loc[idx, "TO"]  = new_owner
+            # write timestamp as string in our unified format
             if "Date issued" in df_inventory.columns:
-                df_inventory.loc[idx, "Date issued"] = datetime.now().strftime("%m/%d/%Y %H:%M:%S")
+                df_inventory.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
             if "Registered by" in df_inventory.columns:
                 df_inventory.loc[idx, "Registered by"] = registered_by
 
@@ -1052,10 +1036,11 @@ with tab_objects[2]:
                 "Serial Number": serial_number,
                 "From owner": from_owner,
                 "To owner": new_owner,
-                "Date issued": datetime.now().strftime("%m/%d/%Y %H:%M:%S"),
+                "Date issued": datetime.now().strftime(DATE_FMT),
                 "Registered by": registered_by
             }
             df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
+
             save_inventory(df_inventory)
             save_transfer_log(df_log)
             st.success(f"✅ Transfer logged: {from_owner} → {new_owner}")
@@ -1064,17 +1049,14 @@ with tab_objects[2]:
 with tab_objects[3]:
     st.subheader("Transfer Log History")
     df_log = load_transfer_log()
-    if st.session_state.get("role") == "admin":
-        st.dataframe(for_display(df_log), use_container_width=True)
-    else:
-        st.table(for_display(df_log))
+    st.dataframe(for_display(df_log), use_container_width=True) \
+        if st.session_state.get("role") == "admin" else st.table(for_display(df_log))
 
 # TAB 5 – ⬇ Export Files (Admins Only)
 if st.session_state.get("role") == "admin" and len(tab_objects) > 4:
     with tab_objects[4]:
         st.subheader("Download Updated Files")
 
-        # Inventory export
         df_inventory = load_inventory()
         out_inv = BytesIO()
         with pd.ExcelWriter(out_inv, engine="openpyxl") as writer:
@@ -1087,7 +1069,6 @@ if st.session_state.get("role") == "admin" and len(tab_objects) > 4:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-        # Transfer log export
         df_log = load_transfer_log()
         out_log = BytesIO()
         with pd.ExcelWriter(out_log, engine="openpyxl") as writer:
