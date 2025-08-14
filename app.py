@@ -1758,9 +1758,9 @@ DATE_FMT         = "%Y-%m-%d %H:%M:%S"
 AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")
 
 # Read sheet locator + tab names from secrets (so you can change without editing code)
-SHEET_URL  = st.secrets.get("sheet_url", "").strip()
-SHEET_ID   = st.secrets.get("sheet_id", "").strip()
-SHEET_NAME = st.secrets.get("sheet_name", "").strip()
+SHEET_URL  = st.secrets.get("https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit", "").strip()
+SHEET_ID   = st.secrets.get("1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI", "").strip()
+SHEET_NAME = st.secrets.get("truckingsysteminventory", "").strip()
 
 INVENTORY_SHEET   = st.secrets.get("inventory_tab", "truckinventory")
 TRANSFERLOG_SHEET = st.secrets.get("transferlog_tab", "transferlog")
