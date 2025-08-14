@@ -549,6 +549,9 @@
 # app.py — Tracking Inventory System (Streamlit)
 # Tabs: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device,
 #       4) 📜 View Transfer Log, 5) ⬇ Export Files
+# app.py — Tracking Inventory System (Streamlit)
+# Tabs: 1) 📝 Register Inventory, 2) 📦 View Inventory, 3) 🔄 Transfer Device,
+#       4) 📜 View Transfer Log, 5) ⬇ Export Files
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -589,8 +592,7 @@ LOGOUT_ROW_TOP_MARG = 8
 # Favicon
 ICON_FILE        = "assets/favicon.png"
 
-# Auth
-# Put in .streamlit/secrets.toml:
+# Auth (put in .streamlit/secrets.toml)
 # auth_secret = "a-very-long-random-string"
 # users_json = '[{"username":"admin","password":"123","role":"admin"}]'
 AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")
@@ -824,8 +826,13 @@ def bust_transfer_log_cache():
 def load_transfer_log() -> pd.DataFrame:
     return _read_transfer_log_file(TRANSFER_LOG_FILE)
 
+# -------- Atomic Excel write (FIXED: use .xlsx suffix) --------
 def _atomic_write_excel(df: pd.DataFrame, path: str):
-    tmp = f"{path}.tmp"
+    """
+    Write to a temporary .xlsx next to the target, then atomically replace.
+    Avoids the 'Invalid extension for engine ... tmp' error.
+    """
+    tmp = f"{path}.tmp.xlsx"   # ensure a valid Excel extension
     with pd.ExcelWriter(tmp, engine="openpyxl") as writer:
         df.to_excel(writer, index=False)
     os.replace(tmp, path)
@@ -943,7 +950,7 @@ with tab_objects[1]:
     else:
         st.table(for_display(df_inventory))
 
-# TAB 3 – Transfer Device (SAFE: no IndexError on missing)
+# TAB 3 – Transfer Device (SAFE lookups)
 with tab_objects[2]:
     st.subheader("Register Ownership Transfer")
 
