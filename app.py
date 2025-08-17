@@ -494,5 +494,3 @@ if IS_ADMIN:
             file_name="transfer_log.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-app.py
-
