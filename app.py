@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from io import BytesIO
 from datetime import datetime
+import hashlib
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
@@ -16,64 +17,90 @@ st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
 # =============================
-# CONNECTION (public read-only or gspread write)
-# .streamlit/secrets.toml example:
-# [connections.gsheets]
-# type = "gspread"  # or "public" for read-only
-# spreadsheet = "https://docs.google.com/spreadsheets/d/<ID>/edit"
-#
-# inventory_tab   = "0"          # gid or sheet name
-# transferlog_tab = "405007082"  # gid or sheet name
-#
-# admin_pin = "YOUR-STRONG-PIN"
+# SHEETS CONNECTION (read/write depends on secrets)
 # =============================
 GS = st.secrets.get("connections", {}).get("gsheets", {})
 SPREADSHEET   = GS.get("spreadsheet", "")
-MODE          = GS.get("type", "public").lower()
+MODE          = GS.get("type", "public").lower()         # "gspread" for write, "public" for read-only
 CAN_WRITE     = MODE == "gspread"
-
-INVENTORY_WS  = st.secrets.get("inventory_tab", "0")
+INVENTORY_WS  = st.secrets.get("inventory_tab", "0")     # gid or sheet name
 TRANSFER_WS   = st.secrets.get("transferlog_tab", "405007082")
-
-ADMIN_PIN     = str(st.secrets.get("admin_pin", "")).strip()
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # =============================
-# SIDEBAR: SIMPLE ROLE CONTROL
+# AUTH HELPERS (username/password + roles)
+# secrets.toml:
+# [auth.users.john]        # username
+# password = "sha256:<hex>"  OR "plain:<text>"
+# role = "admin" | "staff"
 # =============================
-if "is_admin" not in st.session_state:
-    st.session_state.is_admin = False
+def _hash_sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-with st.sidebar:
-    st.markdown("### 🔐 Access")
-    if st.session_state.is_admin:
-        st.success("Role: Admin")
-        if st.button("Lock to Staff"):
-            st.session_state.is_admin = False
-            st.rerun()
+def check_credentials(username: str, password: str):
+    """Return role ('admin'|'staff') if ok, else None."""
+    users = st.secrets.get("auth", {}).get("users", {})
+    rec = users.get(username)
+    if not rec:
+        return None
+    stored = str(rec.get("password", ""))
+    role = str(rec.get("role", "staff")).lower()
+
+    # support both sha256:... and plain:...
+    if stored.startswith("sha256:"):
+        ok = _hash_sha256(password) == stored.split("sha256:", 1)[1].strip()
+    elif stored.startswith("plain:"):
+        ok = password == stored.split("plain:", 1)[1]
     else:
-        st.info("Role: Staff")
-        pin = st.text_input("Admin PIN", type="password", placeholder="Enter PIN")
-        if st.button("Unlock Admin"):
-            if ADMIN_PIN and pin == ADMIN_PIN:
-                st.session_state.is_admin = True
+        ok = password == stored  # fallback
+
+    return role if ok else None
+
+def logout():
+    for k in ("user", "role", "is_admin"):
+        if k in st.session_state:
+            del st.session_state[k]
+    st.success("Logged out.")
+    st.rerun()
+
+# =============================
+# SIDEBAR LOGIN / LOGOUT
+# =============================
+with st.sidebar:
+    st.markdown("### 🔐 Sign in")
+    if "user" not in st.session_state:
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
+        if st.button("Login", type="primary"):
+            role = check_credentials(u.strip(), p)
+            if role:
+                st.session_state.user = u.strip()
+                st.session_state.role = role
+                st.session_state.is_admin = (role == "admin")
                 st.rerun()
             else:
-                st.error("Invalid PIN")
+                st.error("Invalid username or password.")
+        st.caption("Admins have full control. Staff can only transfer and view.")
+    else:
+        st.success(f"Signed in as **{st.session_state.user}**  \nRole: **{st.session_state.role}**")
+        if st.button("Logout"):
+            logout()
 
-IS_ADMIN = st.session_state.is_admin
+# gate the app: require login
+if "user" not in st.session_state:
+    st.info("Please sign in from the sidebar to continue.")
+    st.stop()
 
-# Policy: admins control everything, staff can only transfer + view
+IS_ADMIN = st.session_state.get("is_admin", False)
 ALLOW_REGISTER = IS_ADMIN
 ALLOW_TRANSFER = True
 ALLOW_EXPORT   = IS_ADMIN
 
 # =============================
-# HELPERS
+# UTILITIES
 # =============================
 def _ws_arg(x):
-    """Support both gid (int) and sheet name (str)."""
     s = str(x).strip()
     try:
         return int(s)
@@ -119,7 +146,7 @@ def load_ws(worksheet, cols):
 
 def save_ws(worksheet, df):
     if not CAN_WRITE:
-        st.error("App is in public (read-only) mode. Switch connection type to 'gspread' to enable writes.")
+        st.error("App is in public (read-only) mode. Use connection type 'gspread' to enable writes.")
         return False
     try:
         conn.update(spreadsheet=SPREADSHEET, worksheet=_ws_arg(worksheet), data=df)
@@ -151,11 +178,10 @@ tab_reg, tab_inv, tab_xfer, tab_log, tab_export = st.tabs(
 # -----------------------------
 with tab_reg:
     st.subheader("Register New Inventory Item")
-    if not ALLOW_REGISTER:
-        st.info("Registration is disabled for staff. (Read-only mode)")
-        disabled = True
-    else:
-        disabled = False
+    disabled = not ALLOW_REGISTER
+
+    if disabled:
+        st.info("Registration is restricted to admins.")
 
     with st.form("reg_form", clear_on_submit=False):
         c1, c2 = st.columns(2)
@@ -196,14 +222,14 @@ with tab_reg:
                     "Department": "", "Email Address": "", "Contact Number": "",
                     "Location": "", "Office": "", "Notes": "",
                     "Date issued": datetime.now().strftime(DATE_FMT),
-                    "Registered by": "admin",
+                    "Registered by": st.session_state.user,
                 }
                 inv = pd.concat([inv, pd.DataFrame([row])], ignore_index=True)
                 if save_ws(INVENTORY_WS, inv):
                     st.success("✅ Saved to Google Sheets.")
 
 # -----------------------------
-# 2) VIEW INVENTORY (single full table)
+# 2) VIEW INVENTORY
 # -----------------------------
 with tab_inv:
     st.subheader("Current Inventory")
@@ -211,7 +237,7 @@ with tab_inv:
     st.dataframe(nice_display(inv), use_container_width=True, hide_index=True)
 
 # -----------------------------
-# 3) TRANSFER DEVICE (staff & admin)
+# 3) TRANSFER DEVICE (Staff + Admin)
 # -----------------------------
 with tab_xfer:
     st.subheader("Register Ownership Transfer")
@@ -244,14 +270,15 @@ with tab_xfer:
         else:
             idx = idx_list[0]
             prev_user = inv.loc[idx, "USER"]
+
             # update inventory
             inv.loc[idx, "Previous User"] = str(prev_user or "")
             inv.loc[idx, "USER"] = new_owner.strip()
             inv.loc[idx, "TO"] = new_owner.strip()
             inv.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
-            inv.loc[idx, "Registered by"] = "admin" if IS_ADMIN else "staff"
+            inv.loc[idx, "Registered by"] = st.session_state.user
 
-            # append to log
+            # append transfer log
             log = load_ws(TRANSFER_WS, LOG_COLS)
             log_row = {
                 "Device Type": inv.loc[idx, "Device Type"],
@@ -259,7 +286,7 @@ with tab_xfer:
                 "From owner": str(prev_user or ""),
                 "To owner": new_owner.strip(),
                 "Date issued": datetime.now().strftime(DATE_FMT),
-                "Registered by": "admin" if IS_ADMIN else "staff",
+                "Registered by": st.session_state.user,
             }
             log = pd.concat([log, pd.DataFrame([log_row])], ignore_index=True)
 
