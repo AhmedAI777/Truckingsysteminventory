@@ -9,6 +9,7 @@ gspread>=6.0
 gspread-dataframe>=3.3.1
 google-auth>=2.30
 openpyxl>=3.1.2
+GSheetsConnection
 
 # Google Drive integration (future-proof)
 google-api-python-client>=2.133.0
