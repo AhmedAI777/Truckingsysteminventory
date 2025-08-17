@@ -14,8 +14,8 @@ SUBTITLE    = "AdvancedConstruction"
 DATE_FMT    = "%Y-%m-%d %H:%M:%S"
 
 # Worksheet (tab) names
-INVENTORY_WS   = "truckinventory"
-TRANSFERLOG_WS = "transferlog"
+INVENTORY_WS   = st.secrets.get("inventory_tab", "truckinventory")
+TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transferlog")
 
 # -----------------------------
 # PAGE HEADER
