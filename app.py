@@ -15,30 +15,31 @@ import pandas as pd
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
+
 # =============================================================================
 # BASIC APP SETTINGS
 # =============================================================================
 APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE  = "AdvancedConstruction"
-DATE_FMT  = "%Y-%m-%d %H:%M:%S"   # keep your sheet dates like '2025-08-10 06:52:09'
+DATE_FMT  = "%Y-%m-%d %H:%M:%S"   # common display/storage format
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
+
 # =============================================================================
-# UTIL: custom font (FounderGroteskCondensed-Regular.otf)
+# CUSTOM FONT
 # =============================================================================
 def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
-    """Inject @font-face CSS from a local OTF/TTF file if present."""
     if not os.path.exists(font_path):
         return
     with open(font_path, "rb") as f:
-        font_b64 = base64.b64encode(f.read()).decode("utf-8")
+        b64 = base64.b64encode(f.read()).decode("utf-8")
     st.markdown(
         f"""
         <style>
           @font-face {{
             font-family: '{family}';
-            src: url(data:font/otf;base64,{font_b64}) format('opentype');
+            src: url(data:font/otf;base64,{b64}) format('opentype');
             font-weight: normal;
             font-style: normal;
             font-display: swap;
@@ -47,10 +48,11 @@ def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
             font-family: '{family}', -apple-system, BlinkMacSystemFont, "Segoe UI",
                          Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif !important;
           }}
-          /* headings use same family for consistency */
           h1,h2,h3,h4,h5,h6, .stTabs [role="tab"] {{
             font-family: '{family}', sans-serif !important;
           }}
+          /* tighten layout a bit */
+          section.main > div {{ padding-top: 0.6rem; }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -58,35 +60,10 @@ def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
 
 _inject_font_css("FounderGroteskCondensed-Regular.otf")
 
-# Tiny spacing tweak
-st.markdown(
-    """
-    <style>
-      section.main > div { padding-top: 1.2rem; }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
 
 # =============================================================================
-# AUTH: USERS + PERSISTENT LOGIN VIA SIGNED TOKEN IN URL
+# AUTH
 # =============================================================================
-# .streamlit/secrets.toml example (change the secret!):
-# [auth]
-# secret = "change-me-to-a-long-random-string"
-#
-# [auth.admins]
-# admin1 = "admin@2025"
-# admin2 = "admin@2025"
-# admin3 = "admin@2025"
-# admin4 = "admin@2025"
-# admin5 = "admin@2025"
-#
-# [auth.staff]
-# staff1  = "staff@2025"
-# ...
-# staff15 = "staff@2025"
-
 DEFAULT_ADMIN_PW = "admin@2025"
 DEFAULT_STAFF_PW = "staff@2025"
 
@@ -101,7 +78,7 @@ if not STAFFS:
 AUTH_SECRET = (
     st.secrets.get("auth", {}).get("secret")
     if hasattr(st, "secrets") else None
-) or "dev-only-please-change-me-to-a-long-random-string"
+) or "change-me-now-very-long-random-string"
 
 def authenticate(username: str, password: str) -> Optional[str]:
     if username in ADMINS and ADMINS[username] == password:
@@ -155,12 +132,12 @@ def _set_query_auth(token: Optional[str]):
             st.experimental_set_query_params(auth=token)
 
 def ensure_auth():
-    """Keep users signed in across refreshes until they click Logout."""
+    """Keep users signed in on refresh until they click Logout."""
     if "auth_user" not in st.session_state:
         st.session_state.auth_user = None
         st.session_state.auth_role = None
 
-    # 1) Try from URL token
+    # from URL (persistent)
     if not st.session_state.auth_user:
         token = _get_query_auth()
         parsed = _parse_token(token) if token else None
@@ -168,16 +145,15 @@ def ensure_auth():
             u, r, exp = parsed
             st.session_state.auth_user = u
             st.session_state.auth_role = r
-            # renew if close to expiry
-            if exp - _now() < 3 * 86400:
+            if exp - _now() < 3 * 86400:  # renew if <3 days left
                 _set_query_auth(_make_token(u, r, ttl_days=30))
             return True
 
-    # 2) Already in session?
+    # already in session
     if st.session_state.auth_user and st.session_state.auth_role:
         return True
 
-    # 3) Login UI
+    # login screen
     st.markdown(f"## {APP_TITLE}")
     st.caption(SUBTITLE)
     st.info("Please sign in to continue.")
@@ -197,13 +173,12 @@ def ensure_auth():
     st.stop()
 
 def logout_button():
-    right = st.columns([1, 1, 8])[1]
-    with right:
-        if st.button("Logout"):
-            for k in ("auth_user", "auth_role"):
-                st.session_state.pop(k, None)
-            _set_query_auth(None)
-            st.rerun()
+    if st.button("Logout"):
+        for k in ("auth_user", "auth_role"):
+            st.session_state.pop(k, None)
+        _set_query_auth(None)
+        st.rerun()
+
 
 # =============================================================================
 # GOOGLE SHEETS CONNECTION
@@ -213,11 +188,11 @@ SPREADSHEET = (
     if hasattr(st, "secrets") else None
 ) or "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
-# Use tab names or numeric GIDs as strings
-INVENTORY_WS   = str(st.secrets.get("inventory_tab", "0"))
+INVENTORY_WS   = str(st.secrets.get("inventory_tab", "0"))          # gid or tab name
 TRANSFERLOG_WS = str(st.secrets.get("transferlog_tab", "405007082"))
 
 conn = st.connection("gsheets", type=GSheetsConnection)
+
 
 # =============================================================================
 # HELPERS
@@ -232,28 +207,22 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return df[cols + [c for c in df.columns if c not in cols]]
 
 def _to_datetime_no_warn(values: pd.Series) -> pd.Series:
-    """
-    Parse with explicit format first; then try 'mixed' (pandas>=2.0);
-    finally parse per-cell to avoid the global 'infer format' warning.
-    """
-    # 1) Strict format
+    """Strict -> mixed -> per-cell parse (avoid global infer-format warning)."""
+    # strict
     dt = pd.to_datetime(values, format=DATE_FMT, errors="coerce")
     mask = dt.isna() & values.astype(str).str.len().gt(0)
     if not mask.any():
         return dt
-
-    # 2) Mixed (if available)
+    # mixed (pandas >=2)
     try:
         dt2 = pd.to_datetime(values[mask], format="mixed", errors="coerce")
         dt.loc[mask] = dt2
         mask = dt.isna() & values.astype(str).str.len().gt(0)
     except Exception:
         pass
-
     if not mask.any():
         return dt
-
-    # 3) Per-cell parse (no global warning)
+    # per-cell
     parsed = []
     for v in values[mask].astype(str).tolist():
         try:
@@ -300,29 +269,42 @@ def safe_read_ws(worksheet: str, cols: list[str], label: str, ttl: int = 0) -> p
 def write_ws(worksheet: str, df: pd.DataFrame):
     conn.update(spreadsheet=SPREADSHEET, worksheet=worksheet, data=df)
 
+
+# =============================================================================
+# HEADER
+# =============================================================================
 def app_header(user: str, role: str):
-    """Header with logo + title on left, user info + logout on right."""
-    c_logo, c_main, c_user = st.columns([1, 5, 3], gap="small")
+    c_logo, c_title, c_user = st.columns([1.2, 6, 3], gap="small")
 
     with c_logo:
-        logo_path = "company_logo.jpeg"
-        if os.path.exists(logo_path):
-            st.image(logo_path, use_container_width=True)
+        logo = "company_logo.jpeg"
+        if os.path.exists(logo):
+            st.image(logo, use_container_width=True)
         else:
-            st.write("")  # placeholder
+            st.write("")
 
-    with c_main:
+    with c_title:
         st.markdown(f"### {APP_TITLE}")
         st.caption(SUBTITLE)
 
     with c_user:
-        st.markdown(f"#### Welcome, **{user}**  \nRole: **{role.capitalize()}**")
+        st.markdown(
+            f"""
+            <div style="display:flex; align-items:center; justify-content:flex-end; gap:1rem;">
+              <div>
+                <div style="font-weight:600;">Welcome, {user}</div>
+                <div>Role: <b>{role.capitalize()}</b></div>
+              </div>
+              <div>
+            """,
+            unsafe_allow_html=True,
+        )
         logout_button()
+        st.markdown("</div></div><hr style='margin-top:0.8rem;'>", unsafe_allow_html=True)
 
-    st.markdown("---")
 
 # =============================================================================
-# DATA MODEL (columns)
+# DATA MODEL
 # =============================================================================
 ALL_COLS = [
     "Serial Number","Device Type","Brand","Model","CPU",
@@ -332,6 +314,7 @@ ALL_COLS = [
 ]
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 
+
 # =============================================================================
 # MAIN
 # =============================================================================
@@ -340,7 +323,7 @@ USER = st.session_state.auth_user
 ROLE = st.session_state.auth_role
 IS_ADMIN = ROLE == "admin"
 
-# Hide table tools for STAFF (eye/download/fullscreen)
+# Hide table toolbars for STAFF (eye/download/fullscreen)
 if not IS_ADMIN:
     st.markdown(
         """
@@ -353,10 +336,9 @@ if not IS_ADMIN:
         unsafe_allow_html=True
     )
 
-# Header row
 app_header(USER, ROLE)
 
-# Tabs: Admin (5), Staff (3)
+# Tabs
 if IS_ADMIN:
     tabs = st.tabs(["📝 Register", "📦 View Inventory", "🔄 Transfer Device", "📜 Transfer Log", "⬇ Export"])
 else:
@@ -483,8 +465,7 @@ with tabs[log_tab_index]:
     if not log.empty and "Date issued" in log.columns:
         log["Date issued"] = parse_dates_safe(log["Date issued"].astype(str))
         _ts = pd.to_datetime(log["Date issued"], format=DATE_FMT, errors="coerce")
-        log = log.assign(_ts=_ts).sort_values("_ts", descending=True if hasattr(pd, "NA") else False, na_position="last")
-        log = log.drop(columns="_ts")
+        log = log.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
     st.dataframe(nice_display(log), use_container_width=True, hide_index=True)
 
 # ----------------------------- Admin: Export
