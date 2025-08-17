@@ -23,14 +23,22 @@ TRANSFERLOG_WS = (st.secrets.get("transferlog_tab", "transferlog") or "").strip(
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
-# ==============================
-# GOOGLE SHEETS CONNECTION
-# ==============================
-# Secrets MUST contain:
-# [connections.gsheets]
-# type = "gspread"              # or "public" if you published the sheet
-# spreadsheet = "https://docs.google.com/spreadsheets/d/<YOUR_ID>/edit"
+# # ==============================
+# # GOOGLE SHEETS CONNECTION
+# # ==============================
+# # Secrets MUST contain:
+# # [connections.gsheets]
+# # type = "gspread"              # or "public" if you published the sheet
+# # spreadsheet = "https://docs.google.com/spreadsheets/d/<YOUR_ID>/edit"
+# conn = st.connection("gsheets", type=GSheetsConnection)
+
+
+url = https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit?gid=405007082#gid=405007082
+
 conn = st.connection("gsheets", type=GSheetsConnection)
+
+data = conn.read(spreadsheet=https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit?gid=405007082#gid=405007082, usecols=[0, 1])
+st.dataframe(data)
 
 # (Optional) quick diagnostics
 with st.expander("🔍 Diagnostics", expanded=False):
