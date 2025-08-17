@@ -499,50 +499,7 @@ IS_ADMIN = ROLE == "admin"
 # =============================================================================
 LOGO_PATH = "company_logo.jpeg" if os.path.exists("company_logo.jpeg") else None
 
-st.markdown("""
-<style>
-.app-header { display:flex; align-items:center; gap:16px; }
-.app-title  { font-weight:800; font-size:28px; line-height:1.1; margin:0; }
-.app-sub    { color:#666; margin:2px 0 0 0; font-size:14px; }
-.user-chip  { display:inline-block; margin-top:8px; padding:6px 10px;
-              background:#f6f6f6; border:1px solid #e5e5e5; border-radius:8px; }
-.header-right { margin-left:auto; display:flex; align-items:center; gap:12px; }
-</style>
-""", unsafe_allow_html=True)
 
-h1, h2 = st.columns([7, 3])
-with h1:
-    st.markdown(
-        f"""
-        <div class="app-header">
-          <div>
-            <div class="app-title">{APP_TITLE}</div>
-            <div class="app-sub">{SUBTITLE}</div>
-            <div class="user-chip">Signed in as <b>{USER}</b> • Role: <b>{ROLE.title()}</b></div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True
-    )
-with h2:
-    cA, cB = st.columns([1,1])
-    with cA:
-        if LOGO_PATH:
-            st.image(LOGO_PATH, use_column_width=True)
-    with cB:
-        st.write("")  # spacer
-        logout_button()
-
-st.markdown("---")
-
-# Hide dataframe toolbars (view/download/fullscreen) for STAFF only
-if not IS_ADMIN:
-    st.markdown("""
-        <style>
-        div[data-testid="stDataFrame"] div[data-testid="stElementToolbar"] { display:none !important; }
-        div[data-testid="stDataEditor"] div[data-testid="stElementToolbar"] { display:none !important; }
-        div[data-testid="stElementToolbar"] { display:none !important; }
-        </style>
-    """, unsafe_allow_html=True)
 
 # =============================================================================
 # TABS
