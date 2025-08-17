@@ -350,7 +350,7 @@ except Exception:
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 # Optional company logo: from secrets or local file "logo.png"
-LOGO_PATH =/Users/ahmed/Downloads/company_logo.jpeg
+LOGO_PATH =company_logo.jpeg
 logo_candidate = ""
 try:
     logo_candidate = st.secrets.get("company_logo", "")
