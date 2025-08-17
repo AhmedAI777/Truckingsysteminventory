@@ -2,6 +2,7 @@
 streamlit>=1.35
 
 streamlit>=1.35
+request 
 pandas
 numpy
 openpyxl
