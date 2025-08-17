@@ -1,13 +1,8 @@
-
-
-----------------------------------------------------------------------------------------
-import os
-from io import BytesIO
-from datetime import datetime
-
-import numpy as np
 import pandas as pd
+import numpy as np
+from datetime import datetime
 import streamlit as st
+from io import BytesIO
 from streamlit_gsheets import GSheetsConnection
 
 # -----------------------------
@@ -16,16 +11,6 @@ from streamlit_gsheets import GSheetsConnection
 APP_TITLE   = "Tracking Inventory Management System"
 SUBTITLE    = "AdvancedConstruction"
 DATE_FMT    = "%Y-%m-%d %H:%M:%S"
-
-
-
-import pandas as pd
-import numpy as np
-from datetime import datetime
-import streamlit as st
-from io import BytesIO
-from streamlit_gsheets import GSheetsConnection
-
 DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
 # worksheet names (or read from secrets like you did)
@@ -74,28 +59,28 @@ if st.button("Add sample row"):
 
 
 
-# # Read spreadsheet url and tab names (worksheets) from secrets (with fallbacks)
-# SPREADSHEET_URL = st.secrets.get(
-#     "connections", {}
-# ).get("gsheets", {}).get(
-#     "spreadsheet",
-#     "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
-# )
+ # Read spreadsheet url and tab names (worksheets) from secrets (with fallbacks)
+ SPREADSHEET_URL = st.secrets.get(
+     "connections", {}
+ ).get("gsheets", {}).get(
+     "spreadsheet",
+   "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
+ )
 
-# INVENTORY_WS   = st.secrets.get("inventory_tab", "truckinventory")
-# TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transferlog")
+ INVENTORY_WS   = st.secrets.get("inventory_tab", "truckinventory")
+ TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transferlog")
 
-# # Inventory columns (hardware + meta)
-# HW_COLS = [
-#     "Serial Number", "Device Type", "Brand", "Model", "CPU",
-#     "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
-# ]
-# META_COLS = [
-#     "USER", "Previous User", "TO",
-#     "Department", "Email Address", "Contact Number", "Location", "Office", "Notes",
-#     "Date issued", "Registered by",
-# ]
-# ALL_COLS = HW_COLS + META_COLS
+ # Inventory columns (hardware + meta)
+ HW_COLS = [
+     "Serial Number", "Device Type", "Brand", "Model", "CPU",
+     "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
+ ]
+ META_COLS = [
+     "USER", "Previous User", "TO",
+     "Department", "Email Address", "Contact Number", "Location", "Office", "Notes",
+     "Date issued", "Registered by",
+ ]
+ ALL_COLS = HW_COLS + META_COLS
 
 # -----------------------------
 # PAGE / HEADER
