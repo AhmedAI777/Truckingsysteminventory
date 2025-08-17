@@ -5,7 +5,7 @@ streamlit>=1.35
 pandas
 numpy
 openpyxl
-git+https://github.com/streamlit/gsheets-connection
+git+https://github.com/ahmed0ss/Truckingsysteminventory
 
 # Google Drive integration (future-proof)
 google-api-python-client>=2.133.0
