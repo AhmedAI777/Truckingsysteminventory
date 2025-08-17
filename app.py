@@ -14,8 +14,8 @@ SUBTITLE    = "AdvancedConstruction"
 DATE_FMT    = "%Y-%m-%d %H:%M:%S"
 
 # Use your actual worksheet names from the Google Sheet
-INVENTORY_WS   = st.secrets.get("inventory_tab", "truckingsysteminventory")
-TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "truckingsysteminventory")
+INVENTORY_WS   = st.secrets.get("inventory_tab", "truckinventory")
+TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transferlog")
 
 # -----------------------------
 # PAGE HEADER
