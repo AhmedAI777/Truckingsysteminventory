@@ -17,7 +17,7 @@ st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
 # ✅ Correct: pass the CLASS, not a number
-conn = st.connection("gsheets", type=GSheetsConnection)
+conn = st.experimental_connection("truckingsysteminventory", type=GSheetsConnection)
 
 
 # -----------------------------
