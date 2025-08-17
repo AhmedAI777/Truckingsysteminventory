@@ -15,27 +15,58 @@ import pandas as pd
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
-
 # =============================================================================
 # BASIC APP SETTINGS
 # =============================================================================
 APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE  = "AdvancedConstruction"
-DATE_FMT  = "%Y-%m-%d %H:%M:%S"  # keep your sheet dates like '2025-08-10 06:52:09'
+DATE_FMT  = "%Y-%m-%d %H:%M:%S"   # keep your sheet dates like '2025-08-10 06:52:09'
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
-# Optional: minimal theming tweaks for a cleaner look
+# =============================================================================
+# UTIL: custom font (FounderGroteskCondensed-Regular.otf)
+# =============================================================================
+def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
+    """Inject @font-face CSS from a local OTF/TTF file if present."""
+    if not os.path.exists(font_path):
+        return
+    with open(font_path, "rb") as f:
+        font_b64 = base64.b64encode(f.read()).decode("utf-8")
+    st.markdown(
+        f"""
+        <style>
+          @font-face {{
+            font-family: '{family}';
+            src: url(data:font/otf;base64,{font_b64}) format('opentype');
+            font-weight: normal;
+            font-style: normal;
+            font-display: swap;
+          }}
+          html, body, [class*="css"] {{
+            font-family: '{family}', -apple-system, BlinkMacSystemFont, "Segoe UI",
+                         Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif !important;
+          }}
+          /* headings use same family for consistency */
+          h1,h2,h3,h4,h5,h6, .stTabs [role="tab"] {{
+            font-family: '{family}', sans-serif !important;
+          }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+_inject_font_css("FounderGroteskCondensed-Regular.otf")
+
+# Tiny spacing tweak
 st.markdown(
     """
     <style>
-      /* tighten top padding a little */
       section.main > div { padding-top: 1.2rem; }
     </style>
     """,
     unsafe_allow_html=True
 )
-
 
 # =============================================================================
 # AUTH: USERS + PERSISTENT LOGIN VIA SIGNED TOKEN IN URL
@@ -52,8 +83,9 @@ st.markdown(
 # admin5 = "admin@2025"
 #
 # [auth.staff]
-# staff1 = "staff@2025"
-# ... up to staff15
+# staff1  = "staff@2025"
+# ...
+# staff15 = "staff@2025"
 
 DEFAULT_ADMIN_PW = "admin@2025"
 DEFAULT_STAFF_PW = "staff@2025"
@@ -71,7 +103,6 @@ AUTH_SECRET = (
     if hasattr(st, "secrets") else None
 ) or "dev-only-please-change-me-to-a-long-random-string"
 
-
 def authenticate(username: str, password: str) -> Optional[str]:
     if username in ADMINS and ADMINS[username] == password:
         return "admin"
@@ -79,21 +110,16 @@ def authenticate(username: str, password: str) -> Optional[str]:
         return "staff"
     return None
 
-
 def _now() -> int:
     return int(time.time())
 
-
 def _make_token(username: str, role: str, ttl_days: int = 30) -> str:
-    """Create a signed, url-safe token with expiry (default 30 days)."""
     payload = {"u": username, "r": role, "exp": _now() + ttl_days * 86400}
     raw = json.dumps(payload, separators=(",", ":")).encode()
     sig = hmac.new(AUTH_SECRET.encode(), raw, hashlib.sha256).digest()
     return base64.urlsafe_b64encode(raw + sig).decode()
 
-
 def _parse_token(token: str) -> Optional[Tuple[str, str, int]]:
-    """Return (username, role, exp_ts) if valid; else None."""
     try:
         data = base64.urlsafe_b64decode(token.encode())
         raw, sig = data[:-32], data[-32:]
@@ -107,9 +133,7 @@ def _parse_token(token: str) -> Optional[Tuple[str, str, int]]:
     except Exception:
         return None
 
-
 def _get_query_auth() -> Optional[str]:
-    # Streamlit >= 1.30
     try:
         return st.query_params.get("auth")
     except Exception:
@@ -117,9 +141,7 @@ def _get_query_auth() -> Optional[str]:
         v = params.get("auth", [None])
         return v[0] if isinstance(v, list) else v
 
-
 def _set_query_auth(token: Optional[str]):
-    """Set or clear the ?auth=... query parameter."""
     try:
         if token is None:
             if "auth" in st.query_params:
@@ -132,14 +154,13 @@ def _set_query_auth(token: Optional[str]):
         else:
             st.experimental_set_query_params(auth=token)
 
-
 def ensure_auth():
     """Keep users signed in across refreshes until they click Logout."""
     if "auth_user" not in st.session_state:
         st.session_state.auth_user = None
         st.session_state.auth_role = None
 
-    # Try restore from URL token
+    # 1) Try from URL token
     if not st.session_state.auth_user:
         token = _get_query_auth()
         parsed = _parse_token(token) if token else None
@@ -147,37 +168,33 @@ def ensure_auth():
             u, r, exp = parsed
             st.session_state.auth_user = u
             st.session_state.auth_role = r
-            # Auto-renew if expiring soon
+            # renew if close to expiry
             if exp - _now() < 3 * 86400:
                 _set_query_auth(_make_token(u, r, ttl_days=30))
             return True
 
-    # Already in this runtime session?
+    # 2) Already in session?
     if st.session_state.auth_user and st.session_state.auth_role:
         return True
 
-    # ---------- Login UI ----------
+    # 3) Login UI
     st.markdown(f"## {APP_TITLE}")
     st.caption(SUBTITLE)
     st.info("Please sign in to continue.")
-
     with st.form("login_form", clear_on_submit=False):
         u = st.text_input("Username", key="login_user")
         p = st.text_input("Password", type="password", key="login_pw")
         submitted = st.form_submit_button("Login", type="primary")
-
     if submitted:
         role = authenticate(u.strip(), p)
         if role:
             st.session_state.auth_user = u.strip()
             st.session_state.auth_role = role
-            # Always persist login
             _set_query_auth(_make_token(st.session_state.auth_user, role, ttl_days=30))
             st.rerun()
         else:
             st.error("Invalid username or password.")
     st.stop()
-
 
 def logout_button():
     right = st.columns([1, 1, 8])[1]
@@ -188,24 +205,19 @@ def logout_button():
             _set_query_auth(None)
             st.rerun()
 
-
 # =============================================================================
 # GOOGLE SHEETS CONNECTION
 # =============================================================================
-# Put the spreadsheet URL in secrets (recommended):
-# [connections.gsheets]
-# spreadsheet = "https://docs.google.com/spreadsheets/d/XXXXXXXXXXXX/edit"
 SPREADSHEET = (
     st.secrets.get("connections", {}).get("gsheets", {}).get("spreadsheet")
     if hasattr(st, "secrets") else None
 ) or "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
-# Worksheet identifiers (tab names or numeric GIDs as strings)
-INVENTORY_WS   = str(st.secrets.get("inventory_tab", "0"))          # first sheet gid "0"
+# Use tab names or numeric GIDs as strings
+INVENTORY_WS   = str(st.secrets.get("inventory_tab", "0"))
 TRANSFERLOG_WS = str(st.secrets.get("transferlog_tab", "405007082"))
 
 conn = st.connection("gsheets", type=GSheetsConnection)
-
 
 # =============================================================================
 # HELPERS
@@ -219,20 +231,42 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
             df[c] = ""
     return df[cols + [c for c in df.columns if c not in cols]]
 
+def _to_datetime_no_warn(values: pd.Series) -> pd.Series:
+    """
+    Parse with explicit format first; then try 'mixed' (pandas>=2.0);
+    finally parse per-cell to avoid the global 'infer format' warning.
+    """
+    # 1) Strict format
+    dt = pd.to_datetime(values, format=DATE_FMT, errors="coerce")
+    mask = dt.isna() & values.astype(str).str.len().gt(0)
+    if not mask.any():
+        return dt
+
+    # 2) Mixed (if available)
+    try:
+        dt2 = pd.to_datetime(values[mask], format="mixed", errors="coerce")
+        dt.loc[mask] = dt2
+        mask = dt.isna() & values.astype(str).str.len().gt(0)
+    except Exception:
+        pass
+
+    if not mask.any():
+        return dt
+
+    # 3) Per-cell parse (no global warning)
+    parsed = []
+    for v in values[mask].astype(str).tolist():
+        try:
+            parsed.append(pd.to_datetime(v, errors="coerce"))
+        except Exception:
+            parsed.append(pd.NaT)
+    dt.loc[mask] = parsed
+    return dt
 
 def parse_dates_safe(series: pd.Series) -> pd.Series:
-    """Fast try with DATE_FMT, then safe fallback; return string formatted."""
-    # Fast path
-    dt = pd.to_datetime(series, format=DATE_FMT, errors="coerce")
-    # Fallback for anything that failed
-    needs = dt.isna() & series.astype(str).str.len().gt(0)
-    if needs.any():
-        dt2 = pd.to_datetime(series[needs], errors="coerce")
-        dt.loc[needs] = dt2
-    # Final string form
+    dt = _to_datetime_no_warn(series)
     out = dt.dt.strftime(DATE_FMT)
     return out.replace("NaT", "")
-
 
 def nice_display(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
@@ -249,11 +283,9 @@ def nice_display(df: pd.DataFrame) -> pd.DataFrame:
         out[c] = out[c].astype(str).replace({"NaT": "", "nan": "", "NaN": ""})
     return out
 
-
 def read_ws(worksheet: str, cols: list[str], ttl: int = 0) -> pd.DataFrame:
     df = conn.read(spreadsheet=SPREADSHEET, worksheet=worksheet, ttl=ttl)
     return _ensure_cols(df, cols)
-
 
 def safe_read_ws(worksheet: str, cols: list[str], label: str, ttl: int = 0) -> pd.DataFrame:
     try:
@@ -265,10 +297,8 @@ def safe_read_ws(worksheet: str, cols: list[str], label: str, ttl: int = 0) -> p
         )
         return _ensure_cols(None, cols)
 
-
 def write_ws(worksheet: str, df: pd.DataFrame):
     conn.update(spreadsheet=SPREADSHEET, worksheet=worksheet, data=df)
-
 
 def app_header(user: str, role: str):
     """Header with logo + title on left, user info + logout on right."""
@@ -277,7 +307,7 @@ def app_header(user: str, role: str):
     with c_logo:
         logo_path = "company_logo.jpeg"
         if os.path.exists(logo_path):
-            st.image(logo_path, use_column_width=True)
+            st.image(logo_path, use_container_width=True)
         else:
             st.write("")  # placeholder
 
@@ -291,7 +321,6 @@ def app_header(user: str, role: str):
 
     st.markdown("---")
 
-
 # =============================================================================
 # DATA MODEL (columns)
 # =============================================================================
@@ -302,7 +331,6 @@ ALL_COLS = [
     "Contact Number","Location","Office","Notes","Date issued","Registered by"
 ]
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
-
 
 # =============================================================================
 # MAIN
@@ -318,7 +346,7 @@ if not IS_ADMIN:
         """
         <style>
           div[data-testid="stDataFrame"] div[data-testid="stElementToolbar"] { display:none !important; }
-          div[data-testid="stDataEditor"] div[data-testid="stElementToolbar"] { display:none !important; }
+          div[data-testid="stDataEditor"]  div[data-testid="stElementToolbar"] { display:none !important; }
           div[data-testid="stElementToolbar"] { display:none !important; }
         </style>
         """,
@@ -390,7 +418,6 @@ with tabs[view_tab_index]:
     inv = safe_read_ws(INVENTORY_WS, ALL_COLS, "inventory", ttl=0)
     if not inv.empty and "Date issued" in inv.columns:
         inv["Date issued"] = parse_dates_safe(inv["Date issued"].astype(str))
-        # Sort by parsed date (descending)
         _ts = pd.to_datetime(inv["Date issued"], format=DATE_FMT, errors="coerce")
         inv = inv.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
     st.dataframe(nice_display(inv), use_container_width=True, hide_index=True)
@@ -427,14 +454,12 @@ with tabs[transfer_tab_index]:
             idx = idx_list[0]
             prev_user = inv.loc[idx, "USER"]
 
-            # Update inventory row
             inv.loc[idx, "Previous User"] = str(prev_user or "")
             inv.loc[idx, "USER"] = new_owner.strip()
             inv.loc[idx, "TO"] = new_owner.strip()
             inv.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
             inv.loc[idx, "Registered by"] = USER
 
-            # Append to transfer log
             log = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log")
             log_row = {
                 "Device Type": inv.loc[idx, "Device Type"],
@@ -446,7 +471,6 @@ with tabs[transfer_tab_index]:
             }
             log = pd.concat([log, pd.DataFrame([log_row])], ignore_index=True)
 
-            # Save
             write_ws(INVENTORY_WS, inv)
             write_ws(TRANSFERLOG_WS, log)
             st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
@@ -457,10 +481,10 @@ with tabs[log_tab_index]:
     st.subheader("Transfer Log")
     log = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log", ttl=0)
     if not log.empty and "Date issued" in log.columns:
-        # Normalize and sort by date desc
         log["Date issued"] = parse_dates_safe(log["Date issued"].astype(str))
         _ts = pd.to_datetime(log["Date issued"], format=DATE_FMT, errors="coerce")
-        log = log.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
+        log = log.assign(_ts=_ts).sort_values("_ts", descending=True if hasattr(pd, "NA") else False, na_position="last")
+        log = log.drop(columns="_ts")
     st.dataframe(nice_display(log), use_container_width=True, hide_index=True)
 
 # ----------------------------- Admin: Export
