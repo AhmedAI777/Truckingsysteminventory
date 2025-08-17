@@ -17,6 +17,7 @@ DATE_FMT    = "%Y-%m-%d %H:%M:%S"
 INVENTORY_WS   = (st.secrets.get("inventory_tab", "truckinventory") or "").strip()
 TRANSFERLOG_WS = (st.secrets.get("transferlog_tab", "transferlog") or "").strip()
 
+
 # -----------------------------
 # PAGE HEADER
 # -----------------------------
@@ -31,6 +32,8 @@ st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 # type = "gspread"  # or "public" if you published the sheet
 # spreadsheet = "https://docs.google.com/spreadsheets/d/YOUR_ID/edit"
 conn = st.connection("gsheets", type=GSheetsConnection)
+st.write(st.secrets.get("connections", {}).get("gsheets", {}))
+
 
 # -----------------------------
 # HELPERS
