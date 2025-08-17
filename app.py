@@ -1,8 +1,12 @@
-import pandas as pd
-import numpy as np
-from datetime import datetime
-import streamlit as st
+from textwrap import dedent
+
+cleaned_code = dedent("""
+import os
 from io import BytesIO
+from datetime import datetime
+import numpy as np
+import pandas as pd
+import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
 # -----------------------------
@@ -11,14 +15,31 @@ from streamlit_gsheets import GSheetsConnection
 APP_TITLE   = "Tracking Inventory Management System"
 SUBTITLE    = "AdvancedConstruction"
 DATE_FMT    = "%Y-%m-%d %H:%M:%S"
-DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
-# worksheet names (or read from secrets like you did)
+SPREADSHEET_URL = st.secrets.get(
+    "connections", {}
+).get("gsheets", {}).get(
+    "spreadsheet",
+    "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
+)
+
 INVENTORY_WS   = st.secrets.get("inventory_tab", "truckinventory")
 TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transferlog")
 
+# -----------------------------
+# PAGE / HEADER
+# -----------------------------
+st.set_page_config(page_title=APP_TITLE, layout="wide")
+st.markdown(f"## {APP_TITLE}\\n**{SUBTITLE}**")
+
+# -----------------------------
+# Connect to Google Sheets
+# -----------------------------
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# -----------------------------
+# Helpers
+# -----------------------------
 def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame(columns=cols)
@@ -29,79 +50,21 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return df[cols + [c for c in df.columns if c not in cols]]
 
 def load_ws(worksheet: str, cols: list[str]) -> pd.DataFrame:
-    return _ensure_cols(conn.read(worksheet=worksheet, ttl=0), cols)
-
-def save_ws(worksheet: str, df: pd.DataFrame) -> None:
-    conn.update(worksheet=worksheet, data=df)
-
-# Example: read inventory
-ALL_COLS = ["Serial Number","Device Type","Brand","Model","CPU",
-            "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
-            "USER","Previous User","TO","Department","Email Address",
-            "Contact Number","Location","Office","Notes","Date issued","Registered by"]
-
-inv = load_ws(INVENTORY_WS, ALL_COLS)
-st.dataframe(inv)
-
-# Example: append one new row
-if st.button("Add sample row"):
-    row = {c:"" for c in ALL_COLS}
-    row["Serial Number"] = "TEST-123"
-    row["Device Type"]   = "Desktop"
-    row["Date issued"]   = datetime.now().strftime(DATE_FMT)
-    inv = pd.concat([inv, pd.DataFrame([row])], ignore_index=True)
-    save_ws(INVENTORY_WS, inv)
-    st.success("Added.")
-
- SPREADSHEET_URL = st.secrets.get(
-    "connections", {}
-).get("gsheets", {}).get(
-    "spreadsheet",
-    "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
-)
-
-# -----------------------------
-# PAGE / HEADER
-# -----------------------------
-st.set_page_config(page_title=APP_TITLE, layout="wide")
-st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
-
-# Make the connection once
-conn = st.connection("gsheets", type=GSheetsConnection)
-
-# -----------------------------
-# Small helpers
-# -----------------------------
-def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame(columns=cols)
-    df = df.fillna("")
-    for c in cols:
-        if c not in df.columns:
-            df[c] = ""
-    # nice order: expected first, any extra columns after
-    df = df[cols + [c for c in df.columns if c not in cols]]
-    return df
-
-def load_ws(worksheet: str, cols: list[str]) -> pd.DataFrame:
-    """Read a worksheet as DataFrame (adds missing columns, keeps blanks)."""
     df = conn.read(
-        spreadsheet=SPREADSHEET_URL,  # you can omit this if set in secrets
+        spreadsheet=SPREADSHEET_URL,
         worksheet=worksheet,
-        ttl=0,                         # always read fresh
+        ttl=0
     )
     return _ensure_cols(df, cols)
 
 def save_ws(worksheet: str, df: pd.DataFrame) -> None:
-    """Write a DataFrame back to the worksheet."""
     conn.update(
-        spreadsheet=SPREADSHEET_URL,  # you can omit this if set in secrets
+        spreadsheet=SPREADSHEET_URL,
         worksheet=worksheet,
         data=df
     )
 
 def nice_display(df: pd.DataFrame) -> pd.DataFrame:
-    """Arrow-friendly display and nice date formatting."""
     if df is None or df.empty:
         return df
     out = df.copy()
@@ -119,8 +82,13 @@ def nice_display(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 # -----------------------------
-# TABS
+# Columns & Tabs
 # -----------------------------
+ALL_COLS = ["Serial Number","Device Type","Brand","Model","CPU",
+            "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
+            "USER","Previous User","TO","Department","Email Address",
+            "Contact Number","Location","Office","Notes","Date issued","Registered by"]
+
 tabs = st.tabs(["📝 Register", "📦 View Inventory", "🔄 Transfer Device", "📜 Transfer Log", "⬇ Export"])
 
 # 1) Register
@@ -161,7 +129,6 @@ with tabs[0]:
                     "Memory": mem.strip(),
                     "GPU": gpu.strip(),
                     "Screen Size": screen.strip(),
-                    # meta defaults
                     "USER": "", "Previous User": "", "TO": "",
                     "Department": "", "Email Address": "", "Contact Number": "",
                     "Location": "", "Office": "", "Notes": "",
@@ -181,10 +148,9 @@ with tabs[1]:
         inv = inv.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
     st.dataframe(nice_display(inv), use_container_width=True)
 
-# 3) Transfer device (just Serial + New Owner; the rest auto)
+# 3) Transfer device
 with tabs[2]:
     st.subheader("Register Ownership Transfer")
-
     inv = load_ws(INVENTORY_WS, ALL_COLS)
     serials = sorted(inv["Serial Number"].astype(str).dropna().unique().tolist())
     pick = st.selectbox("Serial Number", ["— Select —"] + serials)
@@ -208,14 +174,12 @@ with tabs[2]:
         else:
             idx = idx_list[0]
             prev_user = inv.loc[idx, "USER"]
-
             inv.loc[idx, "Previous User"] = str(prev_user or "")
             inv.loc[idx, "USER"] = new_owner.strip()
             inv.loc[idx, "TO"] = new_owner.strip()
             inv.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
             inv.loc[idx, "Registered by"] = "system"
 
-            # Log the transfer
             log = load_ws(TRANSFERLOG_WS, ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"])
             log_row = {
                 "Device Type": inv.loc[idx, "Device Type"],
@@ -243,7 +207,6 @@ with tabs[3]:
 # 5) Export
 with tabs[4]:
     st.subheader("Download Exports")
-    # Inventory
     inv = load_ws(INVENTORY_WS, ALL_COLS)
     inv_x = BytesIO()
     with pd.ExcelWriter(inv_x, engine="openpyxl") as w:
@@ -253,7 +216,6 @@ with tabs[4]:
                        file_name="inventory.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    # Log
     log = load_ws(TRANSFERLOG_WS, ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"])
     log_x = BytesIO()
     with pd.ExcelWriter(log_x, engine="openpyxl") as w:
@@ -262,3 +224,5 @@ with tabs[4]:
     st.download_button("⬇ Download Transfer Log", log_x.getvalue(),
                        file_name="transfer_log.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+""")
+cleaned_code[:1000]  # preview snippet
