@@ -17,7 +17,7 @@ st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
 # ✅ Correct: pass the CLASS, not a number
-conn = st.experimental_connection("gsheets", type=GSheetsConnection)
+conn = st.connection("gsheets", type=GSheetsConnection)
 existing_data = conn.read(worksheet="truckinventory", usecols=list(range(6)),ttl=5)
 existing_data = conn.read(worksheet="transferlog", usecols=list(range(6)),ttl=5)
 existing_data = existing_data.dropna(how="all")
