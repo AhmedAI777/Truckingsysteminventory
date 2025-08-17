@@ -30,9 +30,8 @@ st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 # .streamlit/secrets.toml must contain:
 # [connections.gsheets]
 # type = "gspread"  # or "public" if you published the sheet
-# spreadsheet = "https://docs.google.com/spreadsheets/d/YOUR_ID/edit"
-conn = st.connection("gsheets", type=GSheetsConnection)
-st.write(st.secrets.get("connections", {}).get("gsheets", {}))
+Spreadsheet = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit?gid=405007082#gid=405007082"
+conn = st.connection("gsheets", type=405007082)
 
 
 # -----------------------------
