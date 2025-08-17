@@ -26,7 +26,7 @@ st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
 url = https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit?gid=405007082#gid=405007082
 conn = st.connection("gsheets", type=GSheetsConnection)
-data = conn.read(spreadsheet=https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit?gid=405007082#gid=405007082, usecols=[0, 1])
+data = conn.read(INVENTORY_WS, usecols=[0, 100])
 st.dataframe(data)
 
 # (Optional) quick diagnostics
