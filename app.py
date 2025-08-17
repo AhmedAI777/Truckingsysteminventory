@@ -17,7 +17,11 @@ st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
 # ✅ Correct: pass the CLASS, not a number
-conn = st.experimental_connection("gsheet", type=GSheetsConnection)
+conn = st.experimental_connection("gsheets", type=GSheetsConnection)
+existing_data = conn.read(worksheet="truckingsysteminventory", usecols=list(range(6)),ttl=5)
+existing_data = existing_data.dropna(how="all")
+
+st.dataframe(existing_data)
 
 
 # -----------------------------
@@ -137,19 +141,19 @@ with tab_reg:
 with tab_inv:
     st.subheader("Current Inventory")
 
-    # ---- Your requested quick-read snippet (first 6 columns) ----
-    try:
-        existing_data = conn.read(
-            worksheet=INVENTORY_WS,  # "truckinventory" by default
-            usecols=list(range(6)),  # columns A–F
-            ttl=5
-        )
-        existing_data = existing_data.dropna(how="all")
-        st.caption("Quick preview (first 6 columns):")
-        st.dataframe(existing_data, use_container_width=True)
-    except Exception as e:
-        st.info("Quick preview unavailable.")
-        st.exception(e)
+    # # ---- Your requested quick-read snippet (first 6 columns) ----
+    # try:
+    #     existing_data = conn.read(
+    #         worksheet=INVENTORY_WS,  # "truckinventory" by default
+    #         usecols=list(range(6)),  # columns A–F
+    #         ttl=5
+    #     )
+    #     existing_data = existing_data.dropna(how="all")
+    #     st.caption("Quick preview (first 6 columns):")
+    #     st.dataframe(existing_data, use_container_width=True)
+    # except Exception as e:
+    #     st.info("Quick preview unavailable.")
+    #     st.exception(e)
 
     # ---- Full table view (safe) ----
     inv = safe_load_ws(INVENTORY_WS, ALL_COLS, "inventory")
