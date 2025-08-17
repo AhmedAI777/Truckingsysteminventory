@@ -9,6 +9,60 @@ import pandas as pd
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
+import time, hmac, hashlib, base64, json
+
+AUTH_SECRET = (
+    getattr(getattr(st, "secrets", {}), "auth", {}).get("secret")
+    or "dev-only-please-change-me-to-a-long-random-string"
+)
+
+def _now() -> int:
+    return int(time.time())
+
+def _make_token(username: str, role: str, ttl_days: int = 30) -> str:
+    """Create a signed, url-safe token with expiry (default 30 days)."""
+    payload = {"u": username, "r": role, "exp": _now() + ttl_days * 86400}
+    raw = json.dumps(payload, separators=(",", ":")).encode()
+    sig = hmac.new(AUTH_SECRET.encode(), raw, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(raw + sig).decode()
+
+def _parse_token(token: str):
+    """Return (username, role, exp_ts) if valid; else None."""
+    try:
+        data = base64.urlsafe_b64decode(token.encode())
+        raw, sig = data[:-32], data[-32:]
+        good_sig = hmac.new(AUTH_SECRET.encode(), raw, hashlib.sha256).digest()
+        if not hmac.compare_digest(sig, good_sig):
+            return None
+        payload = json.loads(raw.decode())
+        if payload.get("exp", 0) < _now():
+            return None
+        return payload.get("u"), payload.get("r"), payload.get("exp")
+    except Exception:
+        return None
+
+def _get_query_auth() -> str | None:
+    try:
+        return st.query_params.get("auth")  # Streamlit >= 1.30
+    except Exception:
+        params = st.experimental_get_query_params()
+        v = params.get("auth", [None])
+        return v[0] if isinstance(v, list) else v
+
+def _set_query_auth(token: str | None):
+    """Set or clear the ?auth=... query parameter."""
+    try:
+        if token is None:
+            if "auth" in st.query_params:
+                del st.query_params["auth"]
+        else:
+            st.query_params["auth"] = token
+    except Exception:
+        if token is None:
+            st.experimental_set_query_params()
+        else:
+            st.experimental_set_query_params(auth=token)
+
 
 # =============================================================================
 # BASIC APP SETTINGS
@@ -49,15 +103,63 @@ def authenticate(username: str, password: str):
     if username in STAFFS and STAFFS[username] == password:
         return "staff"
     return None
-
 def ensure_auth():
-    """Gate: show login page until authenticated."""
+    """Always keep users signed in across refreshes until they click Logout."""
     if "auth_user" not in st.session_state:
         st.session_state.auth_user = None
         st.session_state.auth_role = None
 
+    # --- Try restore from token in URL (works after refresh/new tab) ---
+    if not st.session_state.auth_user:
+        token = _get_query_auth()
+        parsed = _parse_token(token) if token else None
+        if parsed:
+            u, r, exp = parsed
+            st.session_state.auth_user = u
+            st.session_state.auth_role = r
+
+            # Auto-renew if expiring in < 3 days
+            if exp - _now() < 3 * 86400:
+                new_token = _make_token(u, r, ttl_days=30)
+                _set_query_auth(new_token)
+            return True
+def logout_button():
+    col = st.columns([1, 1, 8])[1]
+    with col:
+        if st.button("Logout", use_container_width=False):
+            for k in ("auth_user", "auth_role"):
+                st.session_state.pop(k, None)
+            _set_query_auth(None)  # remove token from the URL
+            st.rerun()
+
+    # Already signed in for this runtime session?
     if st.session_state.auth_user and st.session_state.auth_role:
         return True
+
+    # ---------- Login UI ----------
+    st.markdown(f"# {APP_TITLE}")
+    st.caption(SUBTITLE)
+    st.info("Please sign in to continue.")
+
+    with st.form("login_form", clear_on_submit=False):
+        u = st.text_input("Username", key="login_user")
+        p = st.text_input("Password", type="password", key="login_pw")
+        submitted = st.form_submit_button("Login", type="primary")
+
+    if submitted:
+        role = authenticate(u.strip(), p)
+        if role:
+            st.session_state.auth_user = u.strip()
+            st.session_state.auth_role = role
+
+            # ALWAYS persist login: set signed token in URL (30 days) and auto-renew.
+            token = _make_token(st.session_state.auth_user, role, ttl_days=30)
+            _set_query_auth(token)
+
+            st.rerun()
+        else:
+            st.error("Invalid username or password.")
+    st.stop()
 
     # ---------- Login page ----------
     c = st.container()
