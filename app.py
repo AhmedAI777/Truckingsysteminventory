@@ -18,7 +18,8 @@ st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
 # ✅ Correct: pass the CLASS, not a number
 conn = st.experimental_connection("gsheets", type=GSheetsConnection)
-existing_data = conn.read(worksheet="truckingsysteminventory", usecols=list(range(6)),ttl=5)
+existing_data = conn.read(worksheet="truckinventory", usecols=list(range(6)),ttl=5)
+existing_data = conn.read(worksheet="transferlog", usecols=list(range(6)),ttl=5)
 existing_data = existing_data.dropna(how="all")
 
 st.dataframe(existing_data)
