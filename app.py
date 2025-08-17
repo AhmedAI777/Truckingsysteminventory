@@ -43,9 +43,9 @@ def _ws_arg(x):
         return str(x).strip()       # fallback name
 
 # examples
-probe = conn.read(spreadsheet=SPREADSHEET, worksheet=_ws_arg(INVENTORY_WS), nrows=3, ttl=0)
-inv   = conn.read(spreadsheet=SPREADSHEET, worksheet=_ws_arg(INVENTORY_WS), ttl=0)
-log   = conn.read(spreadsheet=SPREADSHEET, worksheet=_ws_arg(TRANSFERLOG_WS), ttl=0)
+# probe = conn.read(spreadsheet=SPREADSHEET, worksheet=_ws_arg(INVENTORY_WS), nrows=3, ttl=0)
+# inv   = conn.read(spreadsheet=SPREADSHEET, worksheet=_ws_arg(INVENTORY_WS), ttl=0)
+# log   = conn.read(spreadsheet=SPREADSHEET, worksheet=_ws_arg(TRANSFERLOG_WS), ttl=0)
 
 # ==============================
 # HELPERS
