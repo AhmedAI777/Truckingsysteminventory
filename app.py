@@ -319,8 +319,6 @@
 #                            file_name="transfer_log.xlsx",
 #                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-
-
 # app.py
 
 import os
@@ -333,57 +331,41 @@ import pandas as pd
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
-
 # =============================================================================
-# BASIC APP SETTINGS
+# PAGE CONFIG FIRST (must be first Streamlit call)
 # =============================================================================
-APP_TITLE = "Advanced Construction"   # <— updated title
-SUBTITLE  = "Tracking Inventory Equipment System"
+APP_TITLE = "Tracking Inventory Equipment System"
+SUBTITLE  = "AdvancedConstruction"
 DATE_FMT  = "%Y-%m-%d %H:%M:%S"
-
-# Try to hide Streamlit top-right toolbar, but don't crash if not supported
-try:
-    st.set_option("client.showToolbar", False)
-except Exception:
-    pass
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
-# Optional company logo: from secrets or local file "logo.png"
-LOGO_PATH =company_logo.jpeg
-logo_candidate = ""
-try:
-    logo_candidate = st.secrets.get("company_logo", "")
-except Exception:
-    pass
-if logo_candidate and (logo_candidate.startswith("http") or os.path.exists(logo_candidate)):
-    LOGO_PATH = logo_candidate
-elif os.path.exists("logo.jpeg"):
-    LOGO_PATH = "logo.jpeg"
-
+# Optional: hide Streamlit page toolbar (gear/share) for everyone
+# (Safe to leave on; remove if you prefer default)
+st.set_option("client.showToolbar", False)
 
 # =============================================================================
 # AUTH SETUP
 # =============================================================================
-# You can override these via .streamlit/secrets.toml
+# You can override in .streamlit/secrets.toml:
 # [auth.admins]
-# username = "strong-password"
+# admin1 = "your-strong-password"
 # ...
 # [auth.staff]
-# username = "strong-password"
+# staff1 = "your-strong-password"
 # ...
 
 DEFAULT_ADMIN_PW = "admin@2025"
 DEFAULT_STAFF_PW = "staff@2025"
 
-auth_cfg = st.secrets.get("auth", {}) if hasattr(st, "secrets") else {}
-admins_cfg = auth_cfg.get("admins", {}) if isinstance(auth_cfg.get("admins", {}), dict) else {}
-staffs_cfg = auth_cfg.get("staff", {}) if isinstance(auth_cfg.get("staff", {}), dict) else {}
+ADMINS: Dict[str, str] = {}
+STAFFS: Dict[str, str] = {}
+try:
+    ADMINS = dict(getattr(st.secrets, "auth", {}).get("admins", {}))
+    STAFFS = dict(getattr(st.secrets, "auth", {}).get("staff", {}))
+except Exception:
+    pass
 
-ADMINS: Dict[str, str] = dict(admins_cfg)
-STAFFS: Dict[str, str] = dict(staffs_cfg)
-
-# Provide defaults if nothing in secrets
 if not ADMINS:
     ADMINS = {f"admin{i}": DEFAULT_ADMIN_PW for i in range(1, 6)}
 if not STAFFS:
@@ -397,58 +379,49 @@ def authenticate(username: str, password: str):
     return None
 
 def ensure_auth():
-    """Gate: show login page until authenticated."""
+    """Block until a user signs in (center screen form)."""
     if "auth_user" not in st.session_state:
         st.session_state.auth_user = None
         st.session_state.auth_role = None
-        st.session_state.login_ts = None
 
     if st.session_state.auth_user and st.session_state.auth_role:
         return True
 
-    # ---------- Login page (centered form) ----------
-    st.markdown(f"# {APP_TITLE}")
-    st.caption(SUBTITLE)
+    st.markdown(f"<h2 style='margin-bottom:0'>{APP_TITLE}</h2>"
+                f"<div style='color:#666'>{SUBTITLE}</div>",
+                unsafe_allow_html=True)
     st.info("Please sign in to continue.")
     with st.form("login_form", clear_on_submit=False):
-        u = st.text_input("Username", key="login_user")
-        p = st.text_input("Password", type="password", key="login_pw")
+        u = st.text_input("Username")
+        p = st.text_input("Password", type="password")
         submitted = st.form_submit_button("Login", type="primary")
     if submitted:
         role = authenticate(u.strip(), p)
         if role:
             st.session_state.auth_user = u.strip()
             st.session_state.auth_role = role
-            st.session_state.login_ts = datetime.now().strftime(DATE_FMT)
             st.rerun()
         else:
             st.error("Invalid username or password.")
     st.stop()
 
-
 # =============================================================================
 # GOOGLE SHEETS CONNECTION
 # =============================================================================
-# Put your spreadsheet URL in secrets:
+# Prefer secrets:
 # [connections.gsheets]
 # spreadsheet = "https://docs.google.com/spreadsheets/d/XXXXXXXXXXXX/edit"
-#
-# Or hardcode it here as a fallback.
-SPREADSHEET = (
-    getattr(getattr(st, "secrets", {}), "connections", {})
-        .get("gsheets", {})
-        .get("spreadsheet")
-)
-if not SPREADSHEET:
-    # Fallback to your provided sheet URL
+try:
+    SPREADSHEET = st.secrets["connections"]["gsheets"]["spreadsheet"]
+except Exception:
+    # Fallback to your sheet
     SPREADSHEET = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
-# Worksheet identifiers (use tab names or numeric GIDs as strings)
-INVENTORY_WS   = str(st.secrets.get("inventory_tab", "0"))         # first sheet gid "0"
+# Use tab name or GID as a string. Your sheet:
+INVENTORY_WS   = str(st.secrets.get("inventory_tab", "0"))          # first sheet gid
 TRANSFERLOG_WS = str(st.secrets.get("transferlog_tab", "405007082"))
 
 conn = st.connection("gsheets", type=GSheetsConnection)
-
 
 # =============================================================================
 # HELPERS
@@ -460,14 +433,12 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     for c in cols:
         if c not in df.columns:
             df[c] = ""
-    # keep expected first, extras after
     return df[cols + [c for c in df.columns if c not in cols]]
 
 def nice_display(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
     out = df.copy()
-    # format date-like columns
     for col in out.columns:
         try:
             if np.issubdtype(out[col].dtype, np.datetime64) or "date" in col.lower():
@@ -482,7 +453,6 @@ def nice_display(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 def read_ws(worksheet: str, cols: list[str], ttl: int = 0) -> pd.DataFrame:
-    """Strict read; raises on error."""
     df = conn.read(spreadsheet=SPREADSHEET, worksheet=worksheet, ttl=ttl)
     return _ensure_cols(df, cols)
 
@@ -492,57 +462,21 @@ def safe_read_ws(worksheet: str, cols: list[str], label: str, ttl: int = 0) -> p
     except Exception as e:
         st.warning(
             f"Couldn’t read **{label}** from Google Sheets. "
-            f"Check sharing, tab name (or gid), or publishing. Error: {type(e).__name__}"
+            f"Check sharing, tab name/gid, or publishing. Error: {type(e).__name__}"
         )
         return _ensure_cols(None, cols)
 
 def write_ws(worksheet: str, df: pd.DataFrame):
     conn.update(spreadsheet=SPREADSHEET, worksheet=worksheet, data=df)
 
+def logout_button():
+    if st.button("Logout"):
+        for k in ("auth_user", "auth_role"):
+            st.session_state.pop(k, None)
+        st.rerun()
 
 # =============================================================================
-# HEADER / LOGOUT
-# =============================================================================
-def render_header(user: str, role: str):
-    """Top header with logo + title (left) and user info + logout."""
-    top = st.columns([6, 3, 1])  # left: title/logo, mid: user chip, right: logout
-    with top[0]:
-        lcols = st.columns([1, 6])
-        with lcols[0]:
-            if LOGO_PATH:
-                # keep it fairly small/clean
-                st.image(LOGO_PATH, width=56)
-        with lcols[1]:
-            st.markdown(
-                f"""
-                <div style="line-height:1.15;">
-                  <h1 style="margin:0">{APP_TITLE}</h1>
-                  <div style="color:#6b7280;margin-top:4px;">{SUBTITLE}</div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            # user info directly under the title on the left (as requested)
-            st.markdown(
-                f"""
-                <div style="margin-top:8px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc;display:inline-block;">
-                    <b>{user}</b> &nbsp;•&nbsp; Role: <b>{role.capitalize()}</b>
-                    {f'&nbsp;•&nbsp; <span style="color:#6b7280">Signed in: {st.session_state.get("login_ts","")}</span>' if st.session_state.get("login_ts") else ""}
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-    with top[2]:
-        if st.button("Logout", key="logout_btn", use_container_width=True):
-            for k in ("auth_user", "auth_role", "login_ts"):
-                st.session_state.pop(k, None)
-            st.rerun()
-
-    st.markdown("<hr style='margin:14px 0'/>", unsafe_allow_html=True)
-
-
-# =============================================================================
-# DATA MODEL (columns)
+# DATA MODEL
 # =============================================================================
 ALL_COLS = [
     "Serial Number","Device Type","Brand","Model","CPU",
@@ -552,33 +486,70 @@ ALL_COLS = [
 ]
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 
-
 # =============================================================================
-# MAIN
+# AUTH GATE
 # =============================================================================
 ensure_auth()
 USER = st.session_state.auth_user
 ROLE = st.session_state.auth_role
 IS_ADMIN = ROLE == "admin"
 
-# Hide table toolbars for STAFF (eye/download/fullscreen)
+# =============================================================================
+# TOP HEADER with LOGO + USER CHIP (logo file in same folder)
+# =============================================================================
+LOGO_PATH = "company_logo.jpeg" if os.path.exists("company_logo.jpeg") else None
+
+st.markdown("""
+<style>
+.app-header { display:flex; align-items:center; gap:16px; }
+.app-title  { font-weight:800; font-size:28px; line-height:1.1; margin:0; }
+.app-sub    { color:#666; margin:2px 0 0 0; font-size:14px; }
+.user-chip  { display:inline-block; margin-top:8px; padding:6px 10px;
+              background:#f6f6f6; border:1px solid #e5e5e5; border-radius:8px; }
+.header-right { margin-left:auto; display:flex; align-items:center; gap:12px; }
+</style>
+""", unsafe_allow_html=True)
+
+h1, h2 = st.columns([7, 3])
+with h1:
+    st.markdown(
+        f"""
+        <div class="app-header">
+          <div>
+            <div class="app-title">{APP_TITLE}</div>
+            <div class="app-sub">{SUBTITLE}</div>
+            <div class="user-chip">Signed in as <b>{USER}</b> • Role: <b>{ROLE.title()}</b></div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True
+    )
+with h2:
+    cA, cB = st.columns([1,1])
+    with cA:
+        if LOGO_PATH:
+            st.image(LOGO_PATH, use_column_width=True)
+    with cB:
+        st.write("")  # spacer
+        logout_button()
+
+st.markdown("---")
+
+# Hide dataframe toolbars (view/download/fullscreen) for STAFF only
 if not IS_ADMIN:
     st.markdown("""
         <style>
         div[data-testid="stDataFrame"] div[data-testid="stElementToolbar"] { display:none !important; }
-        div[data-testid="stDataEditor"]  div[data-testid="stElementToolbar"] { display:none !important; }
+        div[data-testid="stDataEditor"] div[data-testid="stElementToolbar"] { display:none !important; }
         div[data-testid="stElementToolbar"] { display:none !important; }
         </style>
     """, unsafe_allow_html=True)
 
-# Render the new header (logo + title + user left + logout)
-render_header(USER, ROLE)
-
-# Tabs per role
+# =============================================================================
+# TABS
+# =============================================================================
 if IS_ADMIN:
     tabs = st.tabs(["📝 Register", "📦 View Inventory", "🔄 Transfer Device", "📜 Transfer Log", "⬇ Export"])
 else:
-    # Staff: NO Register, NO Export
     tabs = st.tabs(["📦 View Inventory", "🔄 Transfer Device", "📜 Transfer Log"])
 
 # ----------------------------- Admin: Register
@@ -634,12 +605,10 @@ if IS_ADMIN:
 view_tab_index = 1 if IS_ADMIN else 0
 with tabs[view_tab_index]:
     st.subheader("Current Inventory")
-
     inv = safe_read_ws(INVENTORY_WS, ALL_COLS, "inventory", ttl=0)
     if not inv.empty and "Date issued" in inv.columns:
         _ts = pd.to_datetime(inv["Date issued"], errors="coerce")
         inv = inv.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
-
     st.dataframe(nice_display(inv), use_container_width=True, hide_index=True)
 
 # ----------------------------- Transfer Device
@@ -674,14 +643,12 @@ with tabs[transfer_tab_index]:
             idx = idx_list[0]
             prev_user = inv.loc[idx, "USER"]
 
-            # Update inventory row
             inv.loc[idx, "Previous User"] = str(prev_user or "")
             inv.loc[idx, "USER"] = new_owner.strip()
             inv.loc[idx, "TO"] = new_owner.strip()
             inv.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
             inv.loc[idx, "Registered by"] = USER
 
-            # Append to transfer log
             log = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log")
             log_row = {
                 "Device Type": inv.loc[idx, "Device Type"],
@@ -693,7 +660,6 @@ with tabs[transfer_tab_index]:
             }
             log = pd.concat([log, pd.DataFrame([log_row])], ignore_index=True)
 
-            # Save
             write_ws(INVENTORY_WS, inv)
             write_ws(TRANSFERLOG_WS, log)
             st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
@@ -706,7 +672,6 @@ with tabs[log_tab_index]:
     if not log.empty and "Date issued" in log.columns:
         _ts = pd.to_datetime(log["Date issued"], errors="coerce")
         log = log.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
-        # clean date display
         log["Date issued"] = pd.to_datetime(log["Date issued"], errors="coerce").dt.strftime(DATE_FMT)
     st.dataframe(nice_display(log), use_container_width=True, hide_index=True)
 
@@ -737,22 +702,20 @@ if IS_ADMIN:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
 
-# ----------------------------- (Optional) Connection diagnostics (admins only)
-if IS_ADMIN:
-    with st.expander("🔎 Connection diagnostics"):
-        st.json({"spreadsheet": SPREADSHEET})
-        st.json({"INVENTORY_WS": INVENTORY_WS, "TRANSFERLOG_WS": TRANSFERLOG_WS})
+# ----------------------------- Diagnostics (optional)
+with st.expander("🔎 Connection diagnostics"):
+    st.json({"spreadsheet": SPREADSHEET})
+    st.json({"INVENTORY_WS": INVENTORY_WS, "TRANSFERLOG_WS": TRANSFERLOG_WS})
+    try:
+        probe_inv = conn.read(spreadsheet=SPREADSHEET, worksheet=INVENTORY_WS, nrows=3, ttl=0)
+        st.caption(f"Inventory probe: {probe_inv.shape}")
+        st.dataframe(probe_inv, use_container_width=True)
+    except Exception as e:
+        st.error(f"Inventory probe failed: {e}")
+    try:
+        probe_log = conn.read(spreadsheet=SPREADSHEET, worksheet=TRANSFERLOG_WS, nrows=3, ttl=0)
+        st.caption(f"Transfer log probe: {probe_log.shape}")
+        st.dataframe(probe_log, use_container_width=True)
+    except Exception as e:
+        st.error(f"Transfer log probe failed: {e}")
 
-        try:
-            probe_inv = conn.read(spreadsheet=SPREADSHEET, worksheet=INVENTORY_WS, nrows=3, ttl=0)
-            st.caption(f"Inventory probe: {probe_inv.shape}")
-            st.dataframe(probe_inv, use_container_width=True)
-        except Exception as e:
-            st.error(f"Inventory probe failed: {e}")
-
-        try:
-            probe_log = conn.read(spreadsheet=SPREADSHEET, worksheet=TRANSFERLOG_WS, nrows=3, ttl=0)
-            st.caption(f"Transfer log probe: {probe_log.shape}")
-            st.dataframe(probe_log, use_container_width=True)
-        except Exception as e:
-            st.error(f"Transfer log probe failed: {e}")
