@@ -1,4 +1,3 @@
-
 import os
 from io import BytesIO
 from datetime import datetime
@@ -14,15 +13,8 @@ APP_TITLE   = "Tracking Inventory Management System"
 SUBTITLE    = "AdvancedConstruction"
 DATE_FMT    = "%Y-%m-%d %H:%M:%S"
 
-SPREADSHEET_URL = st.secrets.get(
-    "connections", {}
-).get("gsheets", {}).get(
-    "spreadsheet",
-    "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
-)
-
-INVENTORY_WS   = st.secrets.get("inventory_tab", "truckinventory")
-TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transferlog")
+INVENTORY_WS   = "truckinventory"
+TRANSFERLOG_WS = "transferlog"
 
 # -----------------------------
 # PAGE / HEADER
@@ -48,19 +40,11 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return df[cols + [c for c in df.columns if c not in cols]]
 
 def load_ws(worksheet: str, cols: list[str]) -> pd.DataFrame:
-    df = conn.read(
-        spreadsheet=SPREADSHEET_URL,
-        worksheet=worksheet,
-        ttl=0
-    )
+    df = conn.read(worksheet=worksheet, ttl=0)
     return _ensure_cols(df, cols)
 
 def save_ws(worksheet: str, df: pd.DataFrame) -> None:
-    conn.update(
-        spreadsheet=SPREADSHEET_URL,
-        worksheet=worksheet,
-        data=df
-    )
+    conn.update(worksheet=worksheet, data=df)
 
 def nice_display(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
@@ -88,137 +72,3 @@ ALL_COLS = ["Serial Number","Device Type","Brand","Model","CPU",
             "Contact Number","Location","Office","Notes","Date issued","Registered by"]
 
 tabs = st.tabs(["📝 Register", "📦 View Inventory", "🔄 Transfer Device", "📜 Transfer Log", "⬇ Export"])
-
-# 1) Register
-with tabs[0]:
-    st.subheader("Register New Inventory Item")
-    with st.form("reg_form", clear_on_submit=False):
-        c1, c2 = st.columns(2)
-        with c1:
-            serial = st.text_input("Serial Number *")
-            device = st.text_input("Device Type *")
-            brand  = st.text_input("Brand")
-            model  = st.text_input("Model")
-            cpu    = st.text_input("CPU")
-        with c2:
-            hdd1   = st.text_input("Hard Drive 1")
-            hdd2   = st.text_input("Hard Drive 2")
-            mem    = st.text_input("Memory")
-            gpu    = st.text_input("GPU")
-            screen = st.text_input("Screen Size")
-        submitted = st.form_submit_button("Save Item")
-
-    if submitted:
-        if not serial.strip() or not device.strip():
-            st.error("Serial Number and Device Type are required.")
-        else:
-            inv = load_ws(INVENTORY_WS, ALL_COLS)
-            if serial.strip() in inv["Serial Number"].astype(str).values:
-                st.error(f"Serial Number '{serial}' already exists.")
-            else:
-                row = {
-                    "Serial Number": serial.strip(),
-                    "Device Type": device.strip(),
-                    "Brand": brand.strip(),
-                    "Model": model.strip(),
-                    "CPU": cpu.strip(),
-                    "Hard Drive 1": hdd1.strip(),
-                    "Hard Drive 2": hdd2.strip(),
-                    "Memory": mem.strip(),
-                    "GPU": gpu.strip(),
-                    "Screen Size": screen.strip(),
-                    "USER": "", "Previous User": "", "TO": "",
-                    "Department": "", "Email Address": "", "Contact Number": "",
-                    "Location": "", "Office": "", "Notes": "",
-                    "Date issued": datetime.now().strftime(DATE_FMT),
-                    "Registered by": "system",
-                }
-                inv = pd.concat([inv, pd.DataFrame([row])], ignore_index=True)
-                save_ws(INVENTORY_WS, inv)
-                st.success("✅ Saved to Google Sheets.")
-
-# 2) View inventory
-with tabs[1]:
-    st.subheader("Current Inventory")
-    inv = load_ws(INVENTORY_WS, ALL_COLS)
-    if "Date issued" in inv.columns:
-        _ts = pd.to_datetime(inv["Date issued"], errors="coerce")
-        inv = inv.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
-    st.dataframe(nice_display(inv), use_container_width=True)
-
-# 3) Transfer device
-with tabs[2]:
-    st.subheader("Register Ownership Transfer")
-    inv = load_ws(INVENTORY_WS, ALL_COLS)
-    serials = sorted(inv["Serial Number"].astype(str).dropna().unique().tolist())
-    pick = st.selectbox("Serial Number", ["— Select —"] + serials)
-    chosen_serial = None if pick == "— Select —" else pick
-
-    if chosen_serial:
-        row = inv[inv["Serial Number"].astype(str) == chosen_serial]
-        if not row.empty:
-            r = row.iloc[0]
-            st.caption(f"Device: {r.get('Device Type','')} • Brand: {r.get('Brand','')} • Model: {r.get('Model','')} • CPU: {r.get('CPU','')}")
-        else:
-            st.warning("Serial not found in inventory.")
-
-    new_owner = st.text_input("New Owner (required)")
-    do_transfer = st.button("Transfer Now", type="primary", disabled=not (chosen_serial and new_owner.strip()))
-
-    if do_transfer:
-        idx_list = inv.index[inv["Serial Number"].astype(str) == chosen_serial].tolist()
-        if not idx_list:
-            st.error(f"Device with Serial Number {chosen_serial} not found!")
-        else:
-            idx = idx_list[0]
-            prev_user = inv.loc[idx, "USER"]
-            inv.loc[idx, "Previous User"] = str(prev_user or "")
-            inv.loc[idx, "USER"] = new_owner.strip()
-            inv.loc[idx, "TO"] = new_owner.strip()
-            inv.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
-            inv.loc[idx, "Registered by"] = "system"
-
-            log = load_ws(TRANSFERLOG_WS, ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"])
-            log_row = {
-                "Device Type": inv.loc[idx, "Device Type"],
-                "Serial Number": chosen_serial,
-                "From owner": str(prev_user or ""),
-                "To owner": new_owner.strip(),
-                "Date issued": datetime.now().strftime(DATE_FMT),
-                "Registered by": "system",
-            }
-            log = pd.concat([log, pd.DataFrame([log_row])], ignore_index=True)
-
-            save_ws(INVENTORY_WS, inv)
-            save_ws(TRANSFERLOG_WS, log)
-            st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
-
-# 4) View transfer log
-with tabs[3]:
-    st.subheader("Transfer Log")
-    log = load_ws(TRANSFERLOG_WS, ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"])
-    if "Date issued" in log.columns:
-        _ts = pd.to_datetime(log["Date issued"], errors="coerce")
-        log = log.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
-    st.dataframe(nice_display(log), use_container_width=True)
-
-# 5) Export
-with tabs[4]:
-    st.subheader("Download Exports")
-    inv = load_ws(INVENTORY_WS, ALL_COLS)
-    inv_x = BytesIO()
-    with pd.ExcelWriter(inv_x, engine="openpyxl") as w:
-        inv.to_excel(w, index=False)
-    inv_x.seek(0)
-    st.download_button("⬇ Download Inventory", inv_x.getvalue(),
-                       file_name="inventory.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    log = load_ws(TRANSFERLOG_WS, ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"])
-    log_x = BytesIO()
-    with pd.ExcelWriter(log_x, engine="openpyxl") as w:
-        log.to_excel(w, index=False)
-    log_x.seek(0)
-    st.download_button("⬇ Download Transfer Log", log_x.getvalue(),
-                       file_name="transfer_log.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
