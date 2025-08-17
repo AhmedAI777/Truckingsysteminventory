@@ -444,20 +444,50 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 def nice_display(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
+
     out = df.copy()
-    # format date-like columns
+
+    # Columns to treat as dates (adjust list if you add more date fields)
+    date_like_cols = [c for c in out.columns if "date" in c.lower()]
+
+    # Try the app's main format first, then some common fallbacks
+    fallback_formats = [
+        "%Y-%m-%d",               # 2025-08-17
+        "%d/%m/%Y %H:%M:%S",      # 17/08/2025 06:43:01
+        "%m/%d/%Y %H:%M:%S",      # 08/17/2025 06:43:01
+        "%d/%m/%Y",               # 17/08/2025
+        "%m/%d/%Y",               # 08/17/2025
+    ]
+
     for col in out.columns:
+        # Clean up text-y columns
+        out[col] = out[col].replace({np.nan: ""})
         try:
-            if np.issubdtype(out[col].dtype, np.datetime64) or "date" in col.lower():
-                s = pd.to_datetime(out[col], errors="coerce")
-                if hasattr(s, "dt"):
-                    out[col] = s.dt.strftime(DATE_FMT).replace("NaT", "")
+            out[col] = out[col].astype(str).replace({"NaT": "", "nan": "", "NaN": ""})
         except Exception:
             pass
-    out = out.replace({np.nan: ""})
-    for c in out.columns:
-        out[c] = out[c].astype(str).replace({"NaT": "", "nan": "", "NaN": ""})
+
+        if col in date_like_cols:
+            s = out[col].astype(str).str.strip()
+            s = s.where(s != "", None)
+
+            # 1) Try the declared app format
+            parsed = pd.to_datetime(s, format=DATE_FMT, errors="coerce")
+
+            # 2) Fill remaining NaT with known fallback formats
+            if parsed.isna().any():
+                for fmt in fallback_formats:
+                    mask = parsed.isna()
+                    if not mask.any():
+                        break
+                    parsed_try = pd.to_datetime(s[mask], format=fmt, errors="coerce")
+                    parsed.loc[mask] = parsed_try
+
+            # 3) Final stringify
+            out[col] = parsed.dt.strftime(DATE_FMT).fillna("")
+
     return out
+
 
 def read_ws(worksheet: str, cols: list[str], ttl: int = 0) -> pd.DataFrame:
     """Strict read; raises on error."""
