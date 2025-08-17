@@ -1,6 +1,4 @@
-from textwrap import dedent
 
-cleaned_code = dedent("""
 import os
 from io import BytesIO
 from datetime import datetime
@@ -30,7 +28,7 @@ TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transferlog")
 # PAGE / HEADER
 # -----------------------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
-st.markdown(f"## {APP_TITLE}\\n**{SUBTITLE}**")
+st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
 # -----------------------------
 # Connect to Google Sheets
@@ -224,5 +222,3 @@ with tabs[4]:
     st.download_button("⬇ Download Transfer Log", log_x.getvalue(),
                        file_name="transfer_log.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-""")
-cleaned_code[:1000]  # preview snippet
