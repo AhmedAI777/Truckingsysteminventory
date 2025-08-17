@@ -9,13 +9,13 @@
 # # -----------------------------
 # # BASIC SETTINGS
 # # -----------------------------
-# APP_TITLE   = "Tracking Inventory Management System"
-# SUBTITLE    = "AdvancedConstruction"
+# APP_TITLE   = "Advanced Construction"
+# SUBTITLE    = "Tracking Inventory Management System" 
 # DATE_FMT    = "%Y-%m-%d %H:%M:%S"
 
 # # Use your actual worksheet names from the Google Sheet
-# INVENTORY_WS   = st.secrets.get("inventory_tab", "truckinventory")
-# TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transfer_log")
+# INVENTORY_WS   = st.secrets.get("inventory_tab", "405007082")
+# TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "405007082")
 
 # # -----------------------------
 # # PAGE HEADER
