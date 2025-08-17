@@ -16,32 +16,69 @@ st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
 # =============================
-# SECRETS / CONNECTION
-#   .streamlit/secrets.toml:
-#   [connections.gsheets]
-#   type = "public"  # read-only; use 'gspread' for write access
-#   spreadsheet = "https://docs.google.com/spreadsheets/d/<ID>/edit"
-#   inventory_tab   = "0"          # gid for 'truckinventory'
-#   transferlog_tab = "405007082"  # gid for 'transfer_log'
+# CONNECTION (public read-only or gspread write)
+# .streamlit/secrets.toml example:
+# [connections.gsheets]
+# type = "gspread"  # or "public" for read-only
+# spreadsheet = "https://docs.google.com/spreadsheets/d/<ID>/edit"
+#
+# inventory_tab   = "0"          # gid or sheet name
+# transferlog_tab = "405007082"  # gid or sheet name
+#
+# admin_pin = "YOUR-STRONG-PIN"
 # =============================
 GS = st.secrets.get("connections", {}).get("gsheets", {})
 SPREADSHEET   = GS.get("spreadsheet", "")
 MODE          = GS.get("type", "public").lower()
-CAN_WRITE     = MODE == "gspread"   # write only when using service account
+CAN_WRITE     = MODE == "gspread"
+
 INVENTORY_WS  = st.secrets.get("inventory_tab", "0")
 TRANSFER_WS   = st.secrets.get("transferlog_tab", "405007082")
 
+ADMIN_PIN     = str(st.secrets.get("admin_pin", "")).strip()
+
 conn = st.connection("gsheets", type=GSheetsConnection)
+
+# =============================
+# SIDEBAR: SIMPLE ROLE CONTROL
+# =============================
+if "is_admin" not in st.session_state:
+    st.session_state.is_admin = False
+
+with st.sidebar:
+    st.markdown("### 🔐 Access")
+    if st.session_state.is_admin:
+        st.success("Role: Admin")
+        if st.button("Lock to Staff"):
+            st.session_state.is_admin = False
+            st.rerun()
+    else:
+        st.info("Role: Staff")
+        pin = st.text_input("Admin PIN", type="password", placeholder="Enter PIN")
+        if st.button("Unlock Admin"):
+            if ADMIN_PIN and pin == ADMIN_PIN:
+                st.session_state.is_admin = True
+                st.rerun()
+            else:
+                st.error("Invalid PIN")
+
+IS_ADMIN = st.session_state.is_admin
+
+# Policy: admins control everything, staff can only transfer + view
+ALLOW_REGISTER = IS_ADMIN
+ALLOW_TRANSFER = True
+ALLOW_EXPORT   = IS_ADMIN
 
 # =============================
 # HELPERS
 # =============================
 def _ws_arg(x):
-    """Allow gid (preferred for public) or sheet name (for gspread)."""
+    """Support both gid (int) and sheet name (str)."""
+    s = str(x).strip()
     try:
-        return int(str(x).strip())
+        return int(s)
     except Exception:
-        return str(x).strip()
+        return s
 
 def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     if df is None or df.empty:
@@ -50,7 +87,6 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     for c in cols:
         if c not in df.columns:
             df[c] = ""
-    # keep expected first
     return df[cols + [c for c in df.columns if c not in cols]]
 
 def nice_display(df: pd.DataFrame) -> pd.DataFrame:
@@ -71,7 +107,6 @@ def nice_display(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 def load_ws(worksheet, cols):
-    """Safe read with friendly message (no red stack traces)."""
     try:
         df = conn.read(spreadsheet=SPREADSHEET, worksheet=_ws_arg(worksheet), ttl=0)
         return _ensure_cols(df, cols)
@@ -83,9 +118,8 @@ def load_ws(worksheet, cols):
         return _ensure_cols(None, cols)
 
 def save_ws(worksheet, df):
-    """Write only when using gspread; otherwise show info."""
     if not CAN_WRITE:
-        st.info("Running in public (read-only) mode — enable 'gspread' with a service account to save changes.")
+        st.error("App is in public (read-only) mode. Switch connection type to 'gspread' to enable writes.")
         return False
     try:
         conn.update(spreadsheet=SPREADSHEET, worksheet=_ws_arg(worksheet), data=df)
@@ -113,29 +147,33 @@ tab_reg, tab_inv, tab_xfer, tab_log, tab_export = st.tabs(
 )
 
 # -----------------------------
-# 1) REGISTER
+# 1) REGISTER (Admin only)
 # -----------------------------
 with tab_reg:
     st.subheader("Register New Inventory Item")
-    if not CAN_WRITE:
-        st.info("This app is currently in **read-only (public)** mode. Switch to **gspread** with a service account to enable saving.")
+    if not ALLOW_REGISTER:
+        st.info("Registration is disabled for staff. (Read-only mode)")
+        disabled = True
+    else:
+        disabled = False
+
     with st.form("reg_form", clear_on_submit=False):
         c1, c2 = st.columns(2)
         with c1:
-            serial = st.text_input("Serial Number *")
-            device = st.text_input("Device Type *")
-            brand  = st.text_input("Brand")
-            model  = st.text_input("Model")
-            cpu    = st.text_input("CPU")
+            serial = st.text_input("Serial Number *", disabled=disabled)
+            device = st.text_input("Device Type *", disabled=disabled)
+            brand  = st.text_input("Brand", disabled=disabled)
+            model  = st.text_input("Model", disabled=disabled)
+            cpu    = st.text_input("CPU", disabled=disabled)
         with c2:
-            hdd1   = st.text_input("Hard Drive 1")
-            hdd2   = st.text_input("Hard Drive 2")
-            mem    = st.text_input("Memory")
-            gpu    = st.text_input("GPU")
-            screen = st.text_input("Screen Size")
-        submitted = st.form_submit_button("Save Item", disabled=not CAN_WRITE)
+            hdd1   = st.text_input("Hard Drive 1", disabled=disabled)
+            hdd2   = st.text_input("Hard Drive 2", disabled=disabled)
+            mem    = st.text_input("Memory", disabled=disabled)
+            gpu    = st.text_input("GPU", disabled=disabled)
+            screen = st.text_input("Screen Size", disabled=disabled)
+        submitted = st.form_submit_button("Save Item", disabled=disabled)
 
-    if submitted and CAN_WRITE:
+    if submitted and ALLOW_REGISTER:
         if not serial.strip() or not device.strip():
             st.error("Serial Number and Device Type are required.")
         else:
@@ -158,7 +196,7 @@ with tab_reg:
                     "Department": "", "Email Address": "", "Contact Number": "",
                     "Location": "", "Office": "", "Notes": "",
                     "Date issued": datetime.now().strftime(DATE_FMT),
-                    "Registered by": "system",
+                    "Registered by": "admin",
                 }
                 inv = pd.concat([inv, pd.DataFrame([row])], ignore_index=True)
                 if save_ws(INVENTORY_WS, inv):
@@ -173,12 +211,10 @@ with tab_inv:
     st.dataframe(nice_display(inv), use_container_width=True, hide_index=True)
 
 # -----------------------------
-# 3) TRANSFER DEVICE
+# 3) TRANSFER DEVICE (staff & admin)
 # -----------------------------
 with tab_xfer:
     st.subheader("Register Ownership Transfer")
-    if not CAN_WRITE:
-        st.info("Read-only mode: switch to **gspread** with a service account to enable transfers.")
     inv = load_ws(INVENTORY_WS, ALL_COLS)
 
     serials = sorted(inv["Serial Number"].astype(str).dropna().unique().tolist())
@@ -195,21 +231,25 @@ with tab_xfer:
             st.warning("Serial not found in inventory.")
 
     new_owner = st.text_input("New Owner (required)")
-    do_transfer = st.button("Transfer Now", type="primary",
-                            disabled=not (CAN_WRITE and chosen_serial and new_owner.strip()))
+    do_transfer = st.button(
+        "Transfer Now",
+        type="primary",
+        disabled=not (ALLOW_TRANSFER and CAN_WRITE and chosen_serial and new_owner.strip())
+    )
 
-    if do_transfer and CAN_WRITE:
+    if do_transfer:
         idx_list = inv.index[inv["Serial Number"].astype(str) == chosen_serial].tolist()
         if not idx_list:
             st.error(f"Device with Serial Number {chosen_serial} not found!")
         else:
             idx = idx_list[0]
             prev_user = inv.loc[idx, "USER"]
+            # update inventory
             inv.loc[idx, "Previous User"] = str(prev_user or "")
             inv.loc[idx, "USER"] = new_owner.strip()
             inv.loc[idx, "TO"] = new_owner.strip()
             inv.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
-            inv.loc[idx, "Registered by"] = "system"
+            inv.loc[idx, "Registered by"] = "admin" if IS_ADMIN else "staff"
 
             # append to log
             log = load_ws(TRANSFER_WS, LOG_COLS)
@@ -219,7 +259,7 @@ with tab_xfer:
                 "From owner": str(prev_user or ""),
                 "To owner": new_owner.strip(),
                 "Date issued": datetime.now().strftime(DATE_FMT),
-                "Registered by": "system",
+                "Registered by": "admin" if IS_ADMIN else "staff",
             }
             log = pd.concat([log, pd.DataFrame([log_row])], ignore_index=True)
 
@@ -229,7 +269,7 @@ with tab_xfer:
                 st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
 
 # -----------------------------
-# 4) TRANSFER LOG (ordered + numbered)
+# 4) TRANSFER LOG (sorted, clean index)
 # -----------------------------
 with tab_log:
     st.subheader("Transfer Log")
@@ -242,26 +282,27 @@ with tab_log:
     st.dataframe(nice_display(log), use_container_width=True, hide_index=True)
 
 # -----------------------------
-# 5) EXPORTS
+# 5) EXPORT (Admin only)
 # -----------------------------
 with tab_export:
     st.subheader("Download Exports")
-    # inventory
-    inv = load_ws(INVENTORY_WS, ALL_COLS)
-    inv_x = BytesIO()
-    with pd.ExcelWriter(inv_x, engine="openpyxl") as w:
-        inv.to_excel(w, index=False)
-    inv_x.seek(0)
-    st.download_button("⬇ Download Inventory", inv_x.getvalue(),
-                       file_name="inventory.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    if not ALLOW_EXPORT:
+        st.info("Export is restricted to admins.")
+    else:
+        inv = load_ws(INVENTORY_WS, ALL_COLS)
+        inv_x = BytesIO()
+        with pd.ExcelWriter(inv_x, engine="openpyxl") as w:
+            inv.to_excel(w, index=False)
+        inv_x.seek(0)
+        st.download_button("⬇ Download Inventory", inv_x.getvalue(),
+                           file_name="inventory.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-    # transfer log
-    log = load_ws(TRANSFER_WS, LOG_COLS)
-    log_x = BytesIO()
-    with pd.ExcelWriter(log_x, engine="openpyxl") as w:
-        log.to_excel(w, index=False)
-    log_x.seek(0)
-    st.download_button("⬇ Download Transfer Log", log_x.getvalue(),
-                       file_name="transfer_log.xlsx",
-                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        log = load_ws(TRANSFER_WS, LOG_COLS)
+        log_x = BytesIO()
+        with pd.ExcelWriter(log_x, engine="openpyxl") as w:
+            log.to_excel(w, index=False)
+        log_x.seek(0)
+        st.download_button("⬇ Download Transfer Log", log_x.getvalue(),
+                           file_name="transfer_log.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
