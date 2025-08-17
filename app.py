@@ -1755,479 +1755,244 @@
 # auth_secret = "change-me"
 #
 # ----------------------------------------------------------------------------------------
-
-import streamlit as st
-import streamlit.components.v1 as components
-import pandas as pd
-import numpy as np
-from datetime import datetime
+import os
 from io import BytesIO
-import json, os, base64, hmac, hashlib
+from datetime import datetime
 
-# Google Sheets libs
-import gspread
-from gspread_dataframe import set_with_dataframe, get_as_dataframe
+import numpy as np
+import pandas as pd
+import streamlit as st
+from streamlit_gsheets import GSheetsConnection
 
-# ============================
-# EASY CONTROLS (UI)
-# ============================
-APP_TITLE        = "Tracking Inventory Management System"
-APP_TAGLINE      = "AdvancedConstruction"
-FONT_FAMILY      = "Times New Roman"
-TOP_PADDING_REM  = 2
-MAX_CONTENT_W    = 1300
+# -----------------------------
+# EASY KNOBS
+# -----------------------------
+APP_TITLE   = "Tracking Inventory Management System"
+SUBTITLE    = "AdvancedConstruction"
+DATE_FMT    = "%Y-%m-%d %H:%M:%S"
 
-LOGO_FILE        = "assets/company_logo.jpeg"    # optional local image
-LOGO_WIDTH_PX    = 400
-LOGO_HEIGHT_PX   = 60
-LOGO_ALT_EMOJI   = "🖥️"
-
-TITLE_SIZE_PX    = 46
-TAGLINE_SIZE_PX  = 16
-GAP_BELOW_HEADER_PX = 16
-LOGOUT_ROW_TOP_MARG = 8
-
-ICON_FILE        = "assets/favicon.png"          # optional
-
-DATE_FMT         = "%Y-%m-%d %H:%M:%S"
-AUTH_SECRET      = st.secrets.get("auth_secret", "change-me")
-
-# ---- Google Sheets locator (read from Secrets) ----
-SHEET_URL  = st.secrets.get("sheet_url", "").strip()     # e.g. "https://docs.google.com/…/edit"
-SHEET_ID   = st.secrets.get("sheet_id", "").strip()      # e.g. "1SHp6gO…XNHFI"
-SHEET_NAME = st.secrets.get("sheet_name", "").strip()    # e.g. "truckingsysteminventory"
-
-# Tab names (can also be overridden in Secrets)
-INVENTORY_SHEET   = st.secrets.get("inventory_tab", "truckinventory")
-TRANSFERLOG_SHEET = st.secrets.get("transferlog_tab", "transferlog")
-
-# ============================
-# PAGE CONFIG & CSS
-# ============================
-st.set_page_config(
-    page_title="Tracking Inventory System",
-    page_icon=ICON_FILE if os.path.exists(ICON_FILE) else LOGO_ALT_EMOJI,
-    layout="wide",
-    initial_sidebar_state="collapsed",
+# Read spreadsheet url and tab names (worksheets) from secrets (with fallbacks)
+SPREADSHEET_URL = st.secrets.get(
+    "connections", {}
+).get("gsheets", {}).get(
+    "spreadsheet",
+    "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 )
 
-st.markdown(f"""
-<style>
-html, body, .stApp, .stApp * {{
-  font-family: "{FONT_FAMILY}", Times, serif !important;
-}}
-[data-testid="stSidebar"] {{ display: none !important; }}
-.block-container {{ padding-top:{TOP_PADDING_REM}rem; max-width:{MAX_CONTENT_W}px; }}
-.brand-title {{ font-weight:700; font-size:{TITLE_SIZE_PX}px; margin:0; line-height:1.1; }}
-.brand-tag {{ margin:2px 0 0; color:#64748b; font-weight:400; font-size:{TAGLINE_SIZE_PX}px; }}
-.header-divider {{ height:1px; background:#e5e7eb; margin:10px 0 {GAP_BELOW_HEADER_PX}px; }}
-.logout-row {{ margin-top:{LOGOUT_ROW_TOP_MARG}px; }}
-.stButton > button {{ height:38px; padding:0 .9rem; border-radius:8px; font-weight:600; }}
-.logout-col .stButton > button {{ background:#f3f4f6; color:#111827; border:1px solid #e5e7eb; }}
-.logout-col .stButton > button:hover {{ background:#e5e7eb; }}
-.stTabs {{ margin-top:6px; }}
-section[tabindex="0"] h2 {{ margin-top:8px; }}
-#MainMenu, footer {{ visibility: hidden; }}
-</style>
-""", unsafe_allow_html=True)
+INVENTORY_WS   = st.secrets.get("inventory_tab", "truckinventory")
+TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transferlog")
 
-# ============================
-# SESSION DEFAULTS
-# ============================
-st.session_state.setdefault("authenticated", False)
-st.session_state.setdefault("role", None)
-st.session_state.setdefault("username", "")
-st.session_state.setdefault("__jump_to_tab__", None)
+# Inventory columns (hardware + meta)
+HW_COLS = [
+    "Serial Number", "Device Type", "Brand", "Model", "CPU",
+    "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
+]
+META_COLS = [
+    "USER", "Previous User", "TO",
+    "Department", "Email Address", "Contact Number", "Location", "Office", "Notes",
+    "Date issued", "Registered by",
+]
+ALL_COLS = HW_COLS + META_COLS
 
-# ============================
-# APP USERS
-# ============================
-try:
-    USERS = json.loads(st.secrets["users_json"])
-except Exception:
-    st.error("Missing `users_json` in secrets. Example: "
-             '`[{"username":"admin","password":"123","role":"admin"}]`')
-    st.stop()
+# -----------------------------
+# PAGE / HEADER
+# -----------------------------
+st.set_page_config(page_title=APP_TITLE, layout="wide")
+st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
-def get_user_role(username: str):
-    for u in USERS:
-        if u.get("username") == username:
-            return u.get("role")
-    return None
+# Make the connection once
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# ============================
-# URL TOKEN LOGIN (persist across refresh)
-# ============================
-def make_token(username: str) -> str:
-    return hmac.new(AUTH_SECRET.encode("utf-8"), msg=username.encode("utf-8"),
-                    digestmod=hashlib.sha256).hexdigest()
+# -----------------------------
+# Small helpers
+# -----------------------------
+def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(columns=cols)
+    df = df.fillna("")
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
+    # nice order: expected first, any extra columns after
+    df = df[cols + [c for c in df.columns if c not in cols]]
+    return df
 
-def set_auth_query_params(username: str):
-    st.query_params.clear()
-    st.query_params.update({"u": username, "t": make_token(username)})
+def load_ws(worksheet: str, cols: list[str]) -> pd.DataFrame:
+    """Read a worksheet as DataFrame (adds missing columns, keeps blanks)."""
+    df = conn.read(
+        spreadsheet=SPREADSHEET_URL,  # you can omit this if set in secrets
+        worksheet=worksheet,
+        ttl=0,                         # always read fresh
+    )
+    return _ensure_cols(df, cols)
 
-def clear_auth_query_params():
-    st.query_params.clear()
+def save_ws(worksheet: str, df: pd.DataFrame) -> None:
+    """Write a DataFrame back to the worksheet."""
+    conn.update(
+        spreadsheet=SPREADSHEET_URL,  # you can omit this if set in secrets
+        worksheet=worksheet,
+        data=df
+    )
 
-def try_auto_login_from_url():
-    if st.session_state.get("authenticated"):
-        return
-    params = st.query_params
-    u, t = params.get("u"), params.get("t")
-    if not u or not t: return
-    if hmac.compare_digest(t, make_token(u)):
-        role = get_user_role(u)
-        if role:
-            st.session_state["authenticated"] = True
-            st.session_state["username"] = u
-            st.session_state["role"] = role
-
-try_auto_login_from_url()
-
-# ============================
-# SMALL UTILS
-# ============================
-def img_to_base64(path: str) -> str | None:
-    if os.path.exists(path):
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode("utf-8")
-    return None
-
-def logo_html(src_path: str, width_px: int, height_px: int | None, alt_emoji: str) -> str:
-    b64 = img_to_base64(src_path)
-    if not b64:
-        return f"<div style='font-size:{int(width_px*0.7)}px;line-height:1'>{alt_emoji}</div>"
-    h_style = f"height:{height_px}px;" if height_px else ""
-    return f"<img src='data:image/png;base64,{b64}' alt='logo' style='width:{width_px}px;{h_style}display:block;'/>"
-
-def for_display(df: pd.DataFrame) -> pd.DataFrame:
-    """Make DataFrame Arrow-friendly & format dates; keep empty cells blank."""
-    if df is None or df.empty: return df
+def nice_display(df: pd.DataFrame) -> pd.DataFrame:
+    """Arrow-friendly display and nice date formatting."""
+    if df is None or df.empty:
+        return df
     out = df.copy()
     for col in out.columns:
         try:
-            if np.issubdtype(out[col].dtype, np.datetime64) or ("date" in col.lower()):
-                s = pd.to_datetime(out[col], errors="coerce")
-                out[col] = s.dt.strftime(DATE_FMT)
+            if np.issubdtype(out[col].dtype, np.datetime64) or "date" in col.lower():
+                s = pd.to_datetime(out[col], errors="ignore")
+                if hasattr(s, "dt"):
+                    out[col] = s.dt.strftime(DATE_FMT)
         except Exception:
             pass
     out = out.replace({np.nan: ""})
-    for col in out.columns:
-        out[col] = out[col].astype(str).replace({"NaT":"","nan":"","NaN":""})
+    for c in out.columns:
+        out[c] = out[c].astype(str).replace({"NaT": "", "nan": "", "NaN": ""})
     return out
 
-def _switch_to_tab_by_text(partial_label: str):
-    components.html(
-        f"""
-        <script>
-        const wanted = {json.dumps(partial_label)};
-        function clickTab(){{
-          const root = window.parent.document;
-          const tabs = root.querySelectorAll('button[role="tab"]');
-          for (const t of tabs) {{
-            if ((t.innerText||"").trim().includes(wanted)) {{ t.click(); return; }}
-          }}
-          setTimeout(clickTab,60);
-        }}
-        clickTab();
-        </script>
-        """, height=0
-    )
-
-# ============================
-# HEADER
-# ============================
-def show_header():
-    c_logo, c_text = st.columns([0.16, 0.84])
-    with c_logo:
-        st.markdown(logo_html(LOGO_FILE, LOGO_WIDTH_PX, LOGO_HEIGHT_PX, LOGO_ALT_EMOJI),
-                    unsafe_allow_html=True)
-    with c_text:
-        st.markdown(
-            f"<h1 class='brand-title'>{APP_TITLE}</h1>"
-            f"<div class='brand-tag'>{APP_TAGLINE}</div>",
-            unsafe_allow_html=True
-        )
-    _, btn = st.columns([0.85, 0.15])
-    with btn:
-        st.markdown("<div class='logout-col logout-row'>", unsafe_allow_html=True)
-        if st.session_state.get("authenticated"):
-            if st.button("Logout", use_container_width=True):
-                for k in ("authenticated","role","username"):
-                    st.session_state[k] = "" if k=="username" else False if k=="authenticated" else None
-                clear_auth_query_params()
-                st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-    st.markdown('<div class="header-divider"></div>', unsafe_allow_html=True)
-
-show_header()
-
-# ============================
-# INVENTORY COLUMNS
-# ============================
-HW_COLUMNS = [
-    "Serial Number","Device Type","Brand","Model","CPU",
-    "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size"
-]
-META_COLUMNS = [
-    "USER","Previous User","TO","Department","Email Address",
-    "Contact Number","Location","Office","Notes","Date issued","Registered by"
-]
-ALL_INVENTORY_COLUMNS = HW_COLUMNS + META_COLUMNS
-
-# ============================
-# GOOGLE SHEETS HELPERS (visible error if not configured)
-# ============================
-def _secrets_ok() -> bool:
-    has_creds  = "gcp_service_account" in st.secrets
-    has_target = bool(SHEET_URL or SHEET_ID or SHEET_NAME)
-    return has_creds and has_target
-
-if not _secrets_ok():
-    st.error("Missing Sheets config: add 'gcp_service_account' and ONE of 'sheet_url' / 'sheet_id' / 'sheet_name' to Secrets. "
-             "Also share the sheet with the service account as Editor.")
-    st.stop()
-
-def _gs_client():
-    return gspread.service_account_from_dict(st.secrets["gcp_service_account"])
-
-def _open_spreadsheet(gc):
-    if SHEET_URL:
-        return gc.open_by_url(SHEET_URL)
-    if SHEET_ID:
-        return gc.open_by_key(SHEET_ID)
-    if SHEET_NAME:
-        return gc.open(SHEET_NAME)
-    raise RuntimeError("No sheet_url / sheet_id / sheet_name provided.")
-
-def _gs_ws(name: str):
-    sh = _open_spreadsheet(_gs_client())
-    try:
-        return sh.worksheet(name)
-    except gspread.WorksheetNotFound:
-        return sh.add_worksheet(title=name, rows=2000, cols=50)
-
-def _ensure_headers(ws, headers):
-    vals = ws.get_all_values()
-    if not vals:
-        ws.update("A1", [headers])
-
-def _read_sheet(name: str, expected_cols: list[str]) -> pd.DataFrame:
-    ws = _gs_ws(name)
-    _ensure_headers(ws, expected_cols)
-    df = get_as_dataframe(ws, evaluate_formulas=True, header=0, dtype=str)
-    if df is None:
-        df = pd.DataFrame(columns=expected_cols)
-    for c in expected_cols:
-        if c not in df.columns: df[c] = ""
-    df = df[expected_cols + [c for c in df.columns if c not in expected_cols]]
-    return df.fillna("")
-
-def _write_sheet(name: str, df: pd.DataFrame):
-    ws = _gs_ws(name)
-    ws.clear()
-    set_with_dataframe(ws, df, include_index=False, include_column_header=True)
-
-def load_inventory() -> pd.DataFrame:
-    return _read_sheet(INVENTORY_SHEET, ALL_INVENTORY_COLUMNS)
-
-def save_inventory(df: pd.DataFrame):
-    _write_sheet(INVENTORY_SHEET, df)
-
-def load_transfer_log() -> pd.DataFrame:
-    cols = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
-    return _read_sheet(TRANSFERLOG_SHEET, cols)
-
-def save_transfer_log(df: pd.DataFrame):
-    _write_sheet(TRANSFERLOG_SHEET, df)
-
-# ============================
-# AUTH (simple login)
-# ============================
-if not st.session_state.get("authenticated", False):
-    st.subheader("Sign in")
-    in_user = st.text_input("Username", placeholder="your.username")
-    in_pass = st.text_input("Password", type="password", placeholder="••••••••")
-    if st.button("Login", type="primary"):
-        role = None
-        for u in USERS:
-            if u.get("username")==in_user and u.get("password")==in_pass:
-                role = u.get("role"); break
-        if role:
-            st.session_state["authenticated"] = True
-            st.session_state["role"] = role
-            st.session_state["username"] = in_user
-            set_auth_query_params(in_user)
-            st.rerun()
-        else:
-            st.error("❌ Invalid username or password")
-    st.stop()
-
-# ============================
+# -----------------------------
 # TABS
-# ============================
-tabs = ["📝 Register Inventory","📦 View Inventory","🔄 Transfer Device","📜 View Transfer Log"]
-if st.session_state.get("role") == "admin":
-    tabs.append("⬇ Export Files")
-tab_objects = st.tabs(tabs)
+# -----------------------------
+tabs = st.tabs(["📝 Register", "📦 View Inventory", "🔄 Transfer Device", "📜 Transfer Log", "⬇ Export"])
 
-_target = st.session_state.pop("__jump_to_tab__", None)
-if _target: _switch_to_tab_by_text(_target)
-
-# TAB 1 — Register
-with tab_objects[0]:
+# 1) Register
+with tabs[0]:
     st.subheader("Register New Inventory Item")
-    with st.form("register_inventory_form", clear_on_submit=False):
+    with st.form("reg_form", clear_on_submit=False):
         c1, c2 = st.columns(2)
         with c1:
-            r_serial = st.text_input("Serial Number *")
-            r_device = st.text_input("Device Type *")
-            r_brand  = st.text_input("Brand")
-            r_model  = st.text_input("Model")
-            r_cpu    = st.text_input("CPU")
+            serial = st.text_input("Serial Number *")
+            device = st.text_input("Device Type *")
+            brand  = st.text_input("Brand")
+            model  = st.text_input("Model")
+            cpu    = st.text_input("CPU")
         with c2:
-            r_hdd1   = st.text_input("Hard Drive 1")
-            r_hdd2   = st.text_input("Hard Drive 2")
-            r_mem    = st.text_input("Memory")
-            r_gpu    = st.text_input("GPU")
-            r_screen = st.text_input("Screen Size")
+            hdd1   = st.text_input("Hard Drive 1")
+            hdd2   = st.text_input("Hard Drive 2")
+            mem    = st.text_input("Memory")
+            gpu    = st.text_input("GPU")
+            screen = st.text_input("Screen Size")
         submitted = st.form_submit_button("Save Item")
+
     if submitted:
-        item = {
-            "Serial Number": r_serial.strip(),
-            "Device Type":   r_device.strip(),
-            "Brand":         r_brand.strip(),
-            "Model":         r_model.strip(),
-            "CPU":           r_cpu.strip(),
-            "Hard Drive 1":  r_hdd1.strip(),
-            "Hard Drive 2":  r_hdd2.strip(),
-            "Memory":        r_mem.strip(),
-            "GPU":           r_gpu.strip(),
-            "Screen Size":   r_screen.strip(),
-            "USER": "", "Previous User":"", "TO":"",
-            "Department":"", "Email Address":"", "Contact Number":"",
-            "Location":"", "Office":"", "Notes":"",
-            "Date issued": datetime.now().strftime(DATE_FMT),
-            "Registered by": st.session_state.get("username",""),
-        }
-        inv = load_inventory()
-        serial = item["Serial Number"]
-        if not serial:
-            st.error("Serial Number is required.")
-        elif serial in inv["Serial Number"].astype(str).values:
-            st.error(f"Serial Number '{serial}' already exists.")
+        if not serial.strip() or not device.strip():
+            st.error("Serial Number and Device Type are required.")
         else:
-            inv = pd.concat([inv, pd.DataFrame([item])], ignore_index=True)
-            save_inventory(inv)
-            st.success("✅ Saved to Google Sheets.")
-            st.session_state["__jump_to_tab__"] = "View Inventory"
-            st.rerun()
+            inv = load_ws(INVENTORY_WS, ALL_COLS)
+            if serial.strip() in inv["Serial Number"].astype(str).values:
+                st.error(f"Serial Number '{serial}' already exists.")
+            else:
+                row = {
+                    "Serial Number": serial.strip(),
+                    "Device Type": device.strip(),
+                    "Brand": brand.strip(),
+                    "Model": model.strip(),
+                    "CPU": cpu.strip(),
+                    "Hard Drive 1": hdd1.strip(),
+                    "Hard Drive 2": hdd2.strip(),
+                    "Memory": mem.strip(),
+                    "GPU": gpu.strip(),
+                    "Screen Size": screen.strip(),
+                    # meta defaults
+                    "USER": "", "Previous User": "", "TO": "",
+                    "Department": "", "Email Address": "", "Contact Number": "",
+                    "Location": "", "Office": "", "Notes": "",
+                    "Date issued": datetime.now().strftime(DATE_FMT),
+                    "Registered by": "system",
+                }
+                inv = pd.concat([inv, pd.DataFrame([row])], ignore_index=True)
+                save_ws(INVENTORY_WS, inv)
+                st.success("✅ Saved to Google Sheets.")
 
-# TAB 2 — View
-with tab_objects[1]:
+# 2) View inventory
+with tabs[1]:
     st.subheader("Current Inventory")
-    df_inventory = load_inventory()
-    if "Date issued" in df_inventory.columns:
-        _ts = pd.to_datetime(df_inventory["Date issued"], errors="coerce")
-        df_inventory = (
-            df_inventory.assign(_ts=_ts)
-                        .sort_values("_ts", ascending=False, na_position="last")
-                        .drop(columns="_ts")
-        )
-    st.dataframe(for_display(df_inventory), use_container_width=True) \
-        if st.session_state.get("role")=="admin" else st.table(for_display(df_inventory))
+    inv = load_ws(INVENTORY_WS, ALL_COLS)
+    if "Date issued" in inv.columns:
+        _ts = pd.to_datetime(inv["Date issued"], errors="coerce")
+        inv = inv.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
+    st.dataframe(nice_display(inv), use_container_width=True)
 
-# TAB 3 — Transfer (only Serial Number + New Owner)
-with tab_objects[2]:
+# 3) Transfer device (just Serial + New Owner; the rest auto)
+with tabs[2]:
     st.subheader("Register Ownership Transfer")
 
-    df_inventory = load_inventory()
+    inv = load_ws(INVENTORY_WS, ALL_COLS)
+    serials = sorted(inv["Serial Number"].astype(str).dropna().unique().tolist())
+    pick = st.selectbox("Serial Number", ["— Select —"] + serials)
+    chosen_serial = None if pick == "— Select —" else pick
 
-    serial_options = sorted(df_inventory["Serial Number"].astype(str).dropna().unique().tolist())
-    sentinel = "— Select Serial Number —"
-    pick = st.selectbox("Serial Number", [sentinel] + serial_options, help="Start typing to filter the list.")
-    serial_number = None if pick == sentinel else pick
-
-    match = pd.DataFrame(); idx = None
-    if serial_number:
-        m = df_inventory["Serial Number"].astype(str).str.strip() == str(serial_number).strip()
-        idxs = df_inventory.index[m]
-        if len(idxs) > 0:
-            idx = idxs[0]; match = df_inventory.loc[[idx]]
-
-    if not match.empty:
-        row = match.iloc[0]
-        st.caption(f"Device: {row.get('Device Type','')} • Brand: {row.get('Brand','')} • Model: {row.get('Model','')} • CPU: {row.get('CPU','')}")
-    elif serial_number:
-        st.warning("Selected serial not found.")
+    if chosen_serial:
+        row = inv[inv["Serial Number"].astype(str) == chosen_serial]
+        if not row.empty:
+            r = row.iloc[0]
+            st.caption(f"Device: {r.get('Device Type','')} • Brand: {r.get('Brand','')} • Model: {r.get('Model','')} • CPU: {r.get('CPU','')}")
+        else:
+            st.warning("Serial not found in inventory.")
 
     new_owner = st.text_input("New Owner (required)")
-    submit_transfer = st.button("Transfer Now", type="primary", disabled=not (serial_number and new_owner.strip()))
+    do_transfer = st.button("Transfer Now", type="primary", disabled=not (chosen_serial and new_owner.strip()))
 
-    if submit_transfer:
-        if match.empty:
-            st.error(f"Device with Serial Number {serial_number} not found!")
+    if do_transfer:
+        idx_list = inv.index[inv["Serial Number"].astype(str) == chosen_serial].tolist()
+        if not idx_list:
+            st.error(f"Device with Serial Number {chosen_serial} not found!")
         else:
-            prev_user = str(df_inventory.loc[idx,"USER"]) if "USER" in df_inventory.columns else ""
+            idx = idx_list[0]
+            prev_user = inv.loc[idx, "USER"]
 
-            # Move current user -> Previous User
-            if "Previous User" in df_inventory.columns: df_inventory.loc[idx,"Previous User"] = prev_user
-            # Set new owner
-            if "USER" in df_inventory.columns: df_inventory.loc[idx,"USER"] = new_owner.strip()
-            if "TO" in df_inventory.columns:   df_inventory.loc[idx,"TO"]   = new_owner.strip()
-            # Stamp time and registrar
-            if "Date issued" in df_inventory.columns: df_inventory.loc[idx,"Date issued"] = datetime.now().strftime(DATE_FMT)
-            if "Registered by" in df_inventory.columns: df_inventory.loc[idx,"Registered by"] = st.session_state.get("username","")
+            inv.loc[idx, "Previous User"] = str(prev_user or "")
+            inv.loc[idx, "USER"] = new_owner.strip()
+            inv.loc[idx, "TO"] = new_owner.strip()
+            inv.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
+            inv.loc[idx, "Registered by"] = "system"
 
-            # Log it
-            df_log = load_transfer_log()
-            device_type = df_inventory.loc[idx,"Device Type"] if "Device Type" in df_inventory.columns else ""
-            log_entry = {
-                "Device Type": device_type,
-                "Serial Number": serial_number,
-                "From owner": prev_user,
+            # Log the transfer
+            log = load_ws(TRANSFERLOG_WS, ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"])
+            log_row = {
+                "Device Type": inv.loc[idx, "Device Type"],
+                "Serial Number": chosen_serial,
+                "From owner": str(prev_user or ""),
                 "To owner": new_owner.strip(),
                 "Date issued": datetime.now().strftime(DATE_FMT),
-                "Registered by": st.session_state.get("username",""),
+                "Registered by": "system",
             }
-            df_log = pd.concat([df_log, pd.DataFrame([log_entry])], ignore_index=True)
+            log = pd.concat([log, pd.DataFrame([log_row])], ignore_index=True)
 
-            save_inventory(df_inventory)
-            save_transfer_log(df_log)
-
+            save_ws(INVENTORY_WS, inv)
+            save_ws(TRANSFERLOG_WS, log)
             st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
 
-# TAB 4 — Transfer Log
-with tab_objects[3]:
-    st.subheader("Transfer Log History")
-    df_log = load_transfer_log()
-    if "Date issued" in df_log.columns:
-        _ts = pd.to_datetime(df_log["Date issued"], errors="coerce")
-        df_log = df_log.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
-    st.dataframe(for_display(df_log), use_container_width=True) \
-        if st.session_state.get("role")=="admin" else st.table(for_display(df_log))
+# 4) View transfer log
+with tabs[3]:
+    st.subheader("Transfer Log")
+    log = load_ws(TRANSFERLOG_WS, ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"])
+    if "Date issued" in log.columns:
+        _ts = pd.to_datetime(log["Date issued"], errors="coerce")
+        log = log.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
+    st.dataframe(nice_display(log), use_container_width=True)
 
-# TAB 5 — Export (Admins)
-if st.session_state.get("role")=="admin" and len(tab_objects)>4:
-    with tab_objects[4]:
-        st.subheader("Download Updated Files")
+# 5) Export
+with tabs[4]:
+    st.subheader("Download Exports")
+    # Inventory
+    inv = load_ws(INVENTORY_WS, ALL_COLS)
+    inv_x = BytesIO()
+    with pd.ExcelWriter(inv_x, engine="openpyxl") as w:
+        inv.to_excel(w, index=False)
+    inv_x.seek(0)
+    st.download_button("⬇ Download Inventory", inv_x.getvalue(),
+                       file_name="inventory.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-        # Inventory export
-        df_inventory = load_inventory()
-        out_inv = BytesIO()
-        with pd.ExcelWriter(out_inv, engine="openpyxl") as w:
-            df_inventory.to_excel(w, index=False)
-        out_inv.seek(0)
-        st.download_button("⬇ Download Inventory", out_inv.getvalue(),
-                           file_name="inventory_export.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-        # Transfer log export
-        df_log = load_transfer_log()
-        out_log = BytesIO()
-        with pd.ExcelWriter(out_log, engine="openpyxl") as w:
-            df_log.to_excel(w, index=False)
-        out_log.seek(0)
-        st.download_button("⬇ Download Transfer Log", out_log.getvalue(),
-                           file_name="transfer_log_export.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    # Log
+    log = load_ws(TRANSFERLOG_WS, ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"])
+    log_x = BytesIO()
+    with pd.ExcelWriter(log_x, engine="openpyxl") as w:
+        log.to_excel(w, index=False)
+    log_x.seek(0)
+    st.download_button("⬇ Download Transfer Log", log_x.getvalue(),
+                       file_name="transfer_log.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
