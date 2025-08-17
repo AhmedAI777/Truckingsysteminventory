@@ -6,32 +6,19 @@ import pandas as pd
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
-# -----------------------------
-# BASIC SETTINGS
-# -----------------------------
 APP_TITLE   = "Tracking Inventory Management System"
 SUBTITLE    = "AdvancedConstruction"
 DATE_FMT    = "%Y-%m-%d %H:%M:%S"
 
-# Worksheet (tab) names — override via secrets if you want
 INVENTORY_WS   = (st.secrets.get("inventory_tab", "truckinventory") or "").strip()
 TRANSFERLOG_WS = (st.secrets.get("transferlog_tab", "transferlog") or "").strip()
 
-
-# -----------------------------
-# PAGE HEADER
-# -----------------------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
-# -----------------------------
-# GOOGLE SHEETS CONNECTION
-# -----------------------------
-# .streamlit/secrets.toml must contain:
-# [connections.gsheets]
-# type = "gspread"  # or "public" if you published the sheet
-spreadsheet = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit?gid=405007082#gid=405007082"
+# ✅ Correct: pass the CLASS, not a number
 conn = st.connection("gsheets", type=GSheetsConnection)
+)
 
 
 # -----------------------------
