@@ -1,3 +1,5 @@
+
+
 ----------------------------------------------------------------------------------------
 import os
 from io import BytesIO
@@ -15,28 +17,85 @@ APP_TITLE   = "Tracking Inventory Management System"
 SUBTITLE    = "AdvancedConstruction"
 DATE_FMT    = "%Y-%m-%d %H:%M:%S"
 
-# Read spreadsheet url and tab names (worksheets) from secrets (with fallbacks)
-SPREADSHEET_URL = st.secrets.get(
-    "connections", {}
-).get("gsheets", {}).get(
-    "spreadsheet",
-    "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
-)
 
+
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import streamlit as st
+from io import BytesIO
+from streamlit_gsheets import GSheetsConnection
+
+DATE_FMT = "%Y-%m-%d %H:%M:%S"
+
+# worksheet names (or read from secrets like you did)
 INVENTORY_WS   = st.secrets.get("inventory_tab", "truckinventory")
 TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transferlog")
 
-# Inventory columns (hardware + meta)
-HW_COLS = [
-    "Serial Number", "Device Type", "Brand", "Model", "CPU",
-    "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
-]
-META_COLS = [
-    "USER", "Previous User", "TO",
-    "Department", "Email Address", "Contact Number", "Location", "Office", "Notes",
-    "Date issued", "Registered by",
-]
-ALL_COLS = HW_COLS + META_COLS
+conn = st.connection("gsheets", type=GSheetsConnection)
+
+def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(columns=cols)
+    df = df.fillna("")
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
+    return df[cols + [c for c in df.columns if c not in cols]]
+
+def load_ws(worksheet: str, cols: list[str]) -> pd.DataFrame:
+    return _ensure_cols(conn.read(worksheet=worksheet, ttl=0), cols)
+
+def save_ws(worksheet: str, df: pd.DataFrame) -> None:
+    conn.update(worksheet=worksheet, data=df)
+
+# Example: read inventory
+ALL_COLS = ["Serial Number","Device Type","Brand","Model","CPU",
+            "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
+            "USER","Previous User","TO","Department","Email Address",
+            "Contact Number","Location","Office","Notes","Date issued","Registered by"]
+
+inv = load_ws(INVENTORY_WS, ALL_COLS)
+st.dataframe(inv)
+
+# Example: append one new row
+if st.button("Add sample row"):
+    row = {c:"" for c in ALL_COLS}
+    row["Serial Number"] = "TEST-123"
+    row["Device Type"]   = "Desktop"
+    row["Date issued"]   = datetime.now().strftime(DATE_FMT)
+    inv = pd.concat([inv, pd.DataFrame([row])], ignore_index=True)
+    save_ws(INVENTORY_WS, inv)
+    st.success("Added.")
+
+
+
+
+
+
+
+# # Read spreadsheet url and tab names (worksheets) from secrets (with fallbacks)
+# SPREADSHEET_URL = st.secrets.get(
+#     "connections", {}
+# ).get("gsheets", {}).get(
+#     "spreadsheet",
+#     "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
+# )
+
+# INVENTORY_WS   = st.secrets.get("inventory_tab", "truckinventory")
+# TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transferlog")
+
+# # Inventory columns (hardware + meta)
+# HW_COLS = [
+#     "Serial Number", "Device Type", "Brand", "Model", "CPU",
+#     "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
+# ]
+# META_COLS = [
+#     "USER", "Previous User", "TO",
+#     "Department", "Email Address", "Contact Number", "Location", "Office", "Notes",
+#     "Date issued", "Registered by",
+# ]
+# ALL_COLS = HW_COLS + META_COLS
 
 # -----------------------------
 # PAGE / HEADER
