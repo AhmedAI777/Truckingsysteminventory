@@ -496,87 +496,71 @@
 #         )
 # app.py
 
+# app.py
+
 import os
 from io import BytesIO
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 
 import numpy as np
 import pandas as pd
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
-
 # =============================================================================
 # BASIC APP SETTINGS
 # =============================================================================
 APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE  = "AdvancedConstruction"
-DATE_FMT  = "%Y-%m-%d %H:%M:%S"   # we’ll format/parse date columns with this
-
-# Use a custom font if you add the file next to app.py, otherwise fall back
-CUSTOM_FONT = "FounderGroteskCondensed-Regular.otf"
-HAS_FONT = os.path.exists(CUSTOM_FONT)
+DATE_FMT  = "%Y-%m-%d %H:%M:%S"   # storage/display format used by the app
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
-# Optional CSS: custom font + staff toolbar hide + small UI polish
-css_chunks = []
-
-if HAS_FONT:
-    css_chunks.append(f"""
-    @font-face {{
-        font-family: 'AGrotesk';
-        src: url('{CUSTOM_FONT}') format('opentype');
-        font-weight: normal;
-        font-style: normal;
-        font-display: swap;
-    }}
-    html, body, [class*="css"] {{
-        font-family: 'AGrotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI',
-                     Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans',
-                     'Helvetica Neue', Arial, sans-serif;
-        letter-spacing: .2px;
-    }}
-    """)
-# Generic polish
-css_chunks.append("""
-/* tighten the page a bit */
-section.main > div { padding-top: 0.5rem; }
-
-/* nicer tab row spacing */
-[data-baseweb="tab-border"] { margin-top: .25rem; }
-
-/* logout button alignment helper */
-.header-right { display: flex; align-items: center; gap: .75rem; justify-content: flex-end; }
-
-/* reduce dataframe outer padding a bit */
-div[data-testid="stDataFrame"] { margin-top: .5rem; }
-""")
-
-st.markdown("<style>" + "\n".join(css_chunks) + "</style>", unsafe_allow_html=True)
-
+# --- Optional: custom font (if file exists) ----------------------------------
+# Put the font at ./fonts/FounderGroteskCondensed-Regular.otf
+FONT_PATH = os.path.join("fonts", "FounderGroteskCondensed-Regular.otf")
+if os.path.exists(FONT_PATH):
+    st.markdown(
+        f"""
+        <style>
+        @font-face {{
+          font-family: 'AdvGrotesk';
+          src: url('{FONT_PATH}') format('opentype');
+          font-weight: normal; font-style: normal;
+        }}
+        html, body, [class^="css"], .stButton button, .stSelectbox, .stTextInput, .stDataFrame {{
+          font-family: 'AdvGrotesk', system-ui, -apple-system, Segoe UI, Roboto, sans-serif !important;
+          letter-spacing: .1px;
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
 # =============================================================================
-# AUTH SETUP (simple in-memory)
+# AUTH / USERS
 # =============================================================================
 DEFAULT_ADMIN_PW = "admin@2025"
 DEFAULT_STAFF_PW = "staff@2025"
 
-ADMINS: Dict[str, str] = {}
-STAFFS: Dict[str, str] = {}
+def _from_secrets() -> tuple[Dict[str, str], Dict[str, str]]:
+    admins = {}
+    staff  = {}
+    try:
+        admins = dict(getattr(st.secrets, "auth", {}).get("admins", {}))
+        staff  = dict(getattr(st.secrets, "auth", {}).get("staff", {}))
+    except Exception:
+        pass
+    return admins, staff
 
-if hasattr(st, "secrets") and "auth" in st.secrets:
-    ADMINS = dict(st.secrets["auth"].get("admins", {}))
-    STAFFS = dict(st.secrets["auth"].get("staff", {}))
-
-# If nothing in secrets, create 5 admin / 15 staff placeholders
+ADMINS, STAFFS = _from_secrets()
 if not ADMINS:
-    ADMINS = {f"admin{i}": DEFAULT_ADMIN_PW for i in range(1, 6)}
+    ADMINS = {f"admin{i}": DEFAULT_ADMIN_PW for i in range(1, 6)}      # 5 admin users
 if not STAFFS:
-    STAFFS = {f"staff{i}": DEFAULT_STAFF_PW for i in range(1, 16)}
+    STAFFS = {f"staff{i}": DEFAULT_STAFF_PW for i in range(1, 16)}      # 15 staff users
 
-def authenticate(username: str, password: str):
+def authenticate(username: str, password: str) -> Optional[str]:
     if username in ADMINS and ADMINS[username] == password:
         return "admin"
     if username in STAFFS and STAFFS[username] == password:
@@ -584,25 +568,27 @@ def authenticate(username: str, password: str):
     return None
 
 def ensure_auth():
-    """Gate until authenticated; keep state unless user logs out."""
+    """Show a login screen until the user is signed in."""
     if "auth_user" not in st.session_state:
         st.session_state.auth_user = None
         st.session_state.auth_role = None
 
     if st.session_state.auth_user and st.session_state.auth_role:
-        return True  # already logged in this session
+        return  # already logged in
 
-    # Centered login screen
-    col = st.columns([1, 2, 1])[1]
-    with col:
-        st.image("company_logo.jpeg", use_container_width=True) if os.path.exists("company_logo.jpeg") else None
+    # Centered login UI
+    left, mid, right = st.columns([1, 2, 1])
+    with mid:
+        st.image("company_logo.jpeg", width=110) if os.path.exists("company_logo.jpeg") else None
         st.markdown(f"## {APP_TITLE}")
         st.caption(SUBTITLE)
+
         with st.form("login_form", clear_on_submit=False):
             u = st.text_input("Username")
             p = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Login", type="primary")
-        if submitted:
+            ok = st.form_submit_button("Sign in", type="primary")
+
+        if ok:
             role = authenticate(u.strip(), p)
             if role:
                 st.session_state.auth_user = u.strip()
@@ -610,33 +596,49 @@ def ensure_auth():
                 st.rerun()
             else:
                 st.error("Invalid username or password.")
-    st.stop()
+        st.stop()
 
+def logout_button():
+    col = st.columns([1, 1, 6, 1])[3]
+    with col:
+        if st.button("Logout"):
+            for k in ("auth_user", "auth_role"):
+                st.session_state.pop(k, None)
+            st.rerun()
 
 # =============================================================================
 # GOOGLE SHEETS CONNECTION
 # =============================================================================
-# .streamlit/secrets.toml expected:
+# Preferred way: set this in .streamlit/secrets.toml:
 # [connections.gsheets]
-# spreadsheet = "https://docs.google.com/spreadsheets/d/XXXX/edit"
+# spreadsheet = "https://docs.google.com/spreadsheets/d/XXXXXXXXXXXXXXX/edit"
 SPREADSHEET = (
-    getattr(getattr(st, "secrets", {}), "connections", {})
-        .get("gsheets", {})
-        .get("spreadsheet")
+    getattr(getattr(st, "secrets", None), "connections", {})
+    .get("gsheets", {})
+    .get("spreadsheet")
 )
+
 if not SPREADSHEET:
+    # Fallback to your provided sheet
     SPREADSHEET = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
-# Worksheet identifiers (tab name or GID-as-string)
-INVENTORY_WS   = str(st.secrets.get("inventory_tab", "0"))         # first sheet (gid "0")
+# Tabs / gid for your sheets
+INVENTORY_WS   = str(st.secrets.get("inventory_tab", "0"))          # gid "0"
 TRANSFERLOG_WS = str(st.secrets.get("transferlog_tab", "405007082"))
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# =============================================================================
+# DATA HELPERS
+# =============================================================================
+ALL_COLS = [
+    "Serial Number","Device Type","Brand","Model","CPU",
+    "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
+    "USER","Previous User","TO","Department","Email Address",
+    "Contact Number","Location","Office","Notes","Date issued","Registered by"
+]
+LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 
-# =============================================================================
-# HELPERS
-# =============================================================================
 def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame(columns=cols)
@@ -646,23 +648,25 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
             df[c] = ""
     return df[cols + [c for c in df.columns if c not in cols]]
 
+def parse_dates(series: pd.Series) -> pd.Series:
+    """Parse dates primarily with DATE_FMT; fall back to generic parsing."""
+    s = pd.to_datetime(series, format=DATE_FMT, errors="coerce")
+    if s.isna().all():
+        # Fallback if the sheet holds different formats
+        s = pd.to_datetime(series, errors="coerce")
+    return s
+
 def nice_display(df: pd.DataFrame) -> pd.DataFrame:
-    """Stringify + format any *date*-like columns with fixed DATE_FMT."""
     if df is None or df.empty:
         return df
     out = df.copy()
     for col in out.columns:
-        lc = col.lower()
-        # format any column that looks like a date/time
-        if "date" in lc or "issued" in lc or "time" in lc:
-            try:
-                s = pd.to_datetime(out[col], format=DATE_FMT, errors="coerce")
-                out[col] = s.dt.strftime(DATE_FMT)
-            except Exception:
-                # fallback with coercion if formats vary wildly
-                s = pd.to_datetime(out[col], errors="coerce")
-                out[col] = s.dt.strftime(DATE_FMT)
-    out = out.replace({np.nan: ""}).astype(str).replace({"NaT": ""})
+        if "date" in col.lower():
+            s = parse_dates(out[col])
+            out[col] = s.dt.strftime(DATE_FMT).replace("NaT", "")
+    out = out.replace({np.nan: ""})
+    for c in out.columns:
+        out[c] = out[c].astype(str).replace({"NaT": "", "nan": "", "NaN": ""})
     return out
 
 def read_ws(worksheet: str, cols: list[str], ttl: int = 0) -> pd.DataFrame:
@@ -675,81 +679,58 @@ def safe_read_ws(worksheet: str, cols: list[str], label: str, ttl: int = 0) -> p
     except Exception as e:
         st.warning(
             f"Couldn’t read **{label}** from Google Sheets. "
-            f"Check sharing, tab name (or gid), or publishing. Error: {type(e).__name__}"
+            f"Check sharing, tab name/gid, or publishing. Error: {type(e).__name__}"
         )
         return _ensure_cols(None, cols)
 
 def write_ws(worksheet: str, df: pd.DataFrame):
     conn.update(spreadsheet=SPREADSHEET, worksheet=worksheet, data=df)
 
-def logout_button():
-    if st.button("Logout"):
-        for k in ("auth_user", "auth_role"):
-            st.session_state.pop(k, None)
-        st.rerun()
-
-
-# =============================================================================
-# DATA MODEL (columns)
-# =============================================================================
-ALL_COLS = [
-    "Serial Number","Device Type","Brand","Model","CPU",
-    "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
-    "USER","Previous User","TO","Department","Email Address",
-    "Contact Number","Location","Office","Notes","Date issued","Registered by"
-]
-LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
-
+def sort_by_date(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
+    if df is None or df.empty or date_col not in df.columns:
+        return df
+    ts = parse_dates(df[date_col])
+    return (
+        df.assign(_ts=ts)
+          .sort_values(by="_ts", ascending=False, na_position="last")
+          .drop(columns="_ts")
+    )
 
 # =============================================================================
-# MAIN
+# MAIN UI
 # =============================================================================
 ensure_auth()
 USER = st.session_state.auth_user
 ROLE = st.session_state.auth_role
 IS_ADMIN = ROLE == "admin"
 
-# Hide table toolbars for STAFF (eye/download/fullscreen)
+# Hide DataFrame toolbars (eye/download/fullscreen) for staff only
 if not IS_ADMIN:
     st.markdown("""
         <style>
-        div[data-testid="stDataFrame"] div[data-testid="stElementToolbar"] { display:none !important; }
-        div[data-testid="stDataEditor"]  div[data-testid="stElementToolbar"] { display:none !important; }
+        div[data-testid="stDataFrame"] div[data-testid="stElementToolbar"] {display:none !important;}
+        div[data-testid="stDataEditor"] div[data-testid="stElementToolbar"] {display:none !important;}
         </style>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
-# ----------------------------- Header area
-left, right = st.columns([7, 5])
-with left:
-    # logo + title
-    lc1, lc2 = st.columns([1, 9])
-    with lc1:
-        if os.path.exists("company_logo.jpeg"):
-            st.image("company_logo.jpeg", use_container_width=True)
-    with lc2:
-        st.markdown(f"## {APP_TITLE}")
-        st.caption(SUBTITLE)
-
-with right:
-    st.markdown(f"""
-    <div class="header-right">
-      <div>
-        <div><strong>Welcome, {USER}</strong></div>
-        <div>Role: <em>{ROLE.capitalize()}</em></div>
-      </div>
-      <div>
-    """, unsafe_allow_html=True)
+# Header: logo + title (left), user area (right)
+header_l, header_r = st.columns([3, 2])
+with header_l:
+    if os.path.exists("company_logo.jpeg"):
+        st.image("company_logo.jpeg", width=110)
+    st.markdown(f"## {APP_TITLE}")
+    st.caption(SUBTITLE)
+with header_r:
+    st.markdown(f"### Welcome, **{USER}**")
+    st.caption(f"Role: **{ROLE.capitalize()}**")
     logout_button()
-    st.markdown("</div></div>", unsafe_allow_html=True)
-
 st.markdown("---")
 
-# Tabs per role
+# Tabs
 if IS_ADMIN:
     tabs = st.tabs(["📝 Register", "📦 View Inventory", "🔄 Transfer Device", "📜 Transfer Log", "⬇ Export"])
 else:
     tabs = st.tabs(["📦 View Inventory", "🔄 Transfer Device", "📜 Transfer Log"])
-
 
 # ----------------------------- Admin: Register
 if IS_ADMIN:
@@ -800,23 +781,18 @@ if IS_ADMIN:
                     write_ws(INVENTORY_WS, inv)
                     st.success("✅ Saved to Google Sheets.")
 
-
 # ----------------------------- View Inventory
 view_tab_index = 1 if IS_ADMIN else 0
 with tabs[view_tab_index]:
     st.subheader("Current Inventory")
     inv = safe_read_ws(INVENTORY_WS, ALL_COLS, "inventory", ttl=0)
-    if not inv.empty and "Date issued" in inv.columns:
-        _ts = pd.to_datetime(inv["Date issued"], format=DATE_FMT, errors="coerce")
-        inv = inv.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
+    inv = sort_by_date(inv, "Date issued")
     st.dataframe(nice_display(inv), use_container_width=True, hide_index=True)
-
 
 # ----------------------------- Transfer Device
 transfer_tab_index = 2 if IS_ADMIN else 1
 with tabs[transfer_tab_index]:
     st.subheader("Register Ownership Transfer")
-
     inv = safe_read_ws(INVENTORY_WS, ALL_COLS, "inventory")
     serials = sorted(inv["Serial Number"].astype(str).dropna().unique().tolist())
     pick = st.selectbox("Serial Number", ["— Select —"] + serials)
@@ -844,14 +820,14 @@ with tabs[transfer_tab_index]:
             idx = idx_list[0]
             prev_user = inv.loc[idx, "USER"]
 
-            # Update inventory row
+            # Update inventory
             inv.loc[idx, "Previous User"] = str(prev_user or "")
             inv.loc[idx, "USER"] = new_owner.strip()
             inv.loc[idx, "TO"] = new_owner.strip()
             inv.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
             inv.loc[idx, "Registered by"] = USER
 
-            # Append to transfer log
+            # Append to log
             log = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log")
             log_row = {
                 "Device Type": inv.loc[idx, "Device Type"],
@@ -863,23 +839,21 @@ with tabs[transfer_tab_index]:
             }
             log = pd.concat([log, pd.DataFrame([log_row])], ignore_index=True)
 
-            # Save
+            # Save both
             write_ws(INVENTORY_WS, inv)
             write_ws(TRANSFERLOG_WS, log)
             st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
-
 
 # ----------------------------- Transfer Log
 log_tab_index = 3 if IS_ADMIN else 2
 with tabs[log_tab_index]:
     st.subheader("Transfer Log")
     log = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log", ttl=0)
+    log = sort_by_date(log, "Date issued")
+    # Clean display
     if not log.empty and "Date issued" in log.columns:
-        _ts = pd.to_datetime(log["Date issued"], format=DATE_FMT, errors="coerce")
-        log = log.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
-        log["Date issued"] = pd.to_datetime(log["Date issued"], format=DATE_FMT, errors="coerce").dt.strftime(DATE_FMT)
+        log["Date issued"] = parse_dates(log["Date issued"]).dt.strftime(DATE_FMT).replace("NaT", "")
     st.dataframe(nice_display(log), use_container_width=True, hide_index=True)
-
 
 # ----------------------------- Admin: Export
 if IS_ADMIN:
