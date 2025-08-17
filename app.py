@@ -36,16 +36,7 @@ TRANSFERLOG_WS = (st.secrets.get("transferlog_tab", "405007082") or "").strip()
 # Streamlit connection (keep this exact)
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def _ws_arg(x):
-    try:
-        return int(str(x).strip())  # gid
-    except Exception:
-        return str(x).strip()       # fallback name
 
-# examples
-# probe = conn.read(spreadsheet=SPREADSHEET, worksheet=_ws_arg(INVENTORY_WS), nrows=3, ttl=0)
-# inv   = conn.read(spreadsheet=SPREADSHEET, worksheet=_ws_arg(INVENTORY_WS), ttl=0)
-# log   = conn.read(spreadsheet=SPREADSHEET, worksheet=_ws_arg(TRANSFERLOG_WS), ttl=0)
 
 # ==============================
 # HELPERS
