@@ -6,38 +6,35 @@ import pandas as pd
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
+# -----------------------------
+# BASIC SETTINGS
+# -----------------------------
 APP_TITLE   = "Tracking Inventory Management System"
 SUBTITLE    = "AdvancedConstruction"
 DATE_FMT    = "%Y-%m-%d %H:%M:%S"
 
-# --- READ & SANITIZE WORKSHEET NAMES FROM SECRETS (trim spaces) ---
-INVENTORY_WS   = (st.secrets.get("truckingsysteminventory", "truckinventory") or "").strip()
-TRANSFERLOG_WS = (st.secrets.get("truckingsysteminventory", "transferlog") or "").strip()
+# Worksheet (tab) names — override via secrets if you want
+INVENTORY_WS   = (st.secrets.get("inventory_tab", "truckinventory") or "").strip()
+TRANSFERLOG_WS = (st.secrets.get("transferlog_tab", "transferlog") or "").strip()
 
+# -----------------------------
+# PAGE HEADER
+# -----------------------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
-# --- CONNECT ---
+# -----------------------------
+# GOOGLE SHEETS CONNECTION
+# -----------------------------
+# .streamlit/secrets.toml must contain:
+# [connections.gsheets]
+# type = "gspread"  # or "public" if you published the sheet
+# spreadsheet = "https://docs.google.com/spreadsheets/d/YOUR_ID/edit"
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- DIAGNOSTICS (keeps page rendering even on errors) ---
-with st.expander("🔍 Connection diagnostics"):
-    gs_conf = st.secrets.get("connections", {}).get("gsheets", {})
-    st.write({
-        "mode": gs_conf.get("type", "(missing)"),
-        "spreadsheet": gs_conf.get("spreadsheet", "(missing)"),
-        "INVENTORY_WS": INVENTORY_WS,
-        "TRANSFERLOG_WS": TRANSFERLOG_WS,
-    })
-    try:
-        _probe = conn.read(worksheet=INVENTORY_WS, ttl=0, nrows=3)  # small probe
-        st.write("Inventory probe shape:", getattr(_probe, "shape", None))
-        st.dataframe(_probe)
-    except Exception as e:
-        st.error("Inventory probe failed:")
-        st.exception(e)
-
-# ---------- HELPERS ----------
+# -----------------------------
+# HELPERS
+# -----------------------------
 def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame(columns=cols)
@@ -45,7 +42,6 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     for c in cols:
         if c not in df.columns:
             df[c] = ""
-    # keep expected first, then any extra columns
     return df[cols + [c for c in df.columns if c not in cols]]
 
 def load_ws(worksheet: str, cols: list[str]) -> pd.DataFrame:
@@ -58,7 +54,7 @@ def safe_load_ws(worksheet: str, cols: list[str], label: str) -> pd.DataFrame:
     except Exception as e:
         st.warning(
             f"Couldn’t read **{label}** from Google Sheets. "
-            f"Check sharing, tab name, or publishing. Error: {type(e).__name__}"
+            f"Check secrets (spreadsheet URL), sharing, and tab name. Error: {type(e).__name__}"
         )
         st.caption(f"(worksheet requested = '{worksheet}')")
         return _ensure_cols(None, cols)
@@ -83,7 +79,9 @@ def nice_display(df: pd.DataFrame) -> pd.DataFrame:
         out[c] = out[c].astype(str).replace({"NaT": "", "nan": "", "NaN": ""})
     return out
 
-# ---------- COLUMNS & TABS ----------
+# -----------------------------
+# COLUMNS & TABS
+# -----------------------------
 ALL_COLS = [
     "Serial Number","Device Type","Brand","Model","CPU",
     "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
@@ -95,7 +93,9 @@ tab_reg, tab_inv, tab_transfer, tab_log, tab_export = st.tabs(
     ["📝 Register", "📦 View Inventory", "🔄 Transfer Device", "📜 Transfer Log", "⬇ Export"]
 )
 
-# ---------- 1) REGISTER ----------
+# -----------------------------
+# 1) REGISTER
+# -----------------------------
 with tab_reg:
     st.subheader("Register New Inventory Item")
     with st.form("reg_form", clear_on_submit=False):
@@ -143,16 +143,36 @@ with tab_reg:
                 save_ws(INVENTORY_WS, inv)
                 st.success("✅ Saved to Google Sheets.")
 
-# ---------- 2) VIEW INVENTORY ----------
+# -----------------------------
+# 2) VIEW INVENTORY
+# -----------------------------
 with tab_inv:
     st.subheader("Current Inventory")
+
+    # ---- Your requested quick-read snippet (first 6 columns) ----
+    try:
+        existing_data = conn.read(
+            worksheet=INVENTORY_WS,  # "truckinventory" by default
+            usecols=list(range(6)),  # columns A–F
+            ttl=5
+        )
+        existing_data = existing_data.dropna(how="all")
+        st.caption("Quick preview (first 6 columns):")
+        st.dataframe(existing_data, use_container_width=True)
+    except Exception as e:
+        st.info("Quick preview unavailable.")
+        st.exception(e)
+
+    # ---- Full table view (safe) ----
     inv = safe_load_ws(INVENTORY_WS, ALL_COLS, "inventory")
     if not inv.empty and "Date issued" in inv.columns:
         _ts = pd.to_datetime(inv["Date issued"], errors="coerce")
         inv = inv.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
     st.dataframe(nice_display(inv), use_container_width=True)
 
-# ---------- 3) TRANSFER DEVICE ----------
+# -----------------------------
+# 3) TRANSFER DEVICE
+# -----------------------------
 with tab_transfer:
     st.subheader("Register Ownership Transfer")
     inv = safe_load_ws(INVENTORY_WS, ALL_COLS, "inventory")
@@ -164,7 +184,8 @@ with tab_transfer:
         row = inv[inv["Serial Number"].astype(str) == chosen_serial]
         if not row.empty:
             r = row.iloc[0]
-            st.caption(f"Device: {r.get('Device Type','')} • Brand: {r.get('Brand','')} • Model: {r.get('Model','')} • CPU: {r.get('CPU','')}")
+            st.caption(f"Device: {r.get('Device Type','')} • Brand: {r.get('Brand','')} • "
+                       f"Model: {r.get('Model','')} • CPU: {r.get('CPU','')}")
         else:
             st.warning("Serial not found in inventory.")
 
@@ -200,7 +221,9 @@ with tab_transfer:
             save_ws(TRANSFERLOG_WS, log)
             st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
 
-# ---------- 4) TRANSFER LOG ----------
+# -----------------------------
+# 4) TRANSFER LOG
+# -----------------------------
 with tab_log:
     st.subheader("Transfer Log")
     log_cols = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
@@ -210,7 +233,9 @@ with tab_log:
         log = log.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
     st.dataframe(nice_display(log), use_container_width=True)
 
-# ---------- 5) EXPORT ----------
+# -----------------------------
+# 5) EXPORT
+# -----------------------------
 with tab_export:
     st.subheader("Download Exports")
 
