@@ -25,7 +25,7 @@ st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 # -----------------------------
 # Connect to Google Sheets
 # -----------------------------
-conn = st.connection("gsheets", type=GSheetsConnection)
+conn = st.connection("gsheets", type=0)
 
 # -----------------------------
 # Helpers
