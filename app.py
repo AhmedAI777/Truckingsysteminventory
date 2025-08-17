@@ -6,7 +6,7 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import streamlit as st
-from streamlit-gsheets import GSheetsConnection
+from streamlit_gsheets import GSheetsConnection
 
 # -----------------------------
 # EASY KNOBS
