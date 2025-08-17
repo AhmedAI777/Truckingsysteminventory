@@ -13,9 +13,9 @@ APP_TITLE   = "Tracking Inventory Management System"
 SUBTITLE    = "AdvancedConstruction"
 DATE_FMT    = "%Y-%m-%d %H:%M:%S"
 
-# Use your actual worksheet names from the Google Sheet
-INVENTORY_WS   = st.secrets.get("inventory_tab", "df_inventory")
-TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transfer_log")
+# Worksheet (tab) names
+INVENTORY_WS   = "truckinventory"
+TRANSFERLOG_WS = "transferlog"
 
 # -----------------------------
 # PAGE HEADER
@@ -62,13 +62,13 @@ def load_ws(worksheet: str, cols: list[str]) -> pd.DataFrame:
     df = conn.read(worksheet=worksheet, ttl=0)
     return _ensure_cols(df, cols)
 
-def safe_load_ws(worksheet: str, cols: list[str], label: str) -> pd.DataFrame:
+def safe_load_ws(worksheet: str, cols: list[str], context_label: str) -> pd.DataFrame:
     """Safe read: never breaks the app; shows a friendly message instead."""
     try:
         return load_ws(worksheet, cols)
     except Exception as e:
         st.warning(
-            f"Couldn’t read **{label}** from Google Sheets. "
+            f"Couldn’t read **{context_label}** from Google Sheets. "
             f"Check sharing, tab name, or publishing. Error: {type(e).__name__}"
         )
         return _ensure_cols(None, cols)
@@ -185,8 +185,11 @@ with tab_transfer:
             inv.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
             inv.loc[idx, "Registered by"] = "system"
 
-            log_cols = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
-            log = safe_load_ws(TRANSFERLOG_WS, log_cols, "transfer log")
+            log = safe_load_ws(
+                TRANSFERLOG_WS,
+                ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"],
+                "transfer log"
+            )
             log_row = {
                 "Device Type": inv.loc[idx, "Device Type"],
                 "Serial Number": chosen_serial,
@@ -206,8 +209,11 @@ with tab_transfer:
 # -----------------------------
 with tab_log:
     st.subheader("Transfer Log")
-    log_cols = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
-    log = safe_load_ws(TRANSFERLOG_WS, log_cols, "transfer log")
+    log = safe_load_ws(
+        TRANSFERLOG_WS,
+        ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"],
+        "transfer log"
+    )
     if not log.empty and "Date issued" in log.columns:
         _ts = pd.to_datetime(log["Date issued"], errors="coerce")
         log = log.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
@@ -230,8 +236,11 @@ with tab_export:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    log_cols = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
-    log = safe_load_ws(TRANSFERLOG_WS, log_cols, "transfer log")
+    log = safe_load_ws(
+        TRANSFERLOG_WS,
+        ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"],
+        "transfer log"
+    )
     log_x = BytesIO()
     with pd.ExcelWriter(log_x, engine="openpyxl") as w:
         log.to_excel(w, index=False)
