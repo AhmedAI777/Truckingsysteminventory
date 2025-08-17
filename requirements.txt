@@ -2,14 +2,11 @@
 streamlit>=1.35
 
 # Data handling
-streamlit>=1.36
+streamlit>=1.31
+streamlit-gsheets>=0.0.6
 pandas>=2.0
-numpy>=1.26
-gspread>=6.0
-gspread-dataframe>=3.3.1
-google-auth>=2.30
-openpyxl>=3.1.2
-GSheetsConnection
+numpy>=1.25
+openpyxl>=3.1
 
 # Google Drive integration (future-proof)
 google-api-python-client>=2.133.0
