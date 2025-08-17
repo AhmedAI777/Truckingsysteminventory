@@ -53,34 +53,12 @@ if st.button("Add sample row"):
     save_ws(INVENTORY_WS, inv)
     st.success("Added.")
 
-
-
-
-
-
-
- # Read spreadsheet url and tab names (worksheets) from secrets (with fallbacks)
  SPREADSHEET_URL = st.secrets.get(
-     "connections", {}
- ).get("gsheets", {}).get(
-     "spreadsheet",
-   "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
- )
-
- INVENTORY_WS   = st.secrets.get("inventory_tab", "truckinventory")
- TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transferlog")
-
- # Inventory columns (hardware + meta)
- HW_COLS = [
-     "Serial Number", "Device Type", "Brand", "Model", "CPU",
-     "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
- ]
- META_COLS = [
-     "USER", "Previous User", "TO",
-     "Department", "Email Address", "Contact Number", "Location", "Office", "Notes",
-     "Date issued", "Registered by",
- ]
- ALL_COLS = HW_COLS + META_COLS
+    "connections", {}
+).get("gsheets", {}).get(
+    "spreadsheet",
+    "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
+)
 
 # -----------------------------
 # PAGE / HEADER
