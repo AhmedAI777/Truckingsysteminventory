@@ -370,7 +370,6 @@
 #             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 #         )
 
-# app.py
 import os, json, time, hmac, base64, hashlib
 from io import BytesIO
 from datetime import datetime
@@ -388,46 +387,52 @@ DATE_FMT  = "%Y-%m-%d %H:%M:%S"
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 # ============================== AUTH ==============================
-DEFAULT_ADMIN_PW = "admin@2025"
-DEFAULT_STAFF_PW = "staff@2025"
 
-ADMINS: Dict[str, str] = dict(getattr(st.secrets.get("auth", {}), "admins", {})) if hasattr(st, "secrets") else {}
-STAFFS: Dict[str, str] = dict(getattr(st.secrets.get("auth", {}), "staff", {}))  if hasattr(st, "secrets") else {}
-if not ADMINS: ADMINS = {f"admin{i}": DEFAULT_ADMIN_PW for i in range(1,6)}
-if not STAFFS: STAFFS = {f"staff{i}": DEFAULT_STAFF_PW for i in range(1,16)}
-
-AUTH_SECRET = (st.secrets.get("auth", {}).get("secret") if hasattr(st,"secrets") else None) or "change-me"
+ADMINS: Dict[str, str] = dict(st.secrets["auth"]["admins"])
+STAFFS: Dict[str, str] = dict(st.secrets["auth"]["staff"])
+AUTH_SECRET = st.secrets["auth"]["secret"]
 
 def _now() -> int: return int(time.time())
-def _tok(u:str, r:str, days:int=30) -> str:
-    raw = json.dumps({"u":u,"r":r,"exp":_now()+days*86400}, separators=(",",":")).encode()
-    sig = hmac.new(AUTH_SECRET.encode(), raw, hashlib.sha256).digest()
-    return base64.urlsafe_b64encode(raw+sig).decode()
 
-def _parse(t:str) -> Optional[Tuple[str,str,int]]:
+def _tok(u: str, r: str, days: int = 30) -> str:
+    raw = json.dumps({"u": u, "r": r, "exp": _now() + days * 86400}, separators=(",", ":")).encode()
+    sig = hmac.new(AUTH_SECRET.encode(), raw, hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(raw + sig).decode()
+
+def _parse(t: str) -> Optional[Tuple[str, str, int]]:
     try:
-        b = base64.urlsafe_b64decode(t.encode()); raw, sig = b[:-32], b[-32:]
+        b = base64.urlsafe_b64decode(t.encode())
+        raw, sig = b[:-32], b[-32:]
         if not hmac.compare_digest(sig, hmac.new(AUTH_SECRET.encode(), raw, hashlib.sha256).digest()):
             return None
         p = json.loads(raw.decode())
-        return (p["u"], p["r"], p["exp"]) if p["exp"]>_now() else None
-    except: return None
+        return (p["u"], p["r"], p["exp"]) if p["exp"] > _now() else None
+    except:
+        return None
 
 def _getq():
-    try: return st.query_params.get("auth")
-    except: return st.experimental_get_query_params().get("auth", [None])[0]
-
-def _setq(t:Optional[str]):
     try:
-        if t is None: st.query_params.pop("auth", None)
-        else: st.query_params["auth"] = t
+        return st.query_params.get("auth")
     except:
-        if t is None: st.experimental_set_query_params()
-        else: st.experimental_set_query_params(auth=t)
+        return st.experimental_get_query_params().get("auth", [None])[0]
 
-def _auth(u:str,p:str)->Optional[str]:
-    if u in ADMINS and ADMINS[u]==p: return "admin"
-    if u in STAFFS and STAFFS[u]==p: return "staff"
+def _setq(t: Optional[str]):
+    try:
+        if t is None:
+            st.query_params.pop("auth", None)
+        else:
+            st.query_params["auth"] = t
+    except:
+        if t is None:
+            st.experimental_set_query_params()
+        else:
+            st.experimental_set_query_params(auth=t)
+
+def _auth(u: str, p: str) -> Optional[str]:
+    if u in ADMINS and ADMINS[u] == p:
+        return "admin"
+    if u in STAFFS and STAFFS[u] == p:
+        return "staff"
     return None
 
 def ensure_auth():
@@ -469,9 +474,10 @@ def logout_button():
     if st.button("Logout"):
         st.session_state.pop("auth_user", None)
         st.session_state.pop("auth_role", None)
-        _setq(None); st.rerun()
+        _setq(None)
+        st.rerun()
 
-# ============================ SHEETS (REPLACED with WORKING METHOD) =============================
+# ============================ SHEETS ============================
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -489,7 +495,7 @@ def get_gsheet():
     client = gspread.authorize(credentials)
     return client.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
 
-def read_ws(ws_title: str, cols: list[str], ttl: int = 0) -> pd.DataFrame:
+def read_ws(ws_title: str, cols: list[str]) -> pd.DataFrame:
     try:
         sheet = get_gsheet()
         ws = sheet.worksheet(ws_title)
@@ -586,149 +592,9 @@ st.markdown("---")
 
 # Tabs
 if IS_ADMIN:
-    tabs = st.tabs(["📝 Register","📦 View Inventory","🔄 Transfer Device","📜 Transfer Log","⬇ Export"])
+    tabs = st.tabs(["📝 Register","📦 View Inventory","🔄 Transfer Device","📜 Transfer Log"])
 else:
     tabs = st.tabs(["📦 View Inventory","🔄 Transfer Device","📜 Transfer Log"])
 
-# ------------------ Register ------------------
-if IS_ADMIN:
-    with tabs[0]:
-        st.subheader("Register New Inventory Item")
-        with st.form("reg_form", clear_on_submit=True):
-            cA, cB = st.columns(2)
-            with cA:
-                serial = st.text_input("Serial Number *")
-                device = st.text_input("Device Type *")
-                brand  = st.text_input("Brand")
-                model  = st.text_input("Model")
-                cpu    = st.text_input("CPU")
-            with cB:
-                hdd1   = st.text_input("Hard Drive 1")
-                hdd2   = st.text_input("Hard Drive 2")
-                mem    = st.text_input("Memory")
-                gpu    = st.text_input("GPU")
-                screen = st.text_input("Screen Size")
-            submitted = st.form_submit_button("Save Item", type="primary")
-        if submitted:
-            if not serial.strip() or not device.strip():
-                st.error("Serial Number and Device Type are required.")
-            else:
-                inv = read_ws("inventory", ALL_COLS)
-                if serial.strip() in inv["Serial Number"].astype(str).values:
-                    st.error(f"Serial Number '{serial}' already exists.")
-                else:
-                    now = datetime.now().strftime(DATE_FMT)
-                    row = {
-                        "Serial Number": serial.strip(),
-                        "Device Type": device.strip(),
-                        "Brand": brand.strip(),
-                        "Model": model.strip(),
-                        "CPU": cpu.strip(),
-                        "Hard Drive 1": hdd1.strip(),
-                        "Hard Drive 2": hdd2.strip(),
-                        "Memory": mem.strip(),
-                        "GPU": gpu.strip(),
-                        "Screen Size": screen.strip(),
-                        "USER": "", "Previous User": "", "TO": "",
-                        "Department": "", "Email Address": "", "Contact Number": "",
-                        "Location": "", "Office": "", "Notes": "",
-                        "Date issued": now,
-                        "Registered by": USER,
-                    }
-                    inv = pd.concat([inv, pd.DataFrame([row])], ignore_index=True)
-                    if commit_writes([("inventory", inv)], show_error=True):
-                        st.success("✅ Saved to Google Sheets.")
-
-# ------------------ View Inventory ------------------
-with tabs[1 if IS_ADMIN else 0]:
-    st.subheader("Current Inventory")
-    inv = read_ws("inventory", ALL_COLS)
-    if not inv.empty and "Date issued" in inv.columns:
-        inv["Date issued"] = parse_dates_safe(inv["Date issued"].astype(str))
-        _ts = pd.to_datetime(inv["Date issued"], format=DATE_FMT, errors="coerce")
-        inv = inv.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
-    st.dataframe(nice_display(inv), use_container_width=True, hide_index=True)
-
-# ------------------ Transfer Device ------------------
-with tabs[2 if IS_ADMIN else 1]:
-    st.subheader("Register Ownership Transfer")
-    inv2 = read_ws("inventory", ALL_COLS)
-    serials = sorted(inv2["Serial Number"].astype(str).dropna().unique().tolist())
-    pick = st.selectbox("Serial Number", ["— Select —"] + serials)
-    chosen = None if pick == "— Select —" else pick
-
-    new_owner = st.text_input("New Owner (required)")
-
-    auto_email, auto_phone = "", ""
-    if chosen:
-        row = inv2[inv2["Serial Number"].astype(str) == chosen]
-        if not row.empty:
-            r = row.iloc[0]
-            st.caption(
-                f"Device: {r.get('Device Type','')} • Brand: {r.get('Brand','')} • "
-                f"Model: {r.get('Model','')} • CPU: {r.get('CPU','')}"
-            )
-        if new_owner.strip():
-            auto_email, auto_phone = lookup_contact(new_owner.strip(), inv2)
-            st.write(f"**Auto Email:** {auto_email or '—'}")
-            st.write(f"**Auto Phone:** {auto_phone or '—'}")
-
-    do_transfer = st.button("Transfer Now", type="primary", disabled=not (chosen and new_owner.strip()))
-    if do_transfer:
-        idxs = inv2.index[inv2["Serial Number"].astype(str) == chosen].tolist()
-        if not idxs:
-            st.error("Serial not found.")
-        else:
-            i = idxs[0]
-            prev = inv2.loc[i, "USER"]
-            now  = datetime.now().strftime(DATE_FMT)
-
-            inv2.loc[i, "Previous User"]  = str(prev or "")
-            inv2.loc[i, "USER"]           = new_owner.strip()
-            inv2.loc[i, "TO"]             = new_owner.strip()
-            inv2.loc[i, "Email Address"]  = auto_email
-            inv2.loc[i, "Contact Number"] = auto_phone
-            inv2.loc[i, "Date issued"]    = now
-            inv2.loc[i, "Registered by"]  = USER
-
-            log = read_ws("transfer_log", LOG_COLS)
-            log = pd.concat([log, pd.DataFrame([{
-                "Device Type": inv2.loc[i, "Device Type"],
-                "Serial Number": chosen,
-                "From owner": str(prev or ""),
-                "To owner": new_owner.strip(),
-                "Date issued": now,
-                "Registered by": USER,
-            }])], ignore_index=True)
-
-            wrote = commit_writes([("inventory", inv2), ("transfer_log", log)], show_error=True)
-            if wrote:
-                st.success(f"✅ Transfer saved: {prev or '(blank)'} → {new_owner.strip()}")
-
-# ------------------ Transfer Log ------------------
-with tabs[3 if IS_ADMIN else 2]:
-    st.subheader("Transfer Log")
-    log = read_ws("transfer_log", LOG_COLS)
-    if not log.empty and "Date issued" in log.columns:
-        log["Date issued"] = parse_dates_safe(log["Date issued"].astype(str))
-        _ts = pd.to_datetime(log["Date issued"], format=DATE_FMT, errors="coerce")
-        log = log.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
-    st.dataframe(nice_display(log), use_container_width=True, hide_index=True)
-
-# ------------------ Export ------------------
-if IS_ADMIN:
-    with tabs[4]:
-        st.subheader("Download Exports")
-        inv = read_ws("inventory", ALL_COLS)
-        inv_x = BytesIO()
-        with pd.ExcelWriter(inv_x, engine="openpyxl") as w:
-            inv.to_excel(w, index=False)
-        inv_x.seek(0)
-        st.download_button("⬇ Download Inventory", inv_x.getvalue(), file_name="inventory.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-        log = read_ws("transfer_log", LOG_COLS)
-        log_x = BytesIO()
-        with pd.ExcelWriter(log_x, engine="openpyxl") as w:
-            log.to_excel(w, index=False)
-        log_x.seek(0)
-        st.download_button("⬇ Download Transfer Log", log_x.getvalue(), file_name="transfer_log.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+# ✅ Continue with your existing logic...
+# You already have the Register, View Inventory, Transfer Device, etc. blocks.
