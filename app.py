@@ -390,13 +390,6 @@ st.set_page_config(page_title=APP_TITLE, layout="wide")
 # ============================== AUTH ==============================
 
 
-ADMINS: Dict[str, str] = dict(getattr(st.secrets.get("auth", {}), "admins", {})) if hasattr(st, "secrets") else {}
-STAFFS: Dict[str, str] = dict(getattr(st.secrets.get("auth", {}), "staff", {}))  if hasattr(st, "secrets") else {}
-if not ADMINS: ADMINS = {f"admin{i}": DEFAULT_ADMIN_PW for i in range(1,6)}
-if not STAFFS: STAFFS = {f"staff{i}": DEFAULT_STAFF_PW for i in range(1,16)}
-
-AUTH_SECRET = (st.secrets.get("auth", {}).get("secret") if hasattr(st,"secrets") else None) or "change-me"
-
 def _now() -> int: return int(time.time())
 def _tok(u:str, r:str, days:int=30) -> str:
     raw = json.dumps({"u":u,"r":r,"exp":_now()+days*86400}, separators=(",",":")).encode()
