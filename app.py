@@ -1,3 +1,4 @@
+# app.py
 import os
 import json
 import time
@@ -183,6 +184,8 @@ SPREADSHEET = (
 
 INVENTORY_WS   = str(st.secrets.get("inventory_tab", "0"))
 TRANSFERLOG_WS = str(st.secrets.get("transferlog_tab", "405007082"))
+# NEW: optional directory tab for auto contacts
+DIRECTORY_WS   = str(st.secrets.get("directory_tab", "directory"))
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
@@ -206,7 +209,7 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     for c in cols:
         if c not in df.columns:
             df[c] = ""
-    return df[cols + [c for c in df.columns if c not in cols]]
+    return df[cols] + [c for c in df.columns if c not in cols]
 
 def _to_datetime_no_warn(values: pd.Series) -> pd.Series:
     dt = pd.to_datetime(values, format=DATE_FMT, errors="coerce")
@@ -285,6 +288,65 @@ def commit_writes(writes: List[Tuple[str, pd.DataFrame]], *, show_error: bool) -
                 )
             return False
     return True
+
+# ---------- NEW: contact lookup ----------
+CONTACT_EMAIL_COLS = ["Email Address", "Email", "E-mail"]
+CONTACT_PHONE_COLS = ["Contact Number", "Phone", "Mobile", "Contact"]
+
+def _norm(s: str) -> str:
+    return " ".join((s or "").strip().lower().split())
+
+def _first_existing_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+def lookup_contact(new_owner: str, inv_df: pd.DataFrame) -> Tuple[str, str]:
+    """Find email/phone for owner using directory sheet first, then inventory."""
+    name = _norm(new_owner)
+    email = ""
+    phone = ""
+
+    # 1) try directory
+    try:
+        directory = conn.read(spreadsheet=SPREADSHEET, worksheet=DIRECTORY_WS, ttl=300)
+        if isinstance(directory, pd.DataFrame) and not directory.empty:
+            if "Name" in directory.columns:
+                dir_email_col = _first_existing_col(directory, CONTACT_EMAIL_COLS)
+                dir_phone_col = _first_existing_col(directory, CONTACT_PHONE_COLS)
+                if dir_email_col or dir_phone_col:
+                    mask = directory["Name"].astype(str).str.lower().str.strip() == name
+                    if mask.any():
+                        row = directory[mask].iloc[0]
+                        email = str(row.get(dir_email_col, "") or "")
+                        phone = str(row.get(dir_phone_col, "") or "")
+                        if email or phone:
+                            return email, phone
+    except Exception:
+        pass
+
+    # 2) fallback: reuse from inventory if same USER appears elsewhere with data
+    try:
+        user_col = "USER" if "USER" in inv_df.columns else None
+        if user_col:
+            # prefer most recent by date
+            df2 = inv_df.copy()
+            if "Date issued" in df2.columns:
+                dt = pd.to_datetime(df2["Date issued"], errors="coerce")
+                df2 = df2.assign(_ts=dt).sort_values("_ts", ascending=False, na_position="last")
+            email_col = _first_existing_col(df2, ["Email Address", "Email"])
+            phone_col = _first_existing_col(df2, ["Contact Number", "Phone", "Mobile"])
+            if email_col or phone_col:
+                mask = df2[user_col].astype(str).str.lower().str.strip() == name
+                if mask.any():
+                    row = df2[mask].iloc[0]
+                    email = str(row.get(email_col, "") or "")
+                    phone = str(row.get(phone_col, "") or "")
+    except Exception:
+        pass
+
+    return email, phone
 
 
 # =============================================================================
@@ -444,14 +506,10 @@ with tabs[transfer_tab_index]:
     pick = st.selectbox("Serial Number", ["— Select —"] + serials)
     chosen_serial = None if pick == "— Select —" else pick
 
-    # Collect new user info (name/email/phone)
+    # NEW: only ask for the owner's name; email/phone will be auto-resolved
     new_owner = st.text_input("New Owner (required)")
-    c1, c2 = st.columns(2)
-    with c1:
-        new_email = st.text_input("New Owner Email", placeholder="name@example.com")
-    with c2:
-        new_phone = st.text_input("New Owner Phone", placeholder="05x xxx xxxx")
 
+    # Show selected device summary
     if chosen_serial:
         row = inv[inv["Serial Number"].astype(str) == chosen_serial]
         if not row.empty:
@@ -460,10 +518,14 @@ with tabs[transfer_tab_index]:
                 f"Device: {r.get('Device Type','')} • Brand: {r.get('Brand','')} • "
                 f"Model: {r.get('Model','')} • CPU: {r.get('CPU','')}"
             )
-        else:
-            st.warning("Serial not found in inventory.")
 
-    # Staff can always click Transfer; we'll queue if we can't write
+    # Resolve email/phone automatically
+    auto_email, auto_phone = ("", "")
+    if new_owner.strip():
+        auto_email, auto_phone = lookup_contact(new_owner.strip(), inv)
+        st.caption(f"Auto-contact → Email: **{auto_email or '—'}** • Phone: **{auto_phone or '—'}**")
+
+    # Staff/Admin can click Transfer; we write (or queue if read-only)
     do_transfer = st.button(
         "Transfer Now",
         type="primary",
@@ -477,7 +539,6 @@ with tabs[transfer_tab_index]:
         else:
             idx = idx_list[0]
             prev_user = inv.loc[idx, "USER"]
-
             now = datetime.now().strftime(DATE_FMT)
 
             # 1) local update in memory (so UI shows it immediately)
@@ -485,9 +546,9 @@ with tabs[transfer_tab_index]:
             inv.loc[idx, "USER"]           = new_owner.strip()
             inv.loc[idx, "TO"]             = new_owner.strip()
             if "Email Address" in inv.columns:
-                inv.loc[idx, "Email Address"] = new_email.strip()
+                inv.loc[idx, "Email Address"] = auto_email
             if "Contact Number" in inv.columns:
-                inv.loc[idx, "Contact Number"] = new_phone.strip()
+                inv.loc[idx, "Contact Number"] = auto_phone
             inv.loc[idx, "Date issued"]    = now
             inv.loc[idx, "Registered by"]  = USER
 
@@ -522,8 +583,8 @@ with tabs[transfer_tab_index]:
                     "Previous User": str(prev_user or ""),
                     "USER": new_owner.strip(),
                     "TO": new_owner.strip(),
-                    "Email Address": new_email.strip(),
-                    "Contact Number": new_phone.strip(),
+                    "Email Address": auto_email,
+                    "Contact Number": auto_phone,
                     "Date issued": now,
                     "Registered by": USER,
                 }
