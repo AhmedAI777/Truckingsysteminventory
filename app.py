@@ -1,5 +1,6 @@
 # app.py
 import os, json, time, hmac, base64, hashlib
+from io import BytesIO
 from datetime import datetime
 from typing import Dict, Optional, Tuple, List
 
@@ -64,7 +65,7 @@ def ensure_auth():
         t=_getq(); parsed=_parse(t) if t else None
         if parsed:
             u,r,exp=parsed; st.session_state.auth_user=u; st.session_state.auth_role=r
-            if exp-_now()<3*86400: _setq(_tok(u,r))
+            if exp-int(time.time())<3*86400: _setq(_tok(u,r))
             return
     if st.session_state.auth_user: return
     st.markdown(f"## {APP_TITLE}"); st.caption(SUBTITLE)
@@ -72,8 +73,11 @@ def ensure_auth():
         u=st.text_input("Username"); p=st.text_input("Password", type="password")
         if st.form_submit_button("Login", type="primary"):
             r=_auth(u.strip(), p)
-            if r: st.session_state.auth_user=u.strip(); st.session_state.auth_role=r; _setq(_tok(u.strip(), r)); st.rerun()
-            else: st.error("Invalid username or password.")
+            if r:
+                st.session_state.auth_user=u.strip(); st.session_state.auth_role=r
+                _setq(_tok(u.strip(), r)); st.rerun()
+            else:
+                st.error("Invalid username or password.")
     st.stop()
 
 def logout_button():
@@ -161,7 +165,7 @@ def nice_display(df: pd.DataFrame)->pd.DataFrame:
     return out.replace({np.nan:""})
 
 def lookup_contact(name: str, inventory: pd.DataFrame) -> Tuple[str, str]:
-    """Auto-fill Email/Phone: 1) secrets directory, 2) last seen in inventory."""
+    """Auto Email/Phone from secrets first, otherwise last seen in inventory."""
     try:
         directory = st.secrets.get("directory", {}).get("users", {})
         if name in directory:
@@ -187,6 +191,7 @@ USER = st.session_state.auth_user
 ROLE = st.session_state.auth_role
 IS_ADMIN = ROLE == "admin"
 
+# Hide df toolbar for staff
 if not IS_ADMIN:
     st.markdown("""
     <style>
@@ -194,6 +199,7 @@ if not IS_ADMIN:
     </style>
     """, unsafe_allow_html=True)
 
+# Header
 c1,c2,c3 = st.columns([1.2,6,3])
 with c1:
     if os.path.exists("company_logo.jpeg"): st.image("company_logo.jpeg", use_container_width=True)
@@ -204,10 +210,62 @@ with c3:
     logout_button()
 st.markdown("---")
 
-tabs = st.tabs(["📦 View Inventory","🔄 Transfer Device","📜 Transfer Log"])
+# Tabs (admin gets Register + Export)
+if IS_ADMIN:
+    tabs = st.tabs(["📝 Register","📦 View Inventory","🔄 Transfer Device","📜 Transfer Log","⬇ Export"])
+else:
+    tabs = st.tabs(["📦 View Inventory","🔄 Transfer Device","📜 Transfer Log"])
+
+# ------------------ Register (ADMIN) ------------------
+if IS_ADMIN:
+    with tabs[0]:
+        st.subheader("Register New Inventory Item")
+        with st.form("reg_form", clear_on_submit=True):
+            cA, cB = st.columns(2)
+            with cA:
+                serial = st.text_input("Serial Number *")
+                device = st.text_input("Device Type *")
+                brand  = st.text_input("Brand")
+                model  = st.text_input("Model")
+                cpu    = st.text_input("CPU")
+            with cB:
+                hdd1   = st.text_input("Hard Drive 1")
+                hdd2   = st.text_input("Hard Drive 2")
+                mem    = st.text_input("Memory")
+                gpu    = st.text_input("GPU")
+                screen = st.text_input("Screen Size")
+            submitted = st.form_submit_button("Save Item", type="primary")
+        if submitted:
+            if not serial.strip() or not device.strip():
+                st.error("Serial Number and Device Type are required.")
+            else:
+                inv = safe_read_ws(INVENTORY_WS, ALL_COLS, "inventory")
+                if serial.strip() in inv["Serial Number"].astype(str).values:
+                    st.error(f"Serial Number '{serial}' already exists.")
+                else:
+                    row = {
+                        "Serial Number": serial.strip(),
+                        "Device Type": device.strip(),
+                        "Brand": brand.strip(),
+                        "Model": model.strip(),
+                        "CPU": cpu.strip(),
+                        "Hard Drive 1": hdd1.strip(),
+                        "Hard Drive 2": hdd2.strip(),
+                        "Memory": mem.strip(),
+                        "GPU": gpu.strip(),
+                        "Screen Size": screen.strip(),
+                        "USER": "", "Previous User": "", "TO": "",
+                        "Department": "", "Email Address": "", "Contact Number": "",
+                        "Location": "", "Office": "", "Notes": "",
+                        "Date issued": datetime.now().strftime(DATE_FMT),
+                        "Registered by": USER,
+                    }
+                    inv = pd.concat([inv, pd.DataFrame([row])], ignore_index=True)
+                    if commit_writes([(INVENTORY_WS, inv)], show_error=True):
+                        st.success("✅ Saved to Google Sheets.")
 
 # ------------------ View Inventory ------------------
-with tabs[0]:
+with tabs[1 if IS_ADMIN else 0]:
     st.subheader("Current Inventory")
     inv = safe_read_ws(INVENTORY_WS, ALL_COLS, "inventory", ttl=0)
     if not inv.empty and "Date issued" in inv.columns:
@@ -217,7 +275,7 @@ with tabs[0]:
     st.dataframe(nice_display(inv), use_container_width=True, hide_index=True)
 
 # ------------------ Transfer Device ------------------
-with tabs[1]:
+with tabs[2 if IS_ADMIN else 1]:
     st.subheader("Register Ownership Transfer")
     inv2 = safe_read_ws(INVENTORY_WS, ALL_COLS, "inventory")
     serials = sorted(inv2["Serial Number"].astype(str).dropna().unique().tolist())
@@ -275,7 +333,7 @@ with tabs[1]:
                 st.error("Transfer couldn’t be written. Add a Service Account & share the sheet with it (Editor).")
 
 # ------------------ Transfer Log ------------------
-with tabs[2]:
+with tabs[3 if IS_ADMIN else 2]:
     st.subheader("Transfer Log")
     log = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log", ttl=0)
     if not log.empty and "Date issued" in log.columns:
@@ -283,3 +341,31 @@ with tabs[2]:
         _ts = pd.to_datetime(log["Date issued"], format=DATE_FMT, errors="coerce")
         log = log.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
     st.dataframe(nice_display(log), use_container_width=True, hide_index=True)
+
+# ------------------ Export (ADMIN) ------------------
+if IS_ADMIN:
+    with tabs[4]:
+        st.subheader("Download Exports")
+        inv = safe_read_ws(INVENTORY_WS, ALL_COLS, "inventory")
+        inv_x = BytesIO()
+        with pd.ExcelWriter(inv_x, engine="openpyxl") as w:
+            inv.to_excel(w, index=False)
+        inv_x.seek(0)
+        st.download_button(
+            "⬇ Download Inventory",
+            inv_x.getvalue(),
+            file_name="inventory.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+        log = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log")
+        log_x = BytesIO()
+        with pd.ExcelWriter(log_x, engine="openpyxl") as w:
+            log.to_excel(w, index=False)
+        log_x.seek(0)
+        st.download_button(
+            "⬇ Download Transfer Log",
+            log_x.getvalue(),
+            file_name="transfer_log.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
