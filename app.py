@@ -133,7 +133,6 @@ def ensure_auth():
         st.session_state.auth_user = None
         st.session_state.auth_role = None
 
-    # from URL token
     if not st.session_state.auth_user:
         token = _get_query_auth()
         parsed = _parse_token(token) if token else None
@@ -145,11 +144,9 @@ def ensure_auth():
                 _set_query_auth(_make_token(u, r, ttl_days=30))
             return True
 
-    # already logged in for this session
     if st.session_state.auth_user and st.session_state.auth_role:
         return True
 
-    # login screen
     st.markdown(f"## {APP_TITLE}")
     st.caption(SUBTITLE)
     st.info("Please sign in to continue.")
@@ -196,7 +193,7 @@ def _has_service_account() -> bool:
     except Exception:
         return False
 
-IS_READ_ONLY = not _has_service_account()  # used to decide whether to queue quietly
+IS_READ_ONLY = not _has_service_account()
 
 
 # =============================================================================
@@ -268,7 +265,6 @@ def safe_read_ws(worksheet: str, cols: list[str], label: str, ttl: int = 0) -> p
         return _ensure_cols(None, cols)
 
 def write_ws(worksheet: str, df: pd.DataFrame) -> Tuple[bool, Optional[str]]:
-    """Try a single write; return (ok, err_msg)."""
     try:
         conn.update(spreadsheet=SPREADSHEET, worksheet=worksheet, data=df)
         return True, None
@@ -276,10 +272,6 @@ def write_ws(worksheet: str, df: pd.DataFrame) -> Tuple[bool, Optional[str]]:
         return False, str(e)
 
 def commit_writes(writes: List[Tuple[str, pd.DataFrame]], *, show_error: bool) -> bool:
-    """
-    Attempt multiple writes as a single 'commit'.
-    Stops at first failure. If show_error=False, no red message.
-    """
     for ws, df in writes:
         ok, err = write_ws(ws, df)
         if not ok:
@@ -359,9 +351,11 @@ if not IS_ADMIN:
         unsafe_allow_html=True
     )
 
-# Initialize pending queue in session
+# Queues in session: pending transfer log rows + per-serial inventory overrides
 if "pending_transfers" not in st.session_state:
-    st.session_state.pending_transfers = []  # list of dicts
+    st.session_state.pending_transfers: List[dict] = []
+if "pending_overrides" not in st.session_state:
+    st.session_state.pending_overrides: Dict[str, Dict[str, str]] = {}
 
 app_header(USER, ROLE)
 
@@ -425,6 +419,15 @@ view_tab_index = 1 if IS_ADMIN else 0
 with tabs[view_tab_index]:
     st.subheader("Current Inventory")
     inv = safe_read_ws(INVENTORY_WS, ALL_COLS, "inventory", ttl=0)
+
+    # Overlay pending overrides so staff sees updated rows instantly
+    for sn, changes in st.session_state.pending_overrides.items():
+        idxs = inv.index[inv["Serial Number"].astype(str) == sn].tolist()
+        for i in idxs:
+            for k, v in changes.items():
+                if k in inv.columns:
+                    inv.loc[i, k] = v
+
     if not inv.empty and "Date issued" in inv.columns:
         inv["Date issued"] = parse_dates_safe(inv["Date issued"].astype(str))
         _ts = pd.to_datetime(inv["Date issued"], format=DATE_FMT, errors="coerce")
@@ -441,6 +444,14 @@ with tabs[transfer_tab_index]:
     pick = st.selectbox("Serial Number", ["— Select —"] + serials)
     chosen_serial = None if pick == "— Select —" else pick
 
+    # Collect new user info (name/email/phone)
+    new_owner = st.text_input("New Owner (required)")
+    c1, c2 = st.columns(2)
+    with c1:
+        new_email = st.text_input("New Owner Email", placeholder="name@example.com")
+    with c2:
+        new_phone = st.text_input("New Owner Phone", placeholder="05x xxx xxxx")
+
     if chosen_serial:
         row = inv[inv["Serial Number"].astype(str) == chosen_serial]
         if not row.empty:
@@ -452,9 +463,7 @@ with tabs[transfer_tab_index]:
         else:
             st.warning("Serial not found in inventory.")
 
-    new_owner = st.text_input("New Owner (required)")
-
-    # Enabled for Staff even in read-only mode.
+    # Staff can always click Transfer; we'll queue if we can't write
     do_transfer = st.button(
         "Transfer Now",
         type="primary",
@@ -469,77 +478,107 @@ with tabs[transfer_tab_index]:
             idx = idx_list[0]
             prev_user = inv.loc[idx, "USER"]
 
-            # local update
-            inv.loc[idx, "Previous User"] = str(prev_user or "")
-            inv.loc[idx, "USER"] = new_owner.strip()
-            inv.loc[idx, "TO"] = new_owner.strip()
-            inv.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
-            inv.loc[idx, "Registered by"] = USER
+            now = datetime.now().strftime(DATE_FMT)
 
-            # local log append
+            # 1) local update in memory (so UI shows it immediately)
+            inv.loc[idx, "Previous User"]  = str(prev_user or "")
+            inv.loc[idx, "USER"]           = new_owner.strip()
+            inv.loc[idx, "TO"]             = new_owner.strip()
+            if "Email Address" in inv.columns:
+                inv.loc[idx, "Email Address"] = new_email.strip()
+            if "Contact Number" in inv.columns:
+                inv.loc[idx, "Contact Number"] = new_phone.strip()
+            inv.loc[idx, "Date issued"]    = now
+            inv.loc[idx, "Registered by"]  = USER
+
+            # 2) update transfer log object
             log = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log")
             log_row = {
                 "Device Type": inv.loc[idx, "Device Type"],
                 "Serial Number": chosen_serial,
                 "From owner": str(prev_user or ""),
                 "To owner": new_owner.strip(),
-                "Date issued": datetime.now().strftime(DATE_FMT),
+                "Date issued": now,
                 "Registered by": USER,
             }
             log = pd.concat([log, pd.DataFrame([log_row])], ignore_index=True)
 
-            # Try to write; Staff won't see the red error – we queue instead
+            # 3) Try to write (admins see errors, staff won't)
             wrote = commit_writes([(INVENTORY_WS, inv), (TRANSFERLOG_WS, log)],
                                   show_error=IS_ADMIN)
 
             if wrote:
+                # Clear any stale overrides/logs for this serial
+                st.session_state.pending_overrides.pop(chosen_serial, None)
+                st.session_state.pending_transfers = [
+                    r for r in st.session_state.pending_transfers
+                    if r.get("Serial Number") != chosen_serial or r.get("Date issued") != now
+                ]
                 st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
             else:
-                # queue locally for later sync
+                # Queue for later sync:
                 st.session_state.pending_transfers.append(log_row)
-                st.success("✅ Transfer recorded locally and will be synced when write access is enabled.")
+                st.session_state.pending_overrides[chosen_serial] = {
+                    "Previous User": str(prev_user or ""),
+                    "USER": new_owner.strip(),
+                    "TO": new_owner.strip(),
+                    "Email Address": new_email.strip(),
+                    "Contact Number": new_phone.strip(),
+                    "Date issued": now,
+                    "Registered by": USER,
+                }
+                st.success("✅ Transfer recorded and visible in the app. Admin will sync to Sheets later.")
 
-    # Show pending queue (if any)
-    if st.session_state.pending_transfers:
-        with st.expander("🕒 Pending transfers (not yet synced)"):
-            pend_df = pd.DataFrame(st.session_state.pending_transfers)
-            st.dataframe(pend_df, use_container_width=True, hide_index=True)
-            csv = pend_df.to_csv(index=False).encode("utf-8")
-            st.download_button("Download pending as CSV", csv, "pending_transfers.csv", "text/csv")
+    # Show pending queue:
+    if st.session_state.pending_transfers or st.session_state.pending_overrides:
+        with st.expander("🕒 Pending updates (not yet synced)"):
+            if st.session_state.pending_transfers:
+                st.markdown("**Queued Transfer Log Entries**")
+                pend_df = pd.DataFrame(st.session_state.pending_transfers)
+                st.dataframe(pend_df, use_container_width=True, hide_index=True)
 
-            # Admin-only: attempt to sync all queued items to Sheets
-            if IS_ADMIN and st.button("Sync queued transfers now"):
-                # fresh copies
+            if st.session_state.pending_overrides:
+                st.markdown("**Queued Inventory Row Overrides**")
+                ov = []
+                for sn, ch in st.session_state.pending_overrides.items():
+                    row = {"Serial Number": sn}
+                    row.update(ch)
+                    ov.append(row)
+                ov_df = pd.DataFrame(ov)
+                st.dataframe(ov_df, use_container_width=True, hide_index=True)
+
+            # Admin-only: try to sync all queued items
+            if IS_ADMIN and st.button("Sync queued changes now"):
                 inv2 = safe_read_ws(INVENTORY_WS, ALL_COLS, "inventory")
                 log2 = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log")
 
-                applied = 0
-                for row in list(st.session_state.pending_transfers):
-                    sn = row["Serial Number"]
+                # Apply overrides to inventory
+                for sn, changes in st.session_state.pending_overrides.items():
                     idxs = inv2.index[inv2["Serial Number"].astype(str) == sn].tolist()
-                    if not idxs:
-                        continue
-                    i = idxs[0]
-                    inv2.loc[i, "Previous User"] = row["From owner"]
-                    inv2.loc[i, "USER"] = row["To owner"]
-                    inv2.loc[i, "TO"] = row["To owner"]
-                    inv2.loc[i, "Date issued"] = row["Date issued"]
-                    inv2.loc[i, "Registered by"] = row["Registered by"]
-                    log2 = pd.concat([log2, pd.DataFrame([row])], ignore_index=True)
-                    applied += 1
+                    for i in idxs:
+                        for k, v in changes.items():
+                            if k in inv2.columns:
+                                inv2.loc[i, k] = v
 
-                if applied == 0:
-                    st.info("No matching serial numbers found to sync.")
-                else:
-                    if commit_writes([(INVENTORY_WS, inv2), (TRANSFERLOG_WS, log2)], show_error=True):
-                        st.success(f"✅ Synced {applied} queued transfer(s).")
-                        st.session_state.pending_transfers.clear()
+                # Append queued log rows
+                if st.session_state.pending_transfers:
+                    log2 = pd.concat([log2, pd.DataFrame(st.session_state.pending_transfers)], ignore_index=True)
+
+                if commit_writes([(INVENTORY_WS, inv2), (TRANSFERLOG_WS, log2)], show_error=True):
+                    st.success("✅ Synced all queued changes.")
+                    st.session_state.pending_transfers.clear()
+                    st.session_state.pending_overrides.clear()
 
 # ----------------------------- Transfer Log
 log_tab_index = 3 if IS_ADMIN else 2
 with tabs[log_tab_index]:
     st.subheader("Transfer Log")
     log = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log", ttl=0)
+
+    # Show queued (unsynced) log rows too, so staff sees them in history
+    if st.session_state.pending_transfers:
+        log = pd.concat([log, pd.DataFrame(st.session_state.pending_transfers)], ignore_index=True)
+
     if not log.empty and "Date issued" in log.columns:
         log["Date issued"] = parse_dates_safe(log["Date issued"].astype(str))
         _ts = pd.to_datetime(log["Date issued"], format=DATE_FMT, errors="coerce")
