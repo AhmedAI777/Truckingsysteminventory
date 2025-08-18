@@ -15,17 +15,20 @@ import pandas as pd
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
+
 # =============================================================================
 # BASIC APP SETTINGS
 # =============================================================================
 APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE  = "Advanced Construction"
-DATE_FMT  = "%Y-%m-%d %H:%M:%S"
+DATE_FMT  = "%Y-%m-%d %H:%M:%S"   # display/storage format
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
+
 # =============================================================================
-# CUSTOM FONT (optional)
+# OPTIONAL: CUSTOM FONT
+# place the font file next to app.py if you want to use it
 # =============================================================================
 def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
     if not os.path.exists(font_path):
@@ -38,26 +41,37 @@ def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
           @font-face {{
             font-family: '{family}';
             src: url(data:font/otf;base64,{b64}) format('opentype');
-            font-weight: normal; font-style: normal; font-display: swap;
+            font-weight: normal;
+            font-style: normal;
+            font-display: swap;
           }}
           html, body, [class*="css"] {{
             font-family: '{family}', -apple-system, BlinkMacSystemFont, "Segoe UI",
                          Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif !important;
           }}
-          h1,h2,h3,h4,h5,h6, .stTabs [role="tab"] {{ font-family: '{family}', sans-serif !important; }}
+          h1,h2,h3,h4,h5,h6, .stTabs [role="tab"] {{
+            font-family: '{family}', sans-serif !important;
+          }}
           section.main > div {{ padding-top: 0.6rem; }}
         </style>
         """,
         unsafe_allow_html=True,
     )
+
 _inject_font_css("FounderGroteskCondensed-Regular.otf")
 
+
 # =============================================================================
-# AUTH (same as your version – persists via URL token)
+# AUTH (persistent via ?auth= token in URL)
 # =============================================================================
 DEFAULT_ADMIN_PW = "admin@2025"
 DEFAULT_STAFF_PW = "staff@2025"
 
+# You can override users in secrets.toml
+# [auth.admins]
+# admin1 = "mypw" ...
+# [auth.staff]
+# staff1 = "mypw" ...
 ADMINS: Dict[str, str] = dict(getattr(st.secrets.get("auth", {}), "admins", {})) if hasattr(st, "secrets") else {}
 STAFFS: Dict[str, str] = dict(getattr(st.secrets.get("auth", {}), "staff", {})) if hasattr(st, "secrets") else {}
 
@@ -67,8 +81,7 @@ if not STAFFS:
     STAFFS = {f"staff{i}": DEFAULT_STAFF_PW for i in range(1, 16)}
 
 AUTH_SECRET = (
-    st.secrets.get("auth", {}).get("secret")
-    if hasattr(st, "secrets") else None
+    st.secrets.get("auth", {}).get("secret") if hasattr(st, "secrets") else None
 ) or "change-me-now-very-long-random-string"
 
 def authenticate(username: str, password: str) -> Optional[str]:
@@ -123,9 +136,12 @@ def _set_query_auth(token: Optional[str]):
             st.experimental_set_query_params(auth=token)
 
 def ensure_auth():
+    """Keep users signed in on refresh until they click Logout."""
     if "auth_user" not in st.session_state:
         st.session_state.auth_user = None
         st.session_state.auth_role = None
+
+    # 1) Try token in URL
     if not st.session_state.auth_user:
         token = _get_query_auth()
         parsed = _parse_token(token) if token else None
@@ -133,12 +149,15 @@ def ensure_auth():
             u, r, exp = parsed
             st.session_state.auth_user = u
             st.session_state.auth_role = r
-            if exp - _now() < 3 * 86400:
+            if exp - _now() < 3 * 86400:  # refresh token if close to expiry
                 _set_query_auth(_make_token(u, r, ttl_days=30))
             return True
+
+    # 2) Already authenticated in session
     if st.session_state.auth_user and st.session_state.auth_role:
         return True
 
+    # 3) Login screen
     st.markdown(f"## {APP_TITLE}")
     st.caption(SUBTITLE)
     st.info("Please sign in to continue.")
@@ -164,24 +183,22 @@ def logout_button():
         _set_query_auth(None)
         st.rerun()
 
+
 # =============================================================================
 # GOOGLE SHEETS CONNECTION
 # =============================================================================
+# Put your spreadsheet URL in secrets, but we keep a fallback:
 SPREADSHEET = (
     st.secrets.get("connections", {}).get("gsheets", {}).get("spreadsheet")
     if hasattr(st, "secrets") else None
 ) or "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
+# Use tab name or gid (as string)
 INVENTORY_WS   = str(st.secrets.get("inventory_tab", "0"))
 TRANSFERLOG_WS = str(st.secrets.get("transferlog_tab", "405007082"))
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# Detect write capability (gspread vs public)
-CONN_TYPE = (st.secrets.get("connections", {})
-                .get("gsheets", {})
-                .get("type", "public")).lower()
-CAN_WRITE = CONN_TYPE == "gspread"
 
 # =============================================================================
 # HELPERS
@@ -196,6 +213,7 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return df[cols + [c for c in df.columns if c not in cols]]
 
 def _to_datetime_no_warn(values: pd.Series) -> pd.Series:
+    """Parse dates without global warning; handle mixed formats safely."""
     dt = pd.to_datetime(values, format=DATE_FMT, errors="coerce")
     mask = dt.isna() & values.astype(str).str.len().gt(0)
     if not mask.any():
@@ -251,29 +269,37 @@ def safe_read_ws(worksheet: str, cols: list[str], label: str, ttl: int = 0) -> p
         )
         return _ensure_cols(None, cols)
 
-def write_ws(worksheet: str, df: pd.DataFrame):
-    """Write with graceful handling for public(read-only) mode."""
-    if not CAN_WRITE:
-        st.error("This app is currently in read-only mode. Configure a Service Account to enable editing.")
-        return
+def write_ws(worksheet: str, df: pd.DataFrame) -> bool:
+    """Attempt to write. Return True on success; show friendly message on failure."""
     try:
         conn.update(spreadsheet=SPREADSHEET, worksheet=worksheet, data=df)
+        return True
     except Exception as e:
-        st.error(f"Write failed: {type(e).__name__}: {e}")
+        st.error(
+            "This app currently cannot write to the Google Sheet (read-only or missing "
+            "Service Account permissions). Please configure a Service Account and share "
+            "the spreadsheet with it.\n\nDetails: " + str(e)
+        )
+        return False
+
 
 # =============================================================================
-# HEADER
+# HEADER (logo left, title mid, user+logout right)
 # =============================================================================
 def app_header(user: str, role: str):
     c_logo, c_title, c_user = st.columns([1.2, 6, 3], gap="small")
+
     with c_logo:
-        if os.path.exists("company_logo.jpeg"):
-            st.image("company_logo.jpeg", use_container_width=True)
+        logo = "company_logo.jpeg"
+        if os.path.exists(logo):
+            st.image(logo, use_container_width=True)
+        else:
+            st.write("")
+
     with c_title:
         st.markdown(f"### {APP_TITLE}")
         st.caption(SUBTITLE)
-        if not CAN_WRITE:
-            st.info("🔒 Connected in read-only mode. To enable Register/Transfer, set up a Google Service Account (see secrets).")
+
     with c_user:
         st.markdown(
             f"""
@@ -289,6 +315,7 @@ def app_header(user: str, role: str):
         logout_button()
         st.markdown("</div></div><hr style='margin-top:0.8rem;'>", unsafe_allow_html=True)
 
+
 # =============================================================================
 # DATA MODEL
 # =============================================================================
@@ -300,6 +327,7 @@ ALL_COLS = [
 ]
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 
+
 # =============================================================================
 # MAIN
 # =============================================================================
@@ -308,18 +336,22 @@ USER = st.session_state.auth_user
 ROLE = st.session_state.auth_role
 IS_ADMIN = ROLE == "admin"
 
-# Hide DataFrame toolbar for staff
+# Hide table toolbars for STAFF (eye/download/fullscreen)
 if not IS_ADMIN:
-    st.markdown("""
+    st.markdown(
+        """
         <style>
           div[data-testid="stDataFrame"] div[data-testid="stElementToolbar"] { display:none !important; }
           div[data-testid="stDataEditor"]  div[data-testid="stElementToolbar"] { display:none !important; }
+          div[data-testid="stElementToolbar"] { display:none !important; }
         </style>
-        """, unsafe_allow_html=True)
+        """,
+        unsafe_allow_html=True
+    )
 
 app_header(USER, ROLE)
 
-# Tabs per role
+# Tabs
 if IS_ADMIN:
     tabs = st.tabs(["📝 Register", "📦 View Inventory", "🔄 Transfer Device", "📜 Transfer Log", "⬇ Export"])
 else:
@@ -343,7 +375,7 @@ if IS_ADMIN:
                 mem    = st.text_input("Memory")
                 gpu    = st.text_input("GPU")
                 screen = st.text_input("Screen Size")
-            submitted = st.form_submit_button("Save Item", type="primary", disabled=not CAN_WRITE)
+            submitted = st.form_submit_button("Save Item", type="primary")
 
         if submitted:
             if not serial.strip() or not device.strip():
@@ -371,8 +403,8 @@ if IS_ADMIN:
                         "Registered by": USER,
                     }
                     inv = pd.concat([inv, pd.DataFrame([row])], ignore_index=True)
-                    write_ws(INVENTORY_WS, inv)
-                    st.success("✅ Saved to Google Sheets.")
+                    if write_ws(INVENTORY_WS, inv):
+                        st.success("✅ Saved to Google Sheets.")
 
 # ----------------------------- View Inventory
 view_tab_index = 1 if IS_ADMIN else 0
@@ -407,10 +439,12 @@ with tabs[transfer_tab_index]:
             st.warning("Serial not found in inventory.")
 
     new_owner = st.text_input("New Owner (required)")
+
+    # IMPORTANT CHANGE: enable the button regardless of read-only status
     do_transfer = st.button(
         "Transfer Now",
         type="primary",
-        disabled=not (CAN_WRITE and chosen_serial and new_owner.strip())
+        disabled=not (chosen_serial and new_owner.strip())
     )
 
     if do_transfer:
@@ -421,12 +455,14 @@ with tabs[transfer_tab_index]:
             idx = idx_list[0]
             prev_user = inv.loc[idx, "USER"]
 
+            # update inventory row locally
             inv.loc[idx, "Previous User"] = str(prev_user or "")
             inv.loc[idx, "USER"] = new_owner.strip()
             inv.loc[idx, "TO"] = new_owner.strip()
             inv.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
             inv.loc[idx, "Registered by"] = USER
 
+            # append to transfer log locally
             log = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log")
             log_row = {
                 "Device Type": inv.loc[idx, "Device Type"],
@@ -438,9 +474,11 @@ with tabs[transfer_tab_index]:
             }
             log = pd.concat([log, pd.DataFrame([log_row])], ignore_index=True)
 
-            write_ws(INVENTORY_WS, inv)
-            write_ws(TRANSFERLOG_WS, log)
-            st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
+            # try to write both; show success only if both succeed
+            ok1 = write_ws(INVENTORY_WS, inv)
+            ok2 = write_ws(TRANSFERLOG_WS, log)
+            if ok1 and ok2:
+                st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
 
 # ----------------------------- Transfer Log
 log_tab_index = 3 if IS_ADMIN else 2
