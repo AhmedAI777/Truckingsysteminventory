@@ -388,8 +388,7 @@ DATE_FMT  = "%Y-%m-%d %H:%M:%S"
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 # ============================== AUTH ==============================
-DEFAULT_ADMIN_PW = "admin@2025"
-DEFAULT_STAFF_PW = "staff@2025"
+
 
 ADMINS: Dict[str, str] = dict(getattr(st.secrets.get("auth", {}), "admins", {})) if hasattr(st, "secrets") else {}
 STAFFS: Dict[str, str] = dict(getattr(st.secrets.get("auth", {}), "staff", {}))  if hasattr(st, "secrets") else {}
