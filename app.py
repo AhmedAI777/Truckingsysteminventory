@@ -196,7 +196,7 @@ def _has_service_account() -> bool:
     except Exception:
         return False
 
-IS_READ_ONLY = not _has_service_account()  # used for hints if you want them (no blue banner shown)
+IS_READ_ONLY = not _has_service_account()  # used to decide whether to queue quietly
 
 
 # =============================================================================
@@ -275,21 +275,22 @@ def write_ws(worksheet: str, df: pd.DataFrame) -> Tuple[bool, Optional[str]]:
     except Exception as e:
         return False, str(e)
 
-def commit_writes(writes: List[Tuple[str, pd.DataFrame]]) -> bool:
+def commit_writes(writes: List[Tuple[str, pd.DataFrame]], *, show_error: bool) -> bool:
     """
     Attempt multiple writes as a single 'commit'.
-    Stops at first failure and shows ONE friendly error.
+    Stops at first failure. If show_error=False, no red message.
     """
     for ws, df in writes:
         ok, err = write_ws(ws, df)
         if not ok:
-            st.error(
-                "This app cannot write to the Google Sheet (read-only or missing "
-                "Service Account permissions).\n\n"
-                "➡️ To enable saving, add a Google **Service Account** in secrets and share "
-                "the spreadsheet with that account (Editor access).\n\n"
-                f"Details: {err}"
-            )
+            if show_error:
+                st.error(
+                    "This app cannot write to the Google Sheet (read-only or missing "
+                    "Service Account permissions).\n\n"
+                    "➡️ To enable saving, add a Google **Service Account** in secrets and share "
+                    "the spreadsheet with that account (Editor access).\n\n"
+                    f"Details: {err}"
+                )
             return False
     return True
 
@@ -358,6 +359,10 @@ if not IS_ADMIN:
         unsafe_allow_html=True
     )
 
+# Initialize pending queue in session
+if "pending_transfers" not in st.session_state:
+    st.session_state.pending_transfers = []  # list of dicts
+
 app_header(USER, ROLE)
 
 # Tabs
@@ -412,7 +417,7 @@ if IS_ADMIN:
                         "Registered by": USER,
                     }
                     inv = pd.concat([inv, pd.DataFrame([row])], ignore_index=True)
-                    if commit_writes([(INVENTORY_WS, inv)]):
+                    if commit_writes([(INVENTORY_WS, inv)], show_error=True):
                         st.success("✅ Saved to Google Sheets.")
 
 # ----------------------------- View Inventory
@@ -449,7 +454,7 @@ with tabs[transfer_tab_index]:
 
     new_owner = st.text_input("New Owner (required)")
 
-    # Button is enabled for Staff even in read-only mode.
+    # Enabled for Staff even in read-only mode.
     do_transfer = st.button(
         "Transfer Now",
         type="primary",
@@ -483,9 +488,52 @@ with tabs[transfer_tab_index]:
             }
             log = pd.concat([log, pd.DataFrame([log_row])], ignore_index=True)
 
-            # Commit both writes together; show ONE error if writes are blocked
-            if commit_writes([(INVENTORY_WS, inv), (TRANSFERLOG_WS, log)]):
+            # Try to write; Staff won't see the red error – we queue instead
+            wrote = commit_writes([(INVENTORY_WS, inv), (TRANSFERLOG_WS, log)],
+                                  show_error=IS_ADMIN)
+
+            if wrote:
                 st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
+            else:
+                # queue locally for later sync
+                st.session_state.pending_transfers.append(log_row)
+                st.success("✅ Transfer recorded locally and will be synced when write access is enabled.")
+
+    # Show pending queue (if any)
+    if st.session_state.pending_transfers:
+        with st.expander("🕒 Pending transfers (not yet synced)"):
+            pend_df = pd.DataFrame(st.session_state.pending_transfers)
+            st.dataframe(pend_df, use_container_width=True, hide_index=True)
+            csv = pend_df.to_csv(index=False).encode("utf-8")
+            st.download_button("Download pending as CSV", csv, "pending_transfers.csv", "text/csv")
+
+            # Admin-only: attempt to sync all queued items to Sheets
+            if IS_ADMIN and st.button("Sync queued transfers now"):
+                # fresh copies
+                inv2 = safe_read_ws(INVENTORY_WS, ALL_COLS, "inventory")
+                log2 = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log")
+
+                applied = 0
+                for row in list(st.session_state.pending_transfers):
+                    sn = row["Serial Number"]
+                    idxs = inv2.index[inv2["Serial Number"].astype(str) == sn].tolist()
+                    if not idxs:
+                        continue
+                    i = idxs[0]
+                    inv2.loc[i, "Previous User"] = row["From owner"]
+                    inv2.loc[i, "USER"] = row["To owner"]
+                    inv2.loc[i, "TO"] = row["To owner"]
+                    inv2.loc[i, "Date issued"] = row["Date issued"]
+                    inv2.loc[i, "Registered by"] = row["Registered by"]
+                    log2 = pd.concat([log2, pd.DataFrame([row])], ignore_index=True)
+                    applied += 1
+
+                if applied == 0:
+                    st.info("No matching serial numbers found to sync.")
+                else:
+                    if commit_writes([(INVENTORY_WS, inv2), (TRANSFERLOG_WS, log2)], show_error=True):
+                        st.success(f"✅ Synced {applied} queued transfer(s).")
+                        st.session_state.pending_transfers.clear()
 
 # ----------------------------- Transfer Log
 log_tab_index = 3 if IS_ADMIN else 2
