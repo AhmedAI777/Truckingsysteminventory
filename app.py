@@ -1,5 +1,3 @@
-# app.py
-
 import os
 import json
 import time
@@ -8,7 +6,7 @@ import base64
 import hashlib
 from io import BytesIO
 from datetime import datetime
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, List
 
 import numpy as np
 import pandas as pd
@@ -27,8 +25,7 @@ st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 
 # =============================================================================
-# OPTIONAL: CUSTOM FONT
-# place the font file next to app.py if you want to use it
+# OPTIONAL CUSTOM FONT (place OTF next to app.py to use)
 # =============================================================================
 def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
     if not os.path.exists(font_path):
@@ -67,11 +64,6 @@ _inject_font_css("FounderGroteskCondensed-Regular.otf")
 DEFAULT_ADMIN_PW = "admin@2025"
 DEFAULT_STAFF_PW = "staff@2025"
 
-# You can override users in secrets.toml
-# [auth.admins]
-# admin1 = "mypw" ...
-# [auth.staff]
-# staff1 = "mypw" ...
 ADMINS: Dict[str, str] = dict(getattr(st.secrets.get("auth", {}), "admins", {})) if hasattr(st, "secrets") else {}
 STAFFS: Dict[str, str] = dict(getattr(st.secrets.get("auth", {}), "staff", {})) if hasattr(st, "secrets") else {}
 
@@ -141,7 +133,7 @@ def ensure_auth():
         st.session_state.auth_user = None
         st.session_state.auth_role = None
 
-    # 1) Try token in URL
+    # from URL token
     if not st.session_state.auth_user:
         token = _get_query_auth()
         parsed = _parse_token(token) if token else None
@@ -149,15 +141,15 @@ def ensure_auth():
             u, r, exp = parsed
             st.session_state.auth_user = u
             st.session_state.auth_role = r
-            if exp - _now() < 3 * 86400:  # refresh token if close to expiry
+            if exp - _now() < 3 * 86400:
                 _set_query_auth(_make_token(u, r, ttl_days=30))
             return True
 
-    # 2) Already authenticated in session
+    # already logged in for this session
     if st.session_state.auth_user and st.session_state.auth_role:
         return True
 
-    # 3) Login screen
+    # login screen
     st.markdown(f"## {APP_TITLE}")
     st.caption(SUBTITLE)
     st.info("Please sign in to continue.")
@@ -187,17 +179,24 @@ def logout_button():
 # =============================================================================
 # GOOGLE SHEETS CONNECTION
 # =============================================================================
-# Put your spreadsheet URL in secrets, but we keep a fallback:
 SPREADSHEET = (
     st.secrets.get("connections", {}).get("gsheets", {}).get("spreadsheet")
     if hasattr(st, "secrets") else None
 ) or "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
-# Use tab name or gid (as string)
 INVENTORY_WS   = str(st.secrets.get("inventory_tab", "0"))
 TRANSFERLOG_WS = str(st.secrets.get("transferlog_tab", "405007082"))
 
 conn = st.connection("gsheets", type=GSheetsConnection)
+
+def _has_service_account() -> bool:
+    try:
+        svc = st.secrets["connections"]["gsheets"].get("service_account")
+        return bool(svc)
+    except Exception:
+        return False
+
+IS_READ_ONLY = not _has_service_account()  # used for hints if you want them (no blue banner shown)
 
 
 # =============================================================================
@@ -213,7 +212,6 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return df[cols + [c for c in df.columns if c not in cols]]
 
 def _to_datetime_no_warn(values: pd.Series) -> pd.Series:
-    """Parse dates without global warning; handle mixed formats safely."""
     dt = pd.to_datetime(values, format=DATE_FMT, errors="coerce")
     mask = dt.isna() & values.astype(str).str.len().gt(0)
     if not mask.any():
@@ -269,18 +267,31 @@ def safe_read_ws(worksheet: str, cols: list[str], label: str, ttl: int = 0) -> p
         )
         return _ensure_cols(None, cols)
 
-def write_ws(worksheet: str, df: pd.DataFrame) -> bool:
-    """Attempt to write. Return True on success; show friendly message on failure."""
+def write_ws(worksheet: str, df: pd.DataFrame) -> Tuple[bool, Optional[str]]:
+    """Try a single write; return (ok, err_msg)."""
     try:
         conn.update(spreadsheet=SPREADSHEET, worksheet=worksheet, data=df)
-        return True
+        return True, None
     except Exception as e:
-        st.error(
-            "This app currently cannot write to the Google Sheet (read-only or missing "
-            "Service Account permissions). Please configure a Service Account and share "
-            "the spreadsheet with it.\n\nDetails: " + str(e)
-        )
-        return False
+        return False, str(e)
+
+def commit_writes(writes: List[Tuple[str, pd.DataFrame]]) -> bool:
+    """
+    Attempt multiple writes as a single 'commit'.
+    Stops at first failure and shows ONE friendly error.
+    """
+    for ws, df in writes:
+        ok, err = write_ws(ws, df)
+        if not ok:
+            st.error(
+                "This app cannot write to the Google Sheet (read-only or missing "
+                "Service Account permissions).\n\n"
+                "➡️ To enable saving, add a Google **Service Account** in secrets and share "
+                "the spreadsheet with that account (Editor access).\n\n"
+                f"Details: {err}"
+            )
+            return False
+    return True
 
 
 # =============================================================================
@@ -293,8 +304,6 @@ def app_header(user: str, role: str):
         logo = "company_logo.jpeg"
         if os.path.exists(logo):
             st.image(logo, use_container_width=True)
-        else:
-            st.write("")
 
     with c_title:
         st.markdown(f"### {APP_TITLE}")
@@ -403,7 +412,7 @@ if IS_ADMIN:
                         "Registered by": USER,
                     }
                     inv = pd.concat([inv, pd.DataFrame([row])], ignore_index=True)
-                    if write_ws(INVENTORY_WS, inv):
+                    if commit_writes([(INVENTORY_WS, inv)]):
                         st.success("✅ Saved to Google Sheets.")
 
 # ----------------------------- View Inventory
@@ -417,7 +426,7 @@ with tabs[view_tab_index]:
         inv = inv.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
     st.dataframe(nice_display(inv), use_container_width=True, hide_index=True)
 
-# ----------------------------- Transfer Device
+# ----------------------------- Transfer Device (STAFF + ADMIN)
 transfer_tab_index = 2 if IS_ADMIN else 1
 with tabs[transfer_tab_index]:
     st.subheader("Register Ownership Transfer")
@@ -440,7 +449,7 @@ with tabs[transfer_tab_index]:
 
     new_owner = st.text_input("New Owner (required)")
 
-    # IMPORTANT CHANGE: enable the button regardless of read-only status
+    # Button is enabled for Staff even in read-only mode.
     do_transfer = st.button(
         "Transfer Now",
         type="primary",
@@ -455,14 +464,14 @@ with tabs[transfer_tab_index]:
             idx = idx_list[0]
             prev_user = inv.loc[idx, "USER"]
 
-            # update inventory row locally
+            # local update
             inv.loc[idx, "Previous User"] = str(prev_user or "")
             inv.loc[idx, "USER"] = new_owner.strip()
             inv.loc[idx, "TO"] = new_owner.strip()
             inv.loc[idx, "Date issued"] = datetime.now().strftime(DATE_FMT)
             inv.loc[idx, "Registered by"] = USER
 
-            # append to transfer log locally
+            # local log append
             log = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log")
             log_row = {
                 "Device Type": inv.loc[idx, "Device Type"],
@@ -474,10 +483,8 @@ with tabs[transfer_tab_index]:
             }
             log = pd.concat([log, pd.DataFrame([log_row])], ignore_index=True)
 
-            # try to write both; show success only if both succeed
-            ok1 = write_ws(INVENTORY_WS, inv)
-            ok2 = write_ws(TRANSFERLOG_WS, log)
-            if ok1 and ok2:
+            # Commit both writes together; show ONE error if writes are blocked
+            if commit_writes([(INVENTORY_WS, inv), (TRANSFERLOG_WS, log)]):
                 st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
 
 # ----------------------------- Transfer Log
