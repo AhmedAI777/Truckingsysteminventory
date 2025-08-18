@@ -378,12 +378,9 @@ import os, json, time, hmac, base64, hashlib
 from io import BytesIO
 from datetime import datetime
 from typing import Dict, Optional, Tuple, List
-
 import numpy as np
 import pandas as pd
 import streamlit as st
-
-# NEW: use gspread instead of streamlit_gsheets
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
