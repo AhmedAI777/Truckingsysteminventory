@@ -386,11 +386,6 @@ DATE_FMT  = "%Y-%m-%d %H:%M:%S"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
-# ============================== AUTH ==============================
-
-ADMINS: Dict[str, str] = dict(st.secrets["auth"]["admins"])
-STAFFS: Dict[str, str] = dict(st.secrets["auth"]["staff"])
-AUTH_SECRET = st.secrets["auth"]["secret"]
 
 def _now() -> int: return int(time.time())
 
