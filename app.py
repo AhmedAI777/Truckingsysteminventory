@@ -178,7 +178,7 @@ def logout_button():
 # GOOGLE SHEETS CONNECTION
 # =============================================================================
 SPREADSHEET = (
-    st.secrets.get("connections", {}).get("gsheets", {}).get("spreadsheet")
+    st.secrets.get("connections", {}).get("gsheets", {}).get("https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit")
     if hasattr(st, "secrets") else None
 ) or "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
