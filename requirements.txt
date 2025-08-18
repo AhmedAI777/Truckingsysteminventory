@@ -7,6 +7,10 @@ numpy
 openpyxl
 git+https://github.com/streamlit/gsheets-connection
 oauth2client
+airbyte
+
+
+
 
 # Google Drive integration (future-proof)
 google-api-python-client>=2.133.0
