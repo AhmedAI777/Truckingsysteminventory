@@ -106,19 +106,9 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return df[cols + [c for c in df.columns if c not in cols]]
 
 def read_ws(ws:str, cols:list[str], ttl:int=0) -> pd.DataFrame:
-    # Always pass spreadsheet URL, and accept gid (digits) or tab name
     w = int(ws) if ws.isdigit() else ws
-    try:
-        df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=w, ttl=ttl)
-        return _ensure_cols(df, cols)
-    except Exception as e:
-        if "HTTP Error 400" in str(e):
-            st.warning(
-                "Google returned **HTTP 400**. If you’re using public read, publish the "
-                "document (File → Share → **Publish to the web**) and prefer **GIDs** for `inventory_tab`/`transferlog_tab`. "
-                "For writes, add a **Service Account** and share the sheet with it (Editor)."
-            )
-        raise
+    df = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=w, ttl=ttl)
+    return _ensure_cols(df, cols)
 
 def safe_read_ws(ws:str, cols:list[str], label:str, ttl:int=0)->pd.DataFrame:
     try: return read_ws(ws, cols, ttl=ttl)
@@ -172,14 +162,12 @@ def nice_display(df: pd.DataFrame)->pd.DataFrame:
 
 def lookup_contact(name: str, inventory: pd.DataFrame) -> Tuple[str, str]:
     """Auto-fill Email/Phone: 1) secrets directory, 2) last seen in inventory."""
-    # 1) secrets directory
     try:
         directory = st.secrets.get("directory", {}).get("users", {})
         if name in directory:
             d = directory[name]
             return d.get("email",""), d.get("phone","")
     except: pass
-    # 2) last seen in inventory
     try:
         df = inventory[inventory["USER"].astype(str).str.strip().str.lower() == name.strip().lower()]
         if not df.empty:
@@ -199,7 +187,6 @@ USER = st.session_state.auth_user
 ROLE = st.session_state.auth_role
 IS_ADMIN = ROLE == "admin"
 
-# Hide toolbar for staff
 if not IS_ADMIN:
     st.markdown("""
     <style>
@@ -207,7 +194,6 @@ if not IS_ADMIN:
     </style>
     """, unsafe_allow_html=True)
 
-# Header
 c1,c2,c3 = st.columns([1.2,6,3])
 with c1:
     if os.path.exists("company_logo.jpeg"): st.image("company_logo.jpeg", use_container_width=True)
@@ -240,9 +226,7 @@ with tabs[1]:
 
     new_owner = st.text_input("New Owner (required)")
 
-    # Show device preview + auto-filled contact (no manual typing)
-    auto_email = ""
-    auto_phone = ""
+    auto_email, auto_phone = "", ""
     if chosen:
         row = inv2[inv2["Serial Number"].astype(str) == chosen]
         if not row.empty:
@@ -253,9 +237,8 @@ with tabs[1]:
             )
         if new_owner.strip():
             auto_email, auto_phone = lookup_contact(new_owner.strip(), inv2)
-            with st.container():
-                st.write(f"**Auto Email:** {auto_email or '—'}")
-                st.write(f"**Auto Phone:** {auto_phone or '—'}")
+            st.write(f"**Auto Email:** {auto_email or '—'}")
+            st.write(f"**Auto Phone:** {auto_phone or '—'}")
 
     do_transfer = st.button("Transfer Now", type="primary", disabled=not (chosen and new_owner.strip()))
     if do_transfer:
@@ -267,7 +250,6 @@ with tabs[1]:
             prev = inv2.loc[i, "USER"]
             now  = datetime.now().strftime(DATE_FMT)
 
-            # Update inventory row (auto email/phone)
             inv2.loc[i, "Previous User"]  = str(prev or "")
             inv2.loc[i, "USER"]           = new_owner.strip()
             inv2.loc[i, "TO"]             = new_owner.strip()
@@ -276,7 +258,6 @@ with tabs[1]:
             inv2.loc[i, "Date issued"]    = now
             inv2.loc[i, "Registered by"]  = USER
 
-            # Append transfer log
             log = safe_read_ws(TRANSFERLOG_WS, LOG_COLS, "transfer log")
             log = pd.concat([log, pd.DataFrame([{
                 "Device Type": inv2.loc[i, "Device Type"],
@@ -302,18 +283,3 @@ with tabs[2]:
         _ts = pd.to_datetime(log["Date issued"], format=DATE_FMT, errors="coerce")
         log = log.assign(_ts=_ts).sort_values("_ts", ascending=False, na_position="last").drop(columns="_ts")
     st.dataframe(nice_display(log), use_container_width=True, hide_index=True)
-
-# ------------------ Diagnostics ------------------
-with st.expander("🔎 Connection diagnostics"):
-    st.json({"spreadsheet": SPREADSHEET_URL})
-    st.json({"INVENTORY_WS": INVENTORY_WS, "TRANSFERLOG_WS": TRANSFERLOG_WS})
-    try:
-        p = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=(int(INVENTORY_WS) if INVENTORY_WS.isdigit() else INVENTORY_WS), nrows=3, ttl=0)
-        st.caption(f"Inventory probe: {p.shape}"); st.dataframe(p, use_container_width=True)
-    except Exception as e:
-        st.error(f"Inventory probe failed: {e}")
-    try:
-        p = conn.read(spreadsheet=SPREADSHEET_URL, worksheet=(int(TRANSFERLOG_WS) if TRANSFERLOG_WS.isdigit() else TRANSFERLOG_WS), nrows=3, ttl=0)
-        st.caption(f"Transfer log probe: {p.shape}"); st.dataframe(p, use_container_width=True)
-    except Exception as e:
-        st.error(f"Transfer log probe failed: {e}")
