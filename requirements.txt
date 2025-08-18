@@ -6,6 +6,7 @@ pandas
 numpy
 openpyxl
 git+https://github.com/streamlit/gsheets-connection
+oauth2client
 
 # Google Drive integration (future-proof)
 google-api-python-client>=2.133.0
