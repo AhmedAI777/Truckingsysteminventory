@@ -15,19 +15,17 @@ import pandas as pd
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 
-
 # =============================================================================
 # BASIC APP SETTINGS
 # =============================================================================
 APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE  = "Advanced Construction"
-DATE_FMT  = "%Y-%m-%d %H:%M:%S"   # common display/storage format
+DATE_FMT  = "%Y-%m-%d %H:%M:%S"
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
-
 # =============================================================================
-# CUSTOM FONT
+# CUSTOM FONT (optional)
 # =============================================================================
 def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
     if not os.path.exists(font_path):
@@ -40,29 +38,22 @@ def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
           @font-face {{
             font-family: '{family}';
             src: url(data:font/otf;base64,{b64}) format('opentype');
-            font-weight: normal;
-            font-style: normal;
-            font-display: swap;
+            font-weight: normal; font-style: normal; font-display: swap;
           }}
           html, body, [class*="css"] {{
             font-family: '{family}', -apple-system, BlinkMacSystemFont, "Segoe UI",
                          Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif !important;
           }}
-          h1,h2,h3,h4,h5,h6, .stTabs [role="tab"] {{
-            font-family: '{family}', sans-serif !important;
-          }}
-          /* tighten layout a bit */
+          h1,h2,h3,h4,h5,h6, .stTabs [role="tab"] {{ font-family: '{family}', sans-serif !important; }}
           section.main > div {{ padding-top: 0.6rem; }}
         </style>
         """,
         unsafe_allow_html=True,
     )
-
 _inject_font_css("FounderGroteskCondensed-Regular.otf")
 
-
 # =============================================================================
-# AUTH
+# AUTH (same as your version – persists via URL token)
 # =============================================================================
 DEFAULT_ADMIN_PW = "admin@2025"
 DEFAULT_STAFF_PW = "staff@2025"
@@ -132,12 +123,9 @@ def _set_query_auth(token: Optional[str]):
             st.experimental_set_query_params(auth=token)
 
 def ensure_auth():
-    """Keep users signed in on refresh until they click Logout."""
     if "auth_user" not in st.session_state:
         st.session_state.auth_user = None
         st.session_state.auth_role = None
-
-    # from URL (persistent)
     if not st.session_state.auth_user:
         token = _get_query_auth()
         parsed = _parse_token(token) if token else None
@@ -145,15 +133,12 @@ def ensure_auth():
             u, r, exp = parsed
             st.session_state.auth_user = u
             st.session_state.auth_role = r
-            if exp - _now() < 3 * 86400:  # renew if <3 days left
+            if exp - _now() < 3 * 86400:
                 _set_query_auth(_make_token(u, r, ttl_days=30))
             return True
-
-    # already in session
     if st.session_state.auth_user and st.session_state.auth_role:
         return True
 
-    # login screen
     st.markdown(f"## {APP_TITLE}")
     st.caption(SUBTITLE)
     st.info("Please sign in to continue.")
@@ -179,7 +164,6 @@ def logout_button():
         _set_query_auth(None)
         st.rerun()
 
-
 # =============================================================================
 # GOOGLE SHEETS CONNECTION
 # =============================================================================
@@ -188,11 +172,16 @@ SPREADSHEET = (
     if hasattr(st, "secrets") else None
 ) or "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
-INVENTORY_WS   = str(st.secrets.get("inventory_tab", "0"))          # gid or tab name
+INVENTORY_WS   = str(st.secrets.get("inventory_tab", "0"))
 TRANSFERLOG_WS = str(st.secrets.get("transferlog_tab", "405007082"))
 
 conn = st.connection("gsheets", type=GSheetsConnection)
 
+# Detect write capability (gspread vs public)
+CONN_TYPE = (st.secrets.get("connections", {})
+                .get("gsheets", {})
+                .get("type", "public")).lower()
+CAN_WRITE = CONN_TYPE == "gspread"
 
 # =============================================================================
 # HELPERS
@@ -207,13 +196,10 @@ def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return df[cols + [c for c in df.columns if c not in cols]]
 
 def _to_datetime_no_warn(values: pd.Series) -> pd.Series:
-    """Strict -> mixed -> per-cell parse (avoid global infer-format warning)."""
-    # strict
     dt = pd.to_datetime(values, format=DATE_FMT, errors="coerce")
     mask = dt.isna() & values.astype(str).str.len().gt(0)
     if not mask.any():
         return dt
-    # mixed (pandas >=2)
     try:
         dt2 = pd.to_datetime(values[mask], format="mixed", errors="coerce")
         dt.loc[mask] = dt2
@@ -222,7 +208,6 @@ def _to_datetime_no_warn(values: pd.Series) -> pd.Series:
         pass
     if not mask.any():
         return dt
-    # per-cell
     parsed = []
     for v in values[mask].astype(str).tolist():
         try:
@@ -267,26 +252,28 @@ def safe_read_ws(worksheet: str, cols: list[str], label: str, ttl: int = 0) -> p
         return _ensure_cols(None, cols)
 
 def write_ws(worksheet: str, df: pd.DataFrame):
-    conn.update(spreadsheet=SPREADSHEET, worksheet=worksheet, data=df)
-
+    """Write with graceful handling for public(read-only) mode."""
+    if not CAN_WRITE:
+        st.error("This app is currently in read-only mode. Configure a Service Account to enable editing.")
+        return
+    try:
+        conn.update(spreadsheet=SPREADSHEET, worksheet=worksheet, data=df)
+    except Exception as e:
+        st.error(f"Write failed: {type(e).__name__}: {e}")
 
 # =============================================================================
 # HEADER
 # =============================================================================
 def app_header(user: str, role: str):
     c_logo, c_title, c_user = st.columns([1.2, 6, 3], gap="small")
-
     with c_logo:
-        logo = "company_logo.jpeg"
-        if os.path.exists(logo):
-            st.image(logo, use_container_width=True)
-        else:
-            st.write("")
-
+        if os.path.exists("company_logo.jpeg"):
+            st.image("company_logo.jpeg", use_container_width=True)
     with c_title:
         st.markdown(f"### {APP_TITLE}")
         st.caption(SUBTITLE)
-
+        if not CAN_WRITE:
+            st.info("🔒 Connected in read-only mode. To enable Register/Transfer, set up a Google Service Account (see secrets).")
     with c_user:
         st.markdown(
             f"""
@@ -302,7 +289,6 @@ def app_header(user: str, role: str):
         logout_button()
         st.markdown("</div></div><hr style='margin-top:0.8rem;'>", unsafe_allow_html=True)
 
-
 # =============================================================================
 # DATA MODEL
 # =============================================================================
@@ -314,7 +300,6 @@ ALL_COLS = [
 ]
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 
-
 # =============================================================================
 # MAIN
 # =============================================================================
@@ -323,22 +308,18 @@ USER = st.session_state.auth_user
 ROLE = st.session_state.auth_role
 IS_ADMIN = ROLE == "admin"
 
-# Hide table toolbars for STAFF (eye/download/fullscreen)
+# Hide DataFrame toolbar for staff
 if not IS_ADMIN:
-    st.markdown(
-        """
+    st.markdown("""
         <style>
           div[data-testid="stDataFrame"] div[data-testid="stElementToolbar"] { display:none !important; }
           div[data-testid="stDataEditor"]  div[data-testid="stElementToolbar"] { display:none !important; }
-          div[data-testid="stElementToolbar"] { display:none !important; }
         </style>
-        """,
-        unsafe_allow_html=True
-    )
+        """, unsafe_allow_html=True)
 
 app_header(USER, ROLE)
 
-# Tabs
+# Tabs per role
 if IS_ADMIN:
     tabs = st.tabs(["📝 Register", "📦 View Inventory", "🔄 Transfer Device", "📜 Transfer Log", "⬇ Export"])
 else:
@@ -362,7 +343,7 @@ if IS_ADMIN:
                 mem    = st.text_input("Memory")
                 gpu    = st.text_input("GPU")
                 screen = st.text_input("Screen Size")
-            submitted = st.form_submit_button("Save Item", type="primary")
+            submitted = st.form_submit_button("Save Item", type="primary", disabled=not CAN_WRITE)
 
         if submitted:
             if not serial.strip() or not device.strip():
@@ -426,7 +407,11 @@ with tabs[transfer_tab_index]:
             st.warning("Serial not found in inventory.")
 
     new_owner = st.text_input("New Owner (required)")
-    do_transfer = st.button("Transfer Now", type="primary", disabled=not (chosen_serial and new_owner.strip()))
+    do_transfer = st.button(
+        "Transfer Now",
+        type="primary",
+        disabled=not (CAN_WRITE and chosen_serial and new_owner.strip())
+    )
 
     if do_transfer:
         idx_list = inv.index[inv["Serial Number"].astype(str) == chosen_serial].tolist()
