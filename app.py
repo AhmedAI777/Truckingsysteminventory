@@ -349,30 +349,14 @@ def show_login():
 
 def employees_view_tab():
     st.subheader("📇 Employees (mainlists)")
-
-    # Helpful notes & debug
-    with st.expander("Notes for Employees sheet not showing", expanded=False):
-        st.markdown(
-            "- We auto-detect the header row and normalize common header typos (e.g., `New Employeer` → `New Employeer` / `New Employee`).\n"
-            "- If there are multiple worksheets named `mainlists`, we pick the one whose headers best match the expected employee columns.\n"
-            "- If it still shows empty, confirm the service account has **Editor** access to the Google Sheet in **Share**."
-        )
-
     df = read_worksheet(EMPLOYEE_WS)
-    dbg = st.session_state.get("emp_debug")
-
-    if dbg:
-        st.caption(
-            f"Reading worksheet: '{dbg['title']}' (gid={dbg['gid']}) — header row ≈ {dbg['header_row']}, overlap={dbg['overlap']} cols, rows={dbg['rows']}"
-        )
-
     if df.empty:
-        st.info("No employees found in 'mainlists'. If you expect data, check the Notes above.")
+        st.info("No employees found in 'mainlists'.")
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
 
-def inventory_tab():
+def inventory_tab():def inventory_tab():
     st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
     if df.empty:
@@ -642,27 +626,26 @@ def run_app():
 
     if st.session_state.role == "Admin":
         tabs = st.tabs([
-            "📇 View Employees",
-            "🧑‍💼 Employee Register",
             "📝 Register Device",
             "📋 View Inventory",
             "🔁 Transfer Device",
             "📜 Transfer Log",
-            "⬇️ Export",
+            "🧑‍💼 Employee Register",
+            "📇 View Employees",
+            "⬇️ Export"
         ])
-        with tabs[0]: employees_view_tab()
-        with tabs[1]: employee_register_tab()
-        with tabs[2]: register_device_tab()
-        with tabs[3]: inventory_tab()
-        with tabs[4]: transfer_tab()
-        with tabs[5]: history_tab()
+        with tabs[0]: register_device_tab()
+        with tabs[1]: inventory_tab()
+        with tabs[2]: transfer_tab()
+        with tabs[3]: history_tab()
+        with tabs[4]: employee_register_tab()
+        with tabs[5]: employees_view_tab()
         with tabs[6]: export_tab()
     else:
         tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log"])
         with tabs[0]: inventory_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: history_tab()
-
 
 # =============================================================================
 # ENTRY
