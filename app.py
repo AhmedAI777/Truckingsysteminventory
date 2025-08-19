@@ -686,10 +686,10 @@ def run_app():
             "📜 Transfer Log",
             "⬇️ Export"
         ])
-        with tabs[0]: employee_register_tab()
-        with tabs[1]: employees_view_tab()
-        with tabs[2]: register_device_tab()
-        with tabs[3]: inventory_tab()
+        with tabs[2]: employee_register_tab()
+        with tabs[3]: employees_view_tab()
+        with tabs[0]: register_device_tab()
+        with tabs[1]: inventory_tab()
         with tabs[4]: transfer_tab()
         with tabs[5]: history_tab()
         with tabs[6]: export_tab()
