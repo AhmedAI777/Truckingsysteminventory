@@ -49,7 +49,6 @@
 # def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 #     pass
 
-
 from datetime import datetime
 import pandas as pd
 import streamlit as st
@@ -57,7 +56,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
 
-# ---------------------- App Setup ----------------------
+# ---------------------- Config ----------------------
 APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE = "AdvancedConstruction"
 DATE_FMT = "%Y-%m-%d %H:%M:%S"
@@ -70,24 +69,17 @@ st.title(APP_TITLE)
 st.caption(SUBTITLE)
 
 # ---------------------- Google Sheets Auth ----------------------
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
-
-creds = Credentials.from_service_account_info(
-    dict(st.secrets["gcp_service_account"]), scopes=SCOPES
-)
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+creds = Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]), scopes=SCOPES)
 gc = gspread.authorize(creds)
-SHEET_URL = st.secrets["sheets"]["url"]
-sh = gc.open_by_url(SHEET_URL)
+sh = gc.open_by_url(st.secrets["sheets"]["url"])
 
-# ---------------------- State Initialization ----------------------
+# ---------------------- Session State ----------------------
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.role = None
 
-# ---------------------- Google Sheets Functions ----------------------
+# ---------------------- Sheet Utilities ----------------------
 def get_or_create_ws(title: str, rows: int = 100, cols: int = 26):
     try:
         return sh.worksheet(title)
@@ -110,13 +102,12 @@ def append_to_worksheet(ws_title: str, new_data: pd.DataFrame):
     combined = pd.concat([existing, new_data], ignore_index=True)
     set_with_dataframe(ws, combined)
 
-# ---------------------- UI Tabs ----------------------
+# ---------------------- Authentication ----------------------
 def show_login():
-    st.header("🔐 Sign In")
+    st.subheader("🔐 Sign In")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
     role = st.selectbox("Role", ["Admin", "Staff"])
-
     if st.button("Login"):
         if username and password:
             st.session_state.authenticated = True
@@ -128,9 +119,10 @@ def show_login():
 def logout():
     st.session_state.authenticated = False
     st.session_state.role = None
-    st.success("✅ Logged out successfully.")
+    st.success("✅ You have been logged out.")
 
-def show_register_tab():
+# ---------------------- UI Tabs ----------------------
+def register_tab():
     st.subheader("📦 Register New Device")
     with st.form("register_device"):
         col1, col2, col3 = st.columns(3)
@@ -147,9 +139,7 @@ def show_register_tab():
             registered_by = st.text_input("Registered By")
             date_issued = st.date_input("Date Issued", value=datetime.now())
 
-        register_submit = st.form_submit_button("Register Device")
-
-        if register_submit:
+        if st.form_submit_button("Register Device"):
             new_device = pd.DataFrame([{
                 "Serial Number": serial,
                 "Device Type": device_type,
@@ -162,14 +152,14 @@ def show_register_tab():
                 "Date issued": date_issued.strftime(DATE_FMT)
             }])
             append_to_worksheet(INVENTORY_WS, new_device)
-            st.success(f"✅ Device {serial} registered successfully.")
+            st.success(f"✅ Device {serial} registered.")
 
-def show_transfer_tab():
+def transfer_tab():
     st.subheader("🔁 Transfer Device")
     with st.form("transfer_device"):
         col1, col2, col3 = st.columns(3)
         with col1:
-            transfer_serial = st.text_input("Serial Number (to transfer)")
+            serial = st.text_input("Serial Number")
             from_user = st.text_input("From User")
         with col2:
             to_user = st.text_input("To User")
@@ -179,79 +169,82 @@ def show_transfer_tab():
             transfer_date = st.date_input("Transfer Date", value=datetime.now())
             transfer_time = st.time_input("Transfer Time", value=datetime.now().time())
 
-        transfer_submit = st.form_submit_button("Transfer Device")
-
-        if transfer_submit:
+        if st.form_submit_button("Transfer Device"):
             timestamp = f"{transfer_date} {transfer_time.strftime('%H:%M')}"
-            transfer_log = pd.DataFrame([{
-                "Device Type": "Unknown",  # Optional enhancement
-                "Serial Number": transfer_serial,
+            transfer_entry = pd.DataFrame([{
+                "Device Type": "Unknown",
+                "Serial Number": serial,
                 "From owner": from_user,
                 "To owner": to_user,
                 "Date issued": timestamp,
                 "Registered by": transfer_by
             }])
-            append_to_worksheet(TRANSFERLOG_WS, transfer_log)
+            append_to_worksheet(TRANSFERLOG_WS, transfer_entry)
 
             inventory_df = read_worksheet(INVENTORY_WS)
-            idx = inventory_df[inventory_df["Serial Number"] == transfer_serial].index
+            idx = inventory_df[inventory_df["Serial Number"] == serial].index
             if not idx.empty:
                 inventory_df.at[idx[0], "USER"] = to_user
                 inventory_df.at[idx[0], "Department"] = department
                 inventory_df.at[idx[0], "Date issued"] = timestamp
                 write_worksheet(INVENTORY_WS, inventory_df)
-                st.success(f"✅ Device {transfer_serial} transferred successfully.")
+                st.success(f"✅ Device {serial} transferred.")
             else:
-                st.warning("⚠️ Serial number not found in inventory!")
+                st.warning("⚠️ Device not found in inventory.")
 
-def show_history_tab():
+def history_tab():
     st.subheader("📝 Transfer Log")
     df = read_worksheet(TRANSFERLOG_WS)
     if df.empty:
-        st.warning("No transfer log found.")
+        st.warning("No transfer records found.")
     else:
         st.dataframe(df)
 
-def show_inventory_tab():
-    st.subheader("📋 Current Inventory")
+def inventory_tab():
+    st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
     if df.empty:
         st.warning("No inventory found.")
     else:
         st.dataframe(df)
 
-        # ✅ Export button visible ONLY to Admin
+        # Export only for Admin
         if st.session_state.role == "Admin":
             csv = df.to_csv(index=False).encode("utf-8")
             st.download_button("⬇️ Download CSV", csv, "inventory.csv", "text/csv")
 
-# ---------------------- Main App Logic ----------------------
+# ---------------------- Main ----------------------
 if not st.session_state.authenticated:
     show_login()
 else:
-    role = st.session_state.role
-    st.sidebar.write(f"👤 Logged in as: **{role}**")
+    st.success(f"👤 Logged in as: {st.session_state.role}")
 
-    # Tabs based on role
-    if role == "Admin":
-        tabs = ["Register", "Transfer", "History", "Export", "Logout"]
-    elif role == "Staff":
-        tabs = ["Transfer", "History", "Read", "Logout"]
+    if st.session_state.role == "Admin":
+        tab_labels = ["Register", "Transfer", "History", "Export", "Logout"]
+    else:
+        tab_labels = ["Transfer", "History", "Inventory", "Logout"]
 
-    selected_tab = st.sidebar.radio("📂 Navigation", tabs)
+    tabs = st.tabs(tab_labels)
 
-    if selected_tab == "Register":
-        show_register_tab()
-    elif selected_tab == "Transfer":
-        show_transfer_tab()
-    elif selected_tab == "History":
-        show_history_tab()
-    elif selected_tab == "Export":
-        if role == "Admin":
-            show_inventory_tab()
-        else:
-            st.warning("Access Denied.")
-    elif selected_tab == "Read":
-        show_inventory_tab()
-    elif selected_tab == "Logout":
+    tab_map = {label: idx for idx, label in enumerate(tab_labels)}
+
+    if "Register" in tab_labels:
+        with tabs[tab_map["Register"]]:
+            register_tab()
+
+    with tabs[tab_map["Transfer"]]:
+        transfer_tab()
+
+    with tabs[tab_map["History"]]:
+        history_tab()
+
+    if "Export" in tab_labels:
+        with tabs[tab_map["Export"]]:
+            inventory_tab()
+
+    if "Inventory" in tab_labels:
+        with tabs[tab_map["Inventory"]]:
+            inventory_tab()
+
+    with tabs[tab_map["Logout"]]:
         logout()
