@@ -114,7 +114,7 @@ def show_login():
             st.session_state.username = username
             st.session_state.name = username
             st.session_state.role = "Admin" if username in st.secrets["auth"]["admins"] else "Staff"
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.error("❌ Invalid username or password.")
 
@@ -125,7 +125,7 @@ def top_logout_button():
         if st.button("🚪 Logout", key="logout"):
             for key in ["authenticated", "role", "username", "name"]:
                 st.session_state.pop(key, None)
-            st.experimental_rerun()
+            st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
 # --------------------------- TABS ------------------------------------
