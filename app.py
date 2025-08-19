@@ -691,8 +691,6 @@
 #     show_login()
 
 
-
-
 # pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth
 import os
 import re
@@ -723,7 +721,7 @@ SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo
 # Worksheet titles (created if missing)
 INVENTORY_WS    = "truckinventory"
 TRANSFERLOG_WS  = "transfer_log"
-EMPLOYEE_WS     = "mainlists"  # Employees worksheet (there may be duplicates)
+EMPLOYEE_WS     = "mainlists"
 
 # Canonical inventory columns
 INVENTORY_COLS = [
@@ -758,27 +756,26 @@ HEADER_SYNONYMS = {
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 # =============================================================================
-# AUTH PERSISTENCE (COOKIE-BASED)
+# AUTH (SESSION COOKIE ONLY — survives refresh, not browser close)
 # =============================================================================
 COOKIE_NAME = "ac_auth"
-COOKIE_TTL_DAYS = 30  # sliding window
-COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")  # ensure component mounts
+COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")  # mount component
 
 def _cookie_key() -> str:
-    # Put a strong random value in secrets:
+    # Put a strong random in secrets:
     # [auth]
-    # cookie_key = "sddxcfgfggftrtdrte77yuyt"
+    # cookie_key = "your-very-long-random-secret"
     return st.secrets["auth"].get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
 
 def _sign(raw: bytes) -> str:
     return hmac.new(_cookie_key().encode(), raw, hashlib.sha256).hexdigest()
 
-def _issue_cookie(username: str, role: str):
-    exp = int((datetime.utcnow() + timedelta(days=COOKIE_TTL_DAYS)).timestamp())
-    payload = {"u": username, "r": role, "exp": exp}
+def _issue_session_cookie(username: str, role: str):
+    # session cookie (no expires_at) -> persists across refresh, cleared when browser closes
+    payload = {"u": username, "r": role, "iat": int(datetime.utcnow().timestamp())}
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
-    COOKIE_MGR.set(COOKIE_NAME, token, expires_at=datetime.utcnow() + timedelta(days=COOKIE_TTL_DAYS))
+    COOKIE_MGR.set(COOKIE_NAME, token)
 
 def _read_cookie():
     token = COOKIE_MGR.get(COOKIE_NAME)
@@ -790,25 +787,31 @@ def _read_cookie():
         if not hmac.compare_digest(sig, _sign(raw)):
             COOKIE_MGR.delete(COOKIE_NAME)
             return None
-        payload = json.loads(raw.decode())
-        if payload.get("exp", 0) < int(datetime.utcnow().timestamp()):
-            COOKIE_MGR.delete(COOKIE_NAME)
-            return None
-        # sliding refresh on each valid visit
-        _issue_cookie(payload["u"], payload["r"])
-        return payload
+        return json.loads(raw.decode())
     except Exception:
         COOKIE_MGR.delete(COOKIE_NAME)
         return None
 
-# One-time bootstrap: let CookieManager mount, then re-run once so .get() works reliably
+def do_logout():
+    try:
+        COOKIE_MGR.delete(COOKIE_NAME)
+        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1))
+        COOKIE_MGR.delete_all()
+    except Exception:
+        pass
+    for k in ["authenticated", "role", "username", "name"]:
+        st.session_state.pop(k, None)
+    st.session_state.just_logged_out = True  # skip cookie read on the immediate rerun
+    st.rerun()
+
+# Ensure CookieManager is mounted before first read
 if "cookie_bootstrapped" not in st.session_state:
     st.session_state.cookie_bootstrapped = True
-    _ = COOKIE_MGR.get_all()  # harmless; ensures mounting
+    _ = COOKIE_MGR.get_all()
     st.rerun()
 
 # =============================================================================
-# STYLE (font + header + optional toolbar hide)
+# STYLE
 # =============================================================================
 def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
     if not os.path.exists(font_path):
@@ -842,35 +845,29 @@ def render_header():
     _inject_font_css("FounderGroteskCondensed-Regular.otf")
 
     c_logo, c_title, c_user = st.columns([1.2, 6, 3], gap="small")
-
     with c_logo:
         if os.path.exists("company_logo.jpeg"):
             try:
                 st.image("company_logo.jpeg", use_container_width=True)
             except TypeError:
                 st.image("company_logo.jpeg", use_column_width=True)
-
     with c_title:
         st.markdown(f"### {APP_TITLE}")
         st.caption(SUBTITLE)
-
     with c_user:
         username = st.session_state.get("username", "")
         role = st.session_state.get("role", "")
         st.markdown(
             f"""<div style="display:flex; align-items:center; justify-content:flex-end; gap:1rem;">
                    <div>
-                     <div style="font-weight:600;">Welcome, {username}</div>
-                     <div>Role: <b>{role}</b></div>
+                     <div style="font-weight:600;">Welcome, {username or '—'}</div>
+                     <div>Role: <b>{role or '—'}</b></div>
                    </div>
                  </div>""",
             unsafe_allow_html=True,
         )
-        if st.button("Logout"):
-            COOKIE_MGR.delete(COOKIE_NAME)
-            for key in ["authenticated", "role", "username", "name"]:
-                st.session_state.pop(key, None)
-            st.rerun()
+        if st.session_state.get("authenticated") and st.button("Logout"):
+            do_logout()
 
     st.markdown("<hr style='margin-top:0.8rem;'>", unsafe_allow_html=True)
 
@@ -888,7 +885,7 @@ def hide_table_toolbar_for_non_admin():
         )
 
 # =============================================================================
-# GOOGLE SHEETS (gspread) helpers  — LAZY + CACHED + RETRY
+# GOOGLE SHEETS — LAZY + RETRY + CACHED READS
 # =============================================================================
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -907,7 +904,6 @@ def _get_sheet_url():
     return st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
 
 def get_sh():
-    """Open the Google Spreadsheet lazily with retry (prevents refresh crashes)."""
     gc = _get_gc()
     url = _get_sheet_url()
     last_exc = None
@@ -916,7 +912,7 @@ def get_sh():
             return gc.open_by_url(url)
         except gspread.exceptions.APIError as e:
             last_exc = e
-            time.sleep(0.6 * (attempt + 1))  # 0.6s, 1.2s
+            time.sleep(0.6 * (attempt + 1))
     st.error("Google Sheets API error while opening the spreadsheet. "
              "Please confirm the service account has access and try again.")
     raise last_exc
@@ -925,24 +921,19 @@ def _norm_title(t: str) -> str:
     return (t or "").strip().lower()
 
 def _norm_header(h: str) -> str:
-    s = re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
-    return s
+    return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
 
 def _canon_header(h: str) -> str:
     key = _norm_header(h)
     return HEADER_SYNONYMS.get(key, h.strip())
 
 def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
-    # ensure required columns exist
     for c in desired:
         if c not in df.columns:
             df[c] = ""
-    # keep desired first, then any extra columns in their current order
     tail = [c for c in df.columns if c not in desired]
     return df[desired + tail]
 
-
-# --- Worksheet discovery that tolerates duplicates named the same ---
 def _find_ws_candidates(title: str):
     sh = get_sh()
     target = _norm_title(title)
@@ -966,12 +957,9 @@ def _read_ws_as_dataframe(ws: gspread.Worksheet, expected_cols: list[str]) -> tu
 
     expected_canon = set(expected_cols)
     header_idx, score = _score_header(values, expected_canon)
-
     headers_raw = values[header_idx]
     headers_canon = [_canon_header(h) for h in headers_raw]
-    preferred = []
-    for h, canon in zip(headers_raw, headers_canon):
-        preferred.append(HEADER_SYNONYMS.get(_norm_header(h), h))
+    preferred = [HEADER_SYNONYMS.get(_norm_header(h), h) for h in headers_raw]
 
     data_rows = values[header_idx + 1 :]
     df = pd.DataFrame(data_rows, columns=preferred).replace({None: ""})
@@ -981,7 +969,6 @@ def _read_ws_as_dataframe(ws: gspread.Worksheet, expected_cols: list[str]) -> tu
 
 def get_employee_ws() -> gspread.Worksheet:
     sh = get_sh()
-
     ws_id = st.session_state.get("emp_ws_id")
     if ws_id:
         ws = sh.get_worksheet_by_id(ws_id)
@@ -1019,22 +1006,16 @@ def get_or_create_ws(title, rows=500, cols=80):
     except gspread.exceptions.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
-# Cache reads for 120s so reruns & multiple users don't hammer Sheets.
 @st.cache_data(ttl=120, show_spinner=False)
 def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
     if ws_title == EMPLOYEE_WS:
         ws = get_employee_ws()
         df, header_idx, overlap = _read_ws_as_dataframe(ws, EMPLOYEE_CANON_COLS)
-        # optional debug info
         st.session_state.emp_debug = {
-            "title": ws.title,
-            "gid": ws.id,
-            "header_row": header_idx + 1,
-            "overlap": overlap,
-            "rows": len(df),
+            "title": ws.title, "gid": ws.id,
+            "header_row": header_idx + 1, "overlap": overlap, "rows": len(df),
         }
         return df
-
     ws = get_or_create_ws(ws_title)
     data = ws.get_all_records()
     df = pd.DataFrame(data)
@@ -1043,7 +1024,6 @@ def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
     if ws_title == TRANSFERLOG_WS:
         return reorder_columns(df, LOG_COLS)
     return df
-
 
 def read_worksheet(ws_title):
     try:
@@ -1055,42 +1035,21 @@ def read_worksheet(ws_title):
         if ws_title == EMPLOYEE_WS:    return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
         return pd.DataFrame()
 
-        ws = get_or_create_ws(ws_title)
-        data = ws.get_all_records()
-        df = pd.DataFrame(data)
-        if ws_title == INVENTORY_WS:
-            return reorder_columns(df, INVENTORY_COLS)
-        if ws_title == TRANSFERLOG_WS:
-            return reorder_columns(df, LOG_COLS)
-        return df
-    except Exception as e:
-        st.error(f"Error reading sheet '{ws_title}': {e}")
-        if ws_title == INVENTORY_WS:   return pd.DataFrame(columns=INVENTORY_COLS)
-        if ws_title == TRANSFERLOG_WS: return pd.DataFrame(columns=LOG_COLS)
-        if ws_title == EMPLOYEE_WS:    return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
-        return pd.DataFrame()
-
 def write_worksheet(ws_title, df):
-    if ws_title == EMPLOYEE_WS:
-        ws = get_employee_ws()
-    else:
-        ws = get_or_create_ws(ws_title)
+    ws = get_employee_ws() if ws_title == EMPLOYEE_WS else get_or_create_ws(ws_title)
     ws.clear()
     set_with_dataframe(ws, df)
-    st.cache_data.clear()   # << bust cached reads
+    st.cache_data.clear()
 
 def append_to_worksheet(ws_title, new_data):
-    if ws_title == EMPLOYEE_WS:
-        ws = get_employee_ws()
-    else:
-        ws = get_or_create_ws(ws_title)
+    ws = get_employee_ws() if ws_title == EMPLOYEE_WS else get_or_create_ws(ws_title)
     df_existing = pd.DataFrame(ws.get_all_records())
     df_combined = pd.concat([df_existing, new_data], ignore_index=True)
     set_with_dataframe(ws, df_combined)
-    st.cache_data.clear()   # << bust cached reads
+    st.cache_data.clear()
 
 # =============================================================================
-# AUTH (simple, from secrets) + LOGIN FORM
+# AUTH (users) + LOGIN FORM
 # =============================================================================
 def load_users():
     admins = st.secrets["auth"]["admins"]
@@ -1116,7 +1075,8 @@ def show_login():
             st.session_state.username = username
             st.session_state.name = user["name"]
             st.session_state.role = user["role"]
-            _issue_cookie(username, user["role"])   # persist login across refresh
+            st.session_state.just_logged_out = False
+            _issue_session_cookie(username, user["role"])  # session cookie only
             st.rerun()
         else:
             st.error("❌ Invalid username or password.")
@@ -1145,7 +1105,6 @@ def inventory_tab():
 
 def register_device_tab():
     st.subheader("📝 Register New Device")
-
     with st.form("register_device", clear_on_submit=True):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
@@ -1295,7 +1254,6 @@ def history_tab():
 
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
-
     emp_df = read_worksheet(EMPLOYEE_WS)
     try:
         ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
@@ -1373,9 +1331,7 @@ def export_tab():
     inv = read_worksheet(INVENTORY_WS)
     log = read_worksheet(TRANSFERLOG_WS)
     emp = read_worksheet(EMPLOYEE_WS)
-
     st.caption(f"Last fetched: {datetime.now().strftime(DATE_FMT)}")
-
     c1, c2, c3 = st.columns(3)
     with c1:
         st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"),
@@ -1395,8 +1351,6 @@ def run_app():
     hide_table_toolbar_for_non_admin()
 
     if st.session_state.role == "Admin":
-
-        # Employees first, then device tabs
         tabs = st.tabs([
             "🧑‍💼 Employee Register",
             "📇 View Employees",
@@ -1418,23 +1372,25 @@ def run_app():
         with tabs[0]: inventory_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: history_tab()
+
 # =============================================================================
 # ENTRY
 # =============================================================================
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-# Try cookie-based sign-in first if not already authenticated
-if not st.session_state.authenticated:
+# Refresh behavior:
+# - If you're logged in, cookie keeps you in.
+# - If you just logged out, skip cookie read once.
+if not st.session_state.authenticated and not st.session_state.get("just_logged_out"):
     payload = _read_cookie()
     if payload:
         st.session_state.authenticated = True
         st.session_state.username = payload["u"]
         st.session_state.name = payload["u"]
-        st.session_state.role = payload["r"]
+        st.session_state.role = payload.get("r", "")
 
 if st.session_state.authenticated:
     run_app()
 else:
     show_login()
-
