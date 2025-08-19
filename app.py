@@ -1,5 +1,5 @@
-# app.py
 import os
+import re
 import base64
 from datetime import datetime
 import streamlit as st
@@ -16,14 +16,16 @@ SUBTITLE  = "AdvancedConstruction"
 DATE_FMT  = "%Y-%m-%d %H:%M:%S"
 
 # Default to your sheet URL; can be overridden in secrets
-SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
+SHEET_URL_DEFAULT = (
+    "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
+)
 
-# Worksheet titles (created if missing)
+# Worksheet titles (we’ll look them up case/space-insensitively)
 INVENTORY_WS    = "truckinventory"
 TRANSFERLOG_WS  = "transfer_log"
-EMPLOYEE_WS     = "mainlists"          # <-- you were using this but hadn't defined it
+EMPLOYEE_WS     = "mainlists"
 
-# Canonical inventory columns (includes your new fields)
+# Canonical inventory columns
 INVENTORY_COLS = [
     "Serial Number","Device Type","Brand","Model","CPU",
     "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
@@ -31,19 +33,35 @@ INVENTORY_COLS = [
     "Department","Email Address","Contact Number","Department.1","Location","Office",
     "Notes","Date issued","Registered by"
 ]
-LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
+LOG_COLS = [
+    "Device Type","Serial Number","From owner","To owner","Date issued","Registered by"
+]
 
-# Employees sheet columns (exact names from your screenshot)
-EMPLOYEE_COLS = [
-    "New Employeer","Employee ID","New Signature","Name","Address",
+# Employees sheet – canonical column names
+EMP_CANON_COLS = [
+    "New Employee","Employee ID","New Signature","Name","Address",
     "APLUS","Active","Position","Department","Location (KSA)",
     "Project","Microsoft Teams","Mobile Number"
 ]
 
+# Header synonyms we’ll normalize (lowercased, alnum-only keys)
+_EMP_COL_SYNONYMS = {
+    "new employee": "New Employee",
+    "new employeer": "New Employee",      # common misspelling
+    "new employer": "New Employee",       # just in case
+    "employee id": "Employee ID",
+    "new signature": "New Signature",
+    "location ksa": "Location (KSA)",
+    "microsoft team": "Microsoft Teams",
+    "microsoft teams": "Microsoft Teams",
+    "mobile": "Mobile Number",
+    "mobile number": "Mobile Number",
+}
+
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 # =============================================================================
-# STYLE (font + header + optional toolbar hide)
+# STYLE
 # =============================================================================
 def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
     if not os.path.exists(font_path):
@@ -73,6 +91,7 @@ def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
         unsafe_allow_html=True,
     )
 
+
 def render_header():
     _inject_font_css("FounderGroteskCondensed-Regular.otf")
 
@@ -80,7 +99,6 @@ def render_header():
 
     with c_logo:
         if os.path.exists("company_logo.jpeg"):
-            # compatibility across Streamlit versions
             try:
                 st.image("company_logo.jpeg", use_container_width=True)
             except TypeError:
@@ -109,6 +127,7 @@ def render_header():
 
     st.markdown("<hr style='margin-top:0.8rem;'>", unsafe_allow_html=True)
 
+
 def hide_table_toolbar_for_non_admin():
     if st.session_state.get("role") != "Admin":
         st.markdown(
@@ -119,64 +138,132 @@ def hide_table_toolbar_for_non_admin():
               div[data-testid="stElementToolbar"] { display:none !important; }
             </style>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
 # =============================================================================
 # GOOGLE SHEETS (gspread)
 # =============================================================================
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
-gc = gspread.authorize(creds)
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+creds = Credentials.from_service_account_info(
+    st.secrets["gcp_service_account"], scopes=SCOPES
+)
+_gc = gspread.authorize(creds)
 SHEET_URL = st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
-sh = gc.open_by_url(SHEET_URL)
+_sh = _gc.open_by_url(SHEET_URL)
 
-def get_or_create_ws(title, rows=500, cols=80):
+
+def _norm(text: str) -> str:
+    """lowercase + collapse to alnum; used to compare titles/headers robustly."""
+    return re.sub(r"[^a-z0-9]+", " ", str(text).lower()).strip()
+
+
+def find_worksheet(title: str):
+    """Return a worksheet by title, ignoring case/extra spaces. Create if missing."""
     try:
-        return sh.worksheet(title)
+        return _sh.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
-        return sh.add_worksheet(title=title, rows=rows, cols=cols)
+        # fuzzy match
+        for ws in _sh.worksheets():
+            if _norm(ws.title) == _norm(title):
+                return ws
+        # as a last resort, create it (empty)
+        return _sh.add_worksheet(title=title, rows=500, cols=80)
+
+
+def detect_header_row(ws, expected_cols: list[str], max_scan: int = 10) -> int:
+    """Scan the first max_scan rows to find a plausible header row.
+    We consider it a header if it matches at least ~1/3 of expected columns.
+    """
+    try:
+        values = ws.get_all_values()
+    except Exception:
+        return 1
+    expected_norm = {_norm(c) for c in expected_cols}
+    for i, row in enumerate(values[:max_scan], start=1):
+        row_norm = {_norm(c) for c in row if c}
+        if not row_norm:
+            continue
+        overlap = len(expected_norm & row_norm)
+        if overlap >= max(4, len(expected_norm) // 3):
+            return i
+    return 1
+
 
 def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     for c in desired:
         if c not in df.columns:
             df[c] = ""
-    return df[desired + [c for c in df.columns if c not in desired]]
+    # place desired first, then any extras at the end
+    extras = [c for c in df.columns if c not in desired]
+    return df[desired + extras]
 
-def read_worksheet(ws_title):
-    """Read a worksheet and ensure its expected columns exist (per sheet)."""
+
+def _normalize_employee_cols(df: pd.DataFrame) -> pd.DataFrame:
+    # rename using synonyms
+    rename_map = {}
+    for c in df.columns:
+        key = _norm(c)
+        if key in _EMP_COL_SYNONYMS:
+            rename_map[c] = _EMP_COL_SYNONYMS[key]
+    df = df.rename(columns=rename_map)
+    # reorder + fill missing
+    df = reorder_columns(df, EMP_CANON_COLS)
+    return df
+
+
+def read_worksheet(ws_title: str) -> pd.DataFrame:
+    """Read a worksheet and ensure its expected columns exist.
+    Robust to: different header row, minor header typos, case/space differences.
+    """
     try:
-        ws = get_or_create_ws(ws_title)
-        data = ws.get_all_records()
-        df = pd.DataFrame(data)
+        ws = find_worksheet(ws_title)
+        # choose expected columns per sheet
+        expected = (
+            INVENTORY_COLS if ws_title == INVENTORY_WS else
+            LOG_COLS if ws_title == TRANSFERLOG_WS else
+            EMP_CANON_COLS if ws_title == EMPLOYEE_WS else []
+        )
+        head_row = detect_header_row(ws, expected)
+        rows = ws.get_all_records(head=head_row, default_blank="")
+        df = pd.DataFrame(rows)
         if ws_title == INVENTORY_WS:
             return reorder_columns(df, INVENTORY_COLS)
         if ws_title == TRANSFERLOG_WS:
             return reorder_columns(df, LOG_COLS)
         if ws_title == EMPLOYEE_WS:
-            return reorder_columns(df, EMPLOYEE_COLS)
+            return _normalize_employee_cols(df)
         return df
     except Exception as e:
         st.error(f"Error reading sheet '{ws_title}': {e}")
-        if ws_title == INVENTORY_WS:   return pd.DataFrame(columns=INVENTORY_COLS)
-        if ws_title == TRANSFERLOG_WS: return pd.DataFrame(columns=LOG_COLS)
-        if ws_title == EMPLOYEE_WS:    return pd.DataFrame(columns=EMPLOYEE_COLS)
+        if ws_title == INVENTORY_WS:
+            return pd.DataFrame(columns=INVENTORY_COLS)
+        if ws_title == TRANSFERLOG_WS:
+            return pd.DataFrame(columns=LOG_COLS)
+        if ws_title == EMPLOYEE_WS:
+            return pd.DataFrame(columns=EMP_CANON_COLS)
         return pd.DataFrame()
 
-def write_worksheet(ws_title, df):
-    ws = get_or_create_ws(ws_title)
+
+def write_worksheet(ws_title: str, df: pd.DataFrame):
+    ws = find_worksheet(ws_title)
     ws.clear()
     set_with_dataframe(ws, df)
 
-def append_to_worksheet(ws_title, new_data):
-    ws = get_or_create_ws(ws_title)
-    df_existing = pd.DataFrame(ws.get_all_records())
-    df_combined = pd.concat([df_existing, new_data], ignore_index=True)
-    set_with_dataframe(ws, df_combined)
+
+def append_to_worksheet(ws_title: str, new_data: pd.DataFrame):
+    ws = find_worksheet(ws_title)
+    existing = pd.DataFrame(ws.get_all_records(default_blank=""))
+    combined = pd.concat([existing, new_data], ignore_index=True)
+    set_with_dataframe(ws, combined)
 
 # =============================================================================
 # AUTH (simple, from secrets)
 # =============================================================================
+
 def load_users():
     admins = st.secrets["auth"]["admins"]
     staff  = st.secrets["auth"]["staff"]
@@ -189,6 +276,7 @@ def load_users():
     return users
 
 USERS = load_users()
+
 
 def show_login():
     st.subheader("🔐 Sign In")
@@ -208,13 +296,15 @@ def show_login():
 # =============================================================================
 # TABS
 # =============================================================================
+
 def employees_view_tab():
     st.subheader("📇 Employees (mainlists)")
     df = read_worksheet(EMPLOYEE_WS)
     if df.empty:
-        st.info("No employees found in 'mainlists'.")
+        st.info("No employees found in 'mainlists'. If you expect data, check the Notes below.")
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
+
 
 def inventory_tab():
     st.subheader("📋 Inventory")
@@ -227,7 +317,8 @@ def inventory_tab():
         else:
             st.dataframe(df, use_container_width=True, hide_index=True)
 
-def register_device_tab():  # <-- renamed to match run_app()
+
+def register_device_tab():
     st.subheader("📝 Register New Device")
 
     with st.form("register_device", clear_on_submit=True):
@@ -318,10 +409,14 @@ def register_device_tab():  # <-- renamed to match run_app()
             "Registered by": st.session_state.get("username", ""),
         }
 
-        new_df = pd.concat([inv, pd.DataFrame([row])], ignore_index=True) if not inv.empty else pd.DataFrame([row])
+        new_df = (
+            pd.concat([inv, pd.DataFrame([row])], ignore_index=True)
+            if not inv.empty else pd.DataFrame([row])
+        )
         new_df = reorder_columns(new_df, INVENTORY_COLS)
         write_worksheet(INVENTORY_WS, new_df)
         st.success("✅ Device registered and added to Inventory.")
+
 
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
@@ -375,6 +470,7 @@ def transfer_tab():
 
         st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
 
+
 def history_tab():
     st.subheader("📜 Transfer Log")
     df = read_worksheet(TRANSFERLOG_WS)
@@ -383,12 +479,13 @@ def history_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
+
 def employee_register_tab():
-    """Admin-only: register employees into 'mainlists' (separate system)."""
+    """Admin-only: register employees into 'mainlists'."""
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
 
     emp_df = read_worksheet(EMPLOYEE_WS)
-    # light suggestion for next ID
+    # Suggest next ID
     try:
         ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
         next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
@@ -398,7 +495,7 @@ def employee_register_tab():
     with st.form("register_employee", clear_on_submit=True):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
-            new_emp_status = st.text_input("New Employeer", value="Created")
+            new_emp_status = st.text_input("New Employee", value="Created")
         with r1c2:
             emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
         with r1c3:
@@ -441,7 +538,7 @@ def employee_register_tab():
             return
 
         row = {
-            "New Employeer": new_emp_status.strip(),
+            "New Employee": new_emp_status.strip(),
             "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
             "New Signature": new_sig.strip(),
             "Name": name.strip(),
@@ -455,10 +552,15 @@ def employee_register_tab():
             "Microsoft Teams": teams.strip(),
             "Mobile Number": mobile.strip(),
         }
-        new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True) if not emp_df.empty else pd.DataFrame([row])
-        new_df = reorder_columns(new_df, EMPLOYEE_COLS)
+
+        new_df = (
+            pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True)
+            if not emp_df.empty else pd.DataFrame([row])
+        )
+        new_df = reorder_columns(new_df, EMP_CANON_COLS)
         write_worksheet(EMPLOYEE_WS, new_df)
         st.success("✅ Employee saved to 'mainlists'.")
+
 
 def export_tab():
     st.subheader("⬇️ Export (always fresh)")
@@ -470,21 +572,33 @@ def export_tab():
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"),
-                           "inventory.csv", "text/csv")
+        st.download_button(
+            "Inventory CSV", inv.to_csv(index=False).encode("utf-8"), "inventory.csv", "text/csv"
+        )
     with c2:
-        st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"),
-                           "transfer_log.csv", "text/csv")
+        st.download_button(
+            "Transfer Log CSV", log.to_csv(index=False).encode("utf-8"), "transfer_log.csv", "text/csv"
+        )
     with c3:
-        st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"),
-                           "employees.csv", "text/csv")
+        st.download_button(
+            "Employees CSV", emp.to_csv(index=False).encode("utf-8"), "employees.csv", "text/csv"
+        )
 
 # =============================================================================
 # MAIN
 # =============================================================================
+
 def run_app():
     render_header()
     hide_table_toolbar_for_non_admin()
+
+    # Handy hints when data is missing/hidden by header issues
+    with st.expander("Notes for Employees sheet not showing"):
+        st.markdown(
+            "- We now auto-detect the header row and normalize common header typos (e.g., `New Employeer` → `New Employee`).\n"
+            "- Sheet lookup is case/space-insensitive, so `mainlists`, `MainLists`, or `mainlists ` all work.\n"
+            "- If it still shows empty, confirm the service account has *Editor* access to the Google Sheet in **Share**."
+        )
 
     if st.session_state.role == "Admin":
         tabs = st.tabs([
@@ -494,20 +608,30 @@ def run_app():
             "📜 Transfer Log",
             "🧑‍💼 Employee Register",
             "📇 View Employees",
-            "⬇️ Export"
+            "⬇️ Export",
         ])
-        with tabs[0]: register_device_tab()     # <-- existed mismatch fixed
-        with tabs[1]: inventory_tab()
-        with tabs[2]: transfer_tab()
-        with tabs[3]: history_tab()
-        with tabs[4]: employee_register_tab()   # <-- now defined
-        with tabs[5]: employees_view_tab()
-        with tabs[6]: export_tab()
+        with tabs[0]:
+            register_device_tab()
+        with tabs[1]:
+            inventory_tab()
+        with tabs[2]:
+            transfer_tab()
+        with tabs[3]:
+            history_tab()
+        with tabs[4]:
+            employee_register_tab()
+        with tabs[5]:
+            employees_view_tab()
+        with tabs[6]:
+            export_tab()
     else:
         tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log"])
-        with tabs[0]: inventory_tab()
-        with tabs[1]: transfer_tab()
-        with tabs[2]: history_tab()
+        with tabs[0]:
+            inventory_tab()
+        with tabs[1]:
+            transfer_tab()
+        with tabs[2]:
+            history_tab()
 
 # =============================================================================
 # ENTRY
