@@ -211,7 +211,6 @@ def render_header():
 
 def run_app():
     render_header()
-    top_logout_button()
     
 
     if st.session_state.role == "Admin":
