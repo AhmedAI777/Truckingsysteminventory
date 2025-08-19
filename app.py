@@ -374,7 +374,7 @@ import os, json, time, hmac, base64, hashlib
 from io import BytesIO
 from datetime import datetime
 from typing import Dict, Optional, Tuple, List
-
+from streamlit_gsheets import GSheetsConnection
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -473,59 +473,17 @@ def logout_button():
         st.rerun()
 
 # ============================ SHEETS ============================
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 
-@st.cache_resource
-def get_gsheet():
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive.file",
-        "https://www.googleapis.com/auth/drive",
-    ]
-    credentials = ServiceAccountCredentials.from_json_keyfile_dict(
-        st.secrets["connections"]["gsheets"]["service_account"], scope
-    )
-    client = gspread.authorize(credentials)
-    return client.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
 
-def read_ws(ws_title: str, cols: list[str]) -> pd.DataFrame:
-    try:
-        sheet = get_gsheet()
-        ws = sheet.worksheet(ws_title)
-        values = ws.get_all_values()
-        if not values:
-            return pd.DataFrame(columns=cols)
-        df = pd.DataFrame(values[1:], columns=values[0])
-        for col in cols:
-            if col not in df.columns:
-                df[col] = ""
-        return df[cols + [c for c in df.columns if c not in cols]]
-    except Exception as e:
-        st.warning(f"Couldn’t read **{ws_title}** from Google Sheets. Error: {type(e).__name__}")
-        return pd.DataFrame(columns=cols)
+st.title("📊 Inventory from Google Sheets")
 
-def write_ws(ws_title: str, df: pd.DataFrame) -> Tuple[bool, Optional[str]]:
-    try:
-        sheet = get_gsheet()
-        ws = sheet.worksheet(ws_title)
-        ws.clear()
-        ws.update("A1", [df.columns.tolist()] + df.astype(str).values.tolist())
-        return True, None
-    except Exception as e:
-        return False, str(e)
+# Connect
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-def commit_writes(writes: List[Tuple[str, pd.DataFrame]], *, show_error: bool) -> bool:
-    for ws, df in writes:
-        ok, err = write_ws(ws, df)
-        if not ok and show_error:
-            st.error(
-                "❌ Write failed. Share the Sheet with the Service Account as **Editor**.\n\n"
-                f"Details: {err}"
-            )
-            return False
-    return True
+# Read your worksheet
+df = conn.read(worksheet="inventory", ttl=0)  # ttl=0 disables caching
+st.dataframe(df)
+
 
 # ============================ HELPERS ============================
 ALL_COLS = [
