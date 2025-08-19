@@ -49,6 +49,7 @@
 # def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 #     pass
 
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -179,7 +180,7 @@ def history_tab():
     if df.empty:
         st.info("No transfer history found.")
     else:
-        st.dataframe(df)
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
 def inventory_tab():
     st.subheader("📋 Inventory")
@@ -189,7 +190,7 @@ def inventory_tab():
     if df.empty:
         st.warning("Inventory is empty.")
     else:
-        st.dataframe(df)
+        st.dataframe(df, use_container_width=True, hide_index=True)
         if st.session_state.role == "Admin":
             csv = df.to_csv(index=False).encode("utf-8")
             st.download_button("⬇️ Download CSV", csv, "inventory.csv", "text/csv")
@@ -221,12 +222,12 @@ def render_header():
 def run_app():
     render_header()
     top_logout_button()
-    st.success(f"👋 Welcome, {st.session_state.name} — {st.session_state.role}")
+    
 
     if st.session_state.role == "Admin":
-        tabs = st.tabs(["Register", "Transfer", "History", "Inventory"])
+        tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log", "⬇️ Export"])
     else:
-        tabs = st.tabs(["Transfer", "History", "Inventory"])
+        tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log"])
 
     if st.session_state.role == "Admin":
         with tabs[0]:
