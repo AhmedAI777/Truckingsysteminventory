@@ -356,7 +356,7 @@ def employees_view_tab():
         st.dataframe(df, use_container_width=True, hide_index=True)
 
 
-def inventory_tab():def inventory_tab():
+def inventory_tab():
     st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
     if df.empty:
