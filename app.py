@@ -50,7 +50,6 @@
 #     pass
 
 
-
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -68,7 +67,7 @@ TRANSFERLOG_WS = "transfer_log"
 
 # --------------------------- PAGE CONFIG -----------------------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
-st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
+
 
 # --------------------------- GOOGLE SHEETS ---------------------------
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -183,7 +182,7 @@ def history_tab():
     else:
         st.dataframe(df)
 
-def inventory_tab():
+def inventory_tab(read_only=False):
     st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
     if "Screen Size" in df.columns:
@@ -192,7 +191,7 @@ def inventory_tab():
         st.warning("Inventory is empty.")
     else:
         st.dataframe(df)
-        if st.session_state.role == "Admin":
+        if not read_only:
             csv = df.to_csv(index=False).encode("utf-8")
             st.download_button("⬇️ Download CSV", csv, "inventory.csv", "text/csv")
 
@@ -225,22 +224,20 @@ def run_app():
     top_logout_button()
     st.success(f"👋 Welcome, {st.session_state.name} — {st.session_state.role}")
 
-    if st.session_state.role == "Admin":
-        tabs = st.tabs(["Register", "Transfer", "History", "Inventory"])
+    if not read_only:
+        tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📝 Transfer Log", "⬇️ Export Files"])
     else:
-        tabs = st.tabs(["Transfer", "History", "Inventory"])
+        tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📝 Transfer Log"])
 
-    if st.session_state.role == "Admin":
-        with tabs[0]:
-            st.subheader("📦 Register New Device (Admin only)")
-            st.info("Registration functionality goes here.")
+    if not read_only:
+        with tabs[0]: inventory_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: history_tab()
-        with tabs[3]: inventory_tab()
+        with tabs[3]: export_tab()
     else:
-        with tabs[0]: transfer_tab()
-        with tabs[1]: history_tab()
-        with tabs[2]: inventory_tab()
+        with tabs[0]: inventory_tab(read_only=True)
+        with tabs[1]: transfer_tab()
+        with tabs[2]: history_tab()
 
 # --------------------------- ENTRY POINT -----------------------------
 if "authenticated" not in st.session_state:
@@ -250,3 +247,12 @@ if st.session_state.authenticated:
     run_app()
 else:
     show_login()
+
+# --------------------------- EXPORT TAB (Admins only) -------------------------------
+def export_tab():
+    st.subheader("⬇️ Export Inventory")
+    df = read_worksheet(INVENTORY_WS)
+    if df.empty:
+        st.warning("No inventory to export.")
+    else:
+        st.download_button("📥 Download CSV", df.to_csv(index=False), file_name="inventory.csv", mime="text/csv")
