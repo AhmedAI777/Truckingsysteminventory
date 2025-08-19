@@ -56,30 +56,30 @@ import gspread
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
 
-# ---------------------- Config ----------------------
+# -------------------- App Config --------------------
 APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE = "AdvancedConstruction"
 DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
-INVENTORY_WS = st.secrets.get("inventory_tab", "truckingsysteminventory").strip()
+INVENTORY_WS = st.secrets.get("inventory_tab", "truckinventory").strip()
 TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transfer_log").strip()
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.title(APP_TITLE)
 st.caption(SUBTITLE)
 
-# ---------------------- Google Sheets Auth ----------------------
+# -------------------- Google Sheets Auth --------------------
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 creds = Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]), scopes=SCOPES)
 gc = gspread.authorize(creds)
 sh = gc.open_by_url(st.secrets["sheets"]["url"])
 
-# ---------------------- Session State ----------------------
+# -------------------- Session State Init --------------------
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.role = None
 
-# ---------------------- Sheet Utilities ----------------------
+# -------------------- Sheet Utilities --------------------
 def get_or_create_ws(title: str, rows: int = 100, cols: int = 26):
     try:
         return sh.worksheet(title)
@@ -87,9 +87,13 @@ def get_or_create_ws(title: str, rows: int = 100, cols: int = 26):
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
 def read_worksheet(ws_title: str) -> pd.DataFrame:
-    ws = get_or_create_ws(ws_title)
-    records = ws.get_all_records()
-    return pd.DataFrame(records)
+    try:
+        ws = get_or_create_ws(ws_title)
+        records = ws.get_all_records()
+        return pd.DataFrame(records)
+    except Exception as e:
+        st.error(f"❌ Failed to read from sheet '{ws_title}': {e}")
+        return pd.DataFrame()
 
 def write_worksheet(ws_title: str, df: pd.DataFrame):
     ws = get_or_create_ws(ws_title)
@@ -102,7 +106,7 @@ def append_to_worksheet(ws_title: str, new_data: pd.DataFrame):
     combined = pd.concat([existing, new_data], ignore_index=True)
     set_with_dataframe(ws, combined)
 
-# ---------------------- Authentication ----------------------
+# -------------------- Auth --------------------
 def show_login():
     st.subheader("🔐 Sign In")
     username = st.text_input("Username")
@@ -116,12 +120,15 @@ def show_login():
         else:
             st.error("❌ Invalid credentials")
 
-def logout():
-    st.session_state.authenticated = False
-    st.session_state.role = None
-    st.success("✅ You have been logged out.")
+def logout_tab():
+    st.subheader("🔒 Logout")
+    st.info("Click the button below to securely log out.")
+    if st.button("Logout Now"):
+        st.session_state.authenticated = False
+        st.session_state.role = None
+        st.success("✅ You have been logged out.")
 
-# ---------------------- UI Tabs ----------------------
+# -------------------- Tabs --------------------
 def register_tab():
     st.subheader("📦 Register New Device")
     with st.form("register_device"):
@@ -190,7 +197,7 @@ def transfer_tab():
                 write_worksheet(INVENTORY_WS, inventory_df)
                 st.success(f"✅ Device {serial} transferred.")
             else:
-                st.warning("⚠️ Device not found in inventory.")
+                st.warning("⚠️ Serial number not found in inventory.")
 
 def history_tab():
     st.subheader("📝 Transfer Log")
@@ -203,30 +210,32 @@ def history_tab():
 def inventory_tab():
     st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
+    
     if df.empty:
-        st.warning("No inventory found.")
+        st.warning("No inventory data found.")
     else:
         st.dataframe(df)
 
-        # Export only for Admin
+        # ✅ Only Admin can export
         if st.session_state.role == "Admin":
             csv = df.to_csv(index=False).encode("utf-8")
             st.download_button("⬇️ Download CSV", csv, "inventory.csv", "text/csv")
 
-# ---------------------- Main ----------------------
+# -------------------- Main --------------------
 if not st.session_state.authenticated:
     show_login()
 else:
     st.success(f"👤 Logged in as: {st.session_state.role}")
+    role = st.session_state.role
 
-    if st.session_state.role == "Admin":
+    # Tabs based on role
+    if role == "Admin":
         tab_labels = ["Register", "Transfer", "History", "Export", "Logout"]
     else:
         tab_labels = ["Transfer", "History", "Inventory", "Logout"]
 
     tabs = st.tabs(tab_labels)
-
-    tab_map = {label: idx for idx, label in enumerate(tab_labels)}
+    tab_map = {label: i for i, label in enumerate(tab_labels)}
 
     if "Register" in tab_labels:
         with tabs[tab_map["Register"]]:
@@ -247,4 +256,4 @@ else:
             inventory_tab()
 
     with tabs[tab_map["Logout"]]:
-        logout()
+        logout_tab()
