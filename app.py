@@ -1,16 +1,18 @@
+# pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth
 import os
 import re
 import base64
-from datetime import datetime
+import json
+import hmac
+import hashlib
+from datetime import datetime, timedelta
+
 import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
-import os, re, base64, json, hmac, hashlib
-from datetime import datetime, timedelta
 import extra_streamlit_components as stx
-
 
 # =============================================================================
 # CONFIG
@@ -58,6 +60,49 @@ HEADER_SYNONYMS = {
 }
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
+
+# =============================================================================
+# AUTH PERSISTENCE (COOKIE-BASED)
+# =============================================================================
+COOKIE_NAME = "ac_auth"
+COOKIE_TTL_DAYS = 30  # sliding window
+
+def _cookie_key() -> str:
+    # Put a strong random value in secrets: [auth] cookie_key="your-256bit-random-string"
+    return st.secrets["auth"].get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
+
+@st.cache_resource
+def _cookie_mgr():
+    return stx.CookieManager()
+
+def _sign(raw: bytes) -> str:
+    return hmac.new(_cookie_key().encode(), raw, hashlib.sha256).hexdigest()
+
+def _issue_cookie(username: str, role: str):
+    exp = int((datetime.utcnow() + timedelta(days=COOKIE_TTL_DAYS)).timestamp())
+    payload = {"u": username, "r": role, "exp": exp}
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
+    _cookie_mgr().set(COOKIE_NAME, token, expires_at=datetime.utcnow() + timedelta(days=COOKIE_TTL_DAYS))
+
+def _read_cookie():
+    token = _cookie_mgr().get(COOKIE_NAME)
+    if not token:
+        return None
+    try:
+        data_b64, sig = token.split(".", 1)
+        raw = base64.urlsafe_b64decode(data_b64.encode())
+        if not hmac.compare_digest(sig, _sign(raw)):
+            _cookie_mgr().delete(COOKIE_NAME); return None
+        payload = json.loads(raw.decode())
+        if payload.get("exp", 0) < int(datetime.utcnow().timestamp()):
+            _cookie_mgr().delete(COOKIE_NAME); return None
+        # Sliding refresh: extend cookie on every valid hit
+        _issue_cookie(payload["u"], payload["r"])
+        return payload
+    except Exception:
+        _cookie_mgr().delete(COOKIE_NAME)
+        return None
 
 # =============================================================================
 # STYLE (font + header + optional toolbar hide)
@@ -120,6 +165,7 @@ def render_header():
             unsafe_allow_html=True,
         )
         if st.button("Logout"):
+            _cookie_mgr().delete(COOKIE_NAME)  # clear persistent login
             for key in ["authenticated", "role", "username", "name"]:
                 st.session_state.pop(key, None)
             st.rerun()
@@ -314,7 +360,7 @@ def append_to_worksheet(ws_title, new_data):
     set_with_dataframe(ws, df_combined)
 
 # =============================================================================
-# AUTH (simple, from secrets)
+# AUTH (simple, from secrets) + LOGIN FORM
 # =============================================================================
 
 def load_users():
@@ -343,6 +389,7 @@ def show_login():
             st.session_state.username = username
             st.session_state.name = user["name"]
             st.session_state.role = user["role"]
+            _issue_cookie(username, user["role"])   # persist login across refresh
             st.rerun()
         else:
             st.error("❌ Invalid username or password.")
@@ -629,21 +676,22 @@ def run_app():
     hide_table_toolbar_for_non_admin()
 
     if st.session_state.role == "Admin":
+        # Re-ordered: Employees first, then device tabs
         tabs = st.tabs([
+            "🧑‍💼 Employee Register",
+            "📇 View Employees",
             "📝 Register Device",
             "📋 View Inventory",
             "🔁 Transfer Device",
             "📜 Transfer Log",
-            "🧑‍💼 Employee Register",
-            "📇 View Employees",
             "⬇️ Export"
         ])
-        with tabs[0]: register_device_tab()
-        with tabs[1]: inventory_tab()
-        with tabs[2]: transfer_tab()
-        with tabs[3]: history_tab()
-        with tabs[4]: employee_register_tab()
-        with tabs[5]: employees_view_tab()
+        with tabs[0]: employee_register_tab()
+        with tabs[1]: employees_view_tab()
+        with tabs[2]: register_device_tab()
+        with tabs[3]: inventory_tab()
+        with tabs[4]: transfer_tab()
+        with tabs[5]: history_tab()
         with tabs[6]: export_tab()
     else:
         tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log"])
@@ -656,6 +704,15 @@ def run_app():
 # =============================================================================
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
+
+# Try cookie-based sign-in first if not already authenticated
+if not st.session_state.authenticated:
+    payload = _read_cookie()
+    if payload:
+        st.session_state.authenticated = True
+        st.session_state.username = payload["u"]
+        st.session_state.name = payload["u"]
+        st.session_state.role = payload["r"]
 
 if st.session_state.authenticated:
     run_app()
