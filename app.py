@@ -905,39 +905,60 @@ def inventory_tab():
 
 def register_tab():
     st.subheader("📝 Register New Device")
-    with st.form("register_device", clear_on_submit=True):
-        c1, c2 = st.columns(2)
-        with c1:
-            serial = st.text_input("Serial Number *")
-            device = st.text_input("Device Type *")
-            brand  = st.text_input("Brand")
-            model  = st.text_input("Model")
-            cpu    = st.text_input("CPU")
-        with c2:
-            hdd1   = st.text_input("Hard Drive 1")
-            hdd2   = st.text_input("Hard Drive 2")
-            mem    = st.text_input("Memory")
-            gpu    = st.text_input("GPU")
-            screen = st.text_input("Screen Size")
 
-        st.markdown("**Additional details**")
-        c3, c4, c5 = st.columns(3)
-        with c3:
-            dept    = st.text_input("Department")
-        with c4:
-            email   = st.text_input("Email Address")
-        with c5:
+    with st.form("register_device", clear_on_submit=True):
+        # Row 1
+        r1c1, r1c2, r1c3 = st.columns(3)
+        with r1c1:
+            serial = st.text_input("Serial Number *")
+        with r1c2:
+            device = st.text_input("Device Type *")
+        with r1c3:
+            brand  = st.text_input("Brand")
+
+        # Row 2
+        r2c1, r2c2, r2c3 = st.columns(3)
+        with r2c1:
+            model  = st.text_input("Model")
+        with r2c2:
+            cpu    = st.text_input("CPU")
+        with r2c3:
+            mem    = st.text_input("Memory")
+
+        # Row 3
+        r3c1, r3c2, r3c3 = st.columns(3)
+        with r3c1:
+            hdd1   = st.text_input("Hard Drive 1")
+        with r3c2:
+            hdd2   = st.text_input("Hard Drive 2")
+        with r3c3:
+            gpu    = st.text_input("GPU")
+
+        # Row 4
+        r4c1, r4c2, r4c3 = st.columns(3)
+        with r4c1:
+            screen = st.text_input("Screen Size")
+        with r4c2:
+            email  = st.text_input("Email Address")
+        with r4c3:
             contact = st.text_input("Contact Number")
 
-        c6, c7, c8 = st.columns(3)
-        with c6:
-            dept1   = st.text_input("Department.1")
-        with c7:
+        # Row 5
+        r5c1, r5c2, r5c3 = st.columns(3)
+        with r5c1:
+            dept   = st.text_input("Department")
+        with r5c2:
+            dept1  = st.text_input("Department.1")
+        with r5c3:
             location = st.text_input("Location")
-        with c8:
-            office   = st.text_input("Office")
 
-        notes = st.text_area("Notes", height=60)
+        # Row 6
+        r6c1, r6c2 = st.columns([1, 2])
+        with r6c1:
+            office = st.text_input("Office")
+        with r6c2:
+            notes  = st.text_area("Notes", height=60)
+
         submitted = st.form_submit_button("Save Device", type="primary")
 
     if submitted:
@@ -962,7 +983,6 @@ def register_tab():
             "GPU": gpu.strip(),
             "Screen Size": screen.strip(),
             "USER": "", "Previous User": "", "TO": "",
-            # NEW FIELDS
             "Department": dept.strip(),
             "Email Address": email.strip(),
             "Contact Number": contact.strip(),
@@ -975,9 +995,10 @@ def register_tab():
         }
 
         new_df = pd.concat([inv, pd.DataFrame([row])], ignore_index=True) if not inv.empty else pd.DataFrame([row])
-        new_df = reorder_columns(new_df, INVENTORY_COLS)
+        new_df = reorder_columns(new_df, INVENTORY_COLS)  # keep column order tidy
         write_worksheet(INVENTORY_WS, new_df)
         st.success("✅ Device registered and added to Inventory.")
+
 
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
@@ -1085,5 +1106,3 @@ if st.session_state.authenticated:
     run_app()
 else:
     show_login()
-
-
