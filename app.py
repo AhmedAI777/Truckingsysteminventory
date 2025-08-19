@@ -106,6 +106,7 @@ def show_login():
     st.subheader("🔐 Sign In")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
+user = st.secrets["users"].get(username)
 
     if st.button("Login"):
         user = USERS.get(username)
