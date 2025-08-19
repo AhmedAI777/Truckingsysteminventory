@@ -1392,9 +1392,6 @@ def export_tab():
 # =============================================================================
 def run_app():
     render_header()
-    if st.button("Refresh data"):
-    st.cache_data.clear()
-    st.rerun()
     hide_table_toolbar_for_non_admin()
 
     if st.session_state.role == "Admin":
