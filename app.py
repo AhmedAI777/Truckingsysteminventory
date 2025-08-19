@@ -56,7 +56,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
 
-# -------------------- App Config --------------------
+# -------------------- Config --------------------
 APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE = "AdvancedConstruction"
 DATE_FMT = "%Y-%m-%d %H:%M:%S"
@@ -65,21 +65,19 @@ INVENTORY_WS = st.secrets.get("inventory_tab", "truckinventory").strip()
 TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transfer_log").strip()
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
-st.title(APP_TITLE)
-st.caption(SUBTITLE)
 
-# -------------------- Google Sheets Auth --------------------
+# -------------------- Google Sheets --------------------
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 creds = Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]), scopes=SCOPES)
 gc = gspread.authorize(creds)
 sh = gc.open_by_url(st.secrets["sheets"]["url"])
 
-# -------------------- Session State Init --------------------
+# -------------------- Session --------------------
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.role = None
 
-# -------------------- Sheet Utilities --------------------
+# -------------------- Helpers --------------------
 def get_or_create_ws(title: str, rows: int = 100, cols: int = 26):
     try:
         return sh.worksheet(title)
@@ -89,8 +87,7 @@ def get_or_create_ws(title: str, rows: int = 100, cols: int = 26):
 def read_worksheet(ws_title: str) -> pd.DataFrame:
     try:
         ws = get_or_create_ws(ws_title)
-        records = ws.get_all_records()
-        return pd.DataFrame(records)
+        return pd.DataFrame(ws.get_all_records())
     except Exception as e:
         st.error(f"❌ Failed to read from sheet '{ws_title}': {e}")
         return pd.DataFrame()
@@ -116,19 +113,78 @@ def show_login():
         if username and password:
             st.session_state.authenticated = True
             st.session_state.role = role
-            st.success(f"✅ Logged in as {role}")
+            st.experimental_rerun()
         else:
             st.error("❌ Invalid credentials")
 
-def logout_tab():
-    st.subheader("🔒 Logout")
-    st.info("Click the button below to securely log out.")
-    if st.button("Logout Now"):
-        st.session_state.authenticated = False
-        st.session_state.role = None
-        st.success("✅ You have been logged out.")
+def top_logout_button():
+    if st.session_state.authenticated:
+        if st.button("🚪 Logout", key="logout", help="Click to log out"):
+            st.session_state.authenticated = False
+            st.session_state.role = None
+            st.experimental_rerun()
 
 # -------------------- Tabs --------------------
+def transfer_tab():
+    st.subheader("🔁 Transfer Device")
+
+    inventory_df = read_worksheet(INVENTORY_WS)
+    if inventory_df.empty:
+        st.warning("No inventory data available.")
+        return
+
+    serial_list = inventory_df["Serial Number"].dropna().unique().tolist()
+
+    with st.form("transfer_device"):
+        serial = st.selectbox("Select Serial Number", serial_list)
+        new_owner = st.text_input("New Owner")
+
+        submit = st.form_submit_button("Transfer Device")
+
+        if submit:
+            match = inventory_df[inventory_df["Serial Number"] == serial]
+            if match.empty:
+                st.warning("⚠️ Serial number not found.")
+                return
+
+            row = match.iloc[0].copy()
+            row["From owner"] = row.get("USER", "")
+            row["To owner"] = new_owner
+            row["Date issued"] = datetime.now().strftime(DATE_FMT)
+            row["Registered by"] = new_owner
+            row["USER"] = new_owner
+
+            idx = match.index[0]
+            inventory_df.loc[idx, "USER"] = new_owner
+            inventory_df.loc[idx, "Date issued"] = row["Date issued"]
+            inventory_df.loc[idx, "Registered by"] = new_owner
+            write_worksheet(INVENTORY_WS, inventory_df)
+
+            transfer_row = row[[
+                "Device Type", "Serial Number", "From owner", "To owner",
+                "Date issued", "Registered by"
+            ]]
+            append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([transfer_row]))
+
+            st.success(f"✅ Device {serial} transferred to {new_owner}")
+
+def history_tab():
+    st.subheader("📝 Transfer Log")
+    df = read_worksheet(TRANSFERLOG_WS)
+    st.dataframe(df if not df.empty else pd.DataFrame())
+
+def inventory_tab():
+    st.subheader("📋 Inventory")
+    df = read_worksheet(INVENTORY_WS)
+    if df.empty:
+        st.warning("No inventory data found.")
+    else:
+        st.dataframe(df)
+
+        if st.session_state.role == "Admin":
+            csv = df.to_csv(index=False).encode("utf-8")
+            st.download_button("⬇️ Download CSV", csv, "inventory.csv", "text/csv")
+
 def register_tab():
     st.subheader("📦 Register New Device")
     with st.form("register_device"):
@@ -143,7 +199,8 @@ def register_tab():
             department = st.text_input("Department")
         with col3:
             location = st.text_input("Location")
-            registered_by = st.text_input("Registered By")
+            email = st.text_input("Email Address")
+            phone = st.text_input("Contact Number")
             date_issued = st.date_input("Date Issued", value=datetime.now())
 
         if st.form_submit_button("Register Device"):
@@ -155,84 +212,28 @@ def register_tab():
                 "USER": user,
                 "Department": department,
                 "Location": location,
-                "Registered by": registered_by,
-                "Date issued": date_issued.strftime(DATE_FMT)
+                "Email Address": email,
+                "Contact Number": phone,
+                "Date issued": date_issued.strftime(DATE_FMT),
+                "Registered by": user
             }])
             append_to_worksheet(INVENTORY_WS, new_device)
             st.success(f"✅ Device {serial} registered.")
-
-def transfer_tab():
-    st.subheader("🔁 Transfer Device")
-    with st.form("transfer_device"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            serial = st.text_input("Serial Number")
-            from_user = st.text_input("From User")
-        with col2:
-            to_user = st.text_input("To User")
-            department = st.text_input("New Department")
-        with col3:
-            transfer_by = st.text_input("Transfer By")
-            transfer_date = st.date_input("Transfer Date", value=datetime.now())
-            transfer_time = st.time_input("Transfer Time", value=datetime.now().time())
-
-        if st.form_submit_button("Transfer Device"):
-            timestamp = f"{transfer_date} {transfer_time.strftime('%H:%M')}"
-            transfer_entry = pd.DataFrame([{
-                "Device Type": "Unknown",
-                "Serial Number": serial,
-                "From owner": from_user,
-                "To owner": to_user,
-                "Date issued": timestamp,
-                "Registered by": transfer_by
-            }])
-            append_to_worksheet(TRANSFERLOG_WS, transfer_entry)
-
-            inventory_df = read_worksheet(INVENTORY_WS)
-            idx = inventory_df[inventory_df["Serial Number"] == serial].index
-            if not idx.empty:
-                inventory_df.at[idx[0], "USER"] = to_user
-                inventory_df.at[idx[0], "Department"] = department
-                inventory_df.at[idx[0], "Date issued"] = timestamp
-                write_worksheet(INVENTORY_WS, inventory_df)
-                st.success(f"✅ Device {serial} transferred.")
-            else:
-                st.warning("⚠️ Serial number not found in inventory.")
-
-def history_tab():
-    st.subheader("📝 Transfer Log")
-    df = read_worksheet(TRANSFERLOG_WS)
-    if df.empty:
-        st.warning("No transfer records found.")
-    else:
-        st.dataframe(df)
-
-def inventory_tab():
-    st.subheader("📋 Inventory")
-    df = read_worksheet(INVENTORY_WS)
-    
-    if df.empty:
-        st.warning("No inventory data found.")
-    else:
-        st.dataframe(df)
-
-        # ✅ Only Admin can export
-        if st.session_state.role == "Admin":
-            csv = df.to_csv(index=False).encode("utf-8")
-            st.download_button("⬇️ Download CSV", csv, "inventory.csv", "text/csv")
 
 # -------------------- Main --------------------
 if not st.session_state.authenticated:
     show_login()
 else:
+    top_logout_button()
+    st.title(APP_TITLE)
+    st.caption(SUBTITLE)
     st.success(f"👤 Logged in as: {st.session_state.role}")
-    role = st.session_state.role
 
-    # Tabs based on role
+    role = st.session_state.role
     if role == "Admin":
-        tab_labels = ["Register", "Transfer", "History", "Export", "Logout"]
+        tab_labels = ["Register", "Transfer", "History", "Export"]
     else:
-        tab_labels = ["Transfer", "History", "Inventory", "Logout"]
+        tab_labels = ["Transfer", "History", "Inventory"]
 
     tabs = st.tabs(tab_labels)
     tab_map = {label: i for i, label in enumerate(tab_labels)}
@@ -240,20 +241,13 @@ else:
     if "Register" in tab_labels:
         with tabs[tab_map["Register"]]:
             register_tab()
-
     with tabs[tab_map["Transfer"]]:
         transfer_tab()
-
     with tabs[tab_map["History"]]:
         history_tab()
-
     if "Export" in tab_labels:
         with tabs[tab_map["Export"]]:
             inventory_tab()
-
     if "Inventory" in tab_labels:
         with tabs[tab_map["Inventory"]]:
             inventory_tab()
-
-    with tabs[tab_map["Logout"]]:
-        logout_tab()
