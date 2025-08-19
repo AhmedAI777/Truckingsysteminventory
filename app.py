@@ -64,7 +64,6 @@ DATE_FMT = "%Y-%m-%d %H:%M:%S"
 INVENTORY_WS = "truckinventory"
 TRANSFERLOG_WS = "transfer_log"
 
-
 # --------------------------- PAGE CONFIG -----------------------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
@@ -106,10 +105,9 @@ def show_login():
     st.subheader("🔐 Sign In")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
-user = st.secrets["users"].get(username)
 
     if st.button("Login"):
-        user = USERS.get(username)
+        user = st.secrets["users"].get(username)
         if user and user["password"] == password:
             st.session_state.authenticated = True
             st.session_state.username = username
@@ -186,6 +184,8 @@ def history_tab():
 def inventory_tab():
     st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
+    if "Screen Size" in df.columns:
+        df["Screen Size"] = df["Screen Size"].astype(str)
     if df.empty:
         st.warning("Inventory is empty.")
     else:
