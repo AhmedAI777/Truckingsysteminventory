@@ -50,6 +50,7 @@
 #     pass
 
 
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -195,8 +196,32 @@ def inventory_tab():
             csv = df.to_csv(index=False).encode("utf-8")
             st.download_button("⬇️ Download CSV", csv, "inventory.csv", "text/csv")
 
-# --------------------------- MAIN APP -------------------------------
+
+# --------------------------- HEADER LAYOUT -------------------------------
+def render_header():
+    col1, col2, col3 = st.columns([1, 6, 2])
+    with col1:
+        st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Logo_2013_Advanced_Construction_Company.svg/1024px-Logo_2013_Advanced_Construction_Company.svg.png", width=60)
+    with col2:
+        st.markdown(
+            f"""
+            <h1 style='margin-bottom:0;'>Tracking Inventory Management System</h1>
+            <div style='color:gray;font-weight:300;margin-top:0;'>Advanced Construction</div>
+            """, unsafe_allow_html=True)
+    with col3:
+        st.markdown(f"""
+            <div style='text-align:right'>
+                <strong>Welcome, {st.session_state.name}</strong><br>
+                <span style='color:gray'>Role: <b>{st.session_state.role}</b></span><br>
+                <form action='/' method='post'>
+                    <button style='margin-top:5px;background:#fff;color:#000;border:1px solid #ddd;padding:6px 12px;border-radius:6px;cursor:pointer;' 
+                        onclick="window.location.reload(true);">Logout</button>
+                </form>
+            </div>
+        """, unsafe_allow_html=True)
+
 def run_app():
+    render_header()
     top_logout_button()
     st.success(f"👋 Welcome, {st.session_state.name} — {st.session_state.role}")
 
