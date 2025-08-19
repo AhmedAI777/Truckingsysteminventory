@@ -49,102 +49,112 @@
 # def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 #     pass
 
-from datetime import datetime
-import pandas as pd
 import streamlit as st
+import pandas as pd
+from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
 
-# -------------------- Config --------------------
+# --------------------------- CONFIGURATION ---------------------------
 APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE = "AdvancedConstruction"
 DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
-INVENTORY_WS = st.secrets.get("inventory_tab", "truckinventory").strip()
-TRANSFERLOG_WS = st.secrets.get("transferlog_tab", "transfer_log").strip()
+INVENTORY_WS = "truckinventory"
+TRANSFERLOG_WS = "transfer_log"
 
+USERS = {
+    "admin1": {"password": "adminpass", "name": "Ahmed Albarakati", "role": "Admin"},
+    "staff1": {"password": "staffpass", "name": "Ayan Albarakati", "role": "Staff"}
+}
+
+# --------------------------- PAGE CONFIG -----------------------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
+st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
-# -------------------- Google Sheets --------------------
+# --------------------------- GOOGLE SHEETS ---------------------------
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-creds = Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]), scopes=SCOPES)
+creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
 gc = gspread.authorize(creds)
 sh = gc.open_by_url(st.secrets["sheets"]["url"])
 
-# -------------------- Session --------------------
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-    st.session_state.role = None
-
-# -------------------- Helpers --------------------
-def get_or_create_ws(title: str, rows: int = 100, cols: int = 26):
+def get_or_create_ws(title, rows=100, cols=26):
     try:
         return sh.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
-def read_worksheet(ws_title: str) -> pd.DataFrame:
+def read_worksheet(ws_title):
     try:
         ws = get_or_create_ws(ws_title)
-        return pd.DataFrame(ws.get_all_records())
+        data = ws.get_all_records()
+        return pd.DataFrame(data)
     except Exception as e:
-        st.error(f"❌ Failed to read from sheet '{ws_title}': {e}")
+        st.error(f"❌ Error reading sheet '{ws_title}': {e}")
         return pd.DataFrame()
 
-def write_worksheet(ws_title: str, df: pd.DataFrame):
+def write_worksheet(ws_title, df):
     ws = get_or_create_ws(ws_title)
     ws.clear()
     set_with_dataframe(ws, df)
 
-def append_to_worksheet(ws_title: str, new_data: pd.DataFrame):
+def append_to_worksheet(ws_title, new_data):
     ws = get_or_create_ws(ws_title)
-    existing = pd.DataFrame(ws.get_all_records())
-    combined = pd.concat([existing, new_data], ignore_index=True)
-    set_with_dataframe(ws, combined)
+    df_existing = pd.DataFrame(ws.get_all_records())
+    df_combined = pd.concat([df_existing, new_data], ignore_index=True)
+    set_with_dataframe(ws, df_combined)
 
-# -------------------- Auth --------------------
+# --------------------------- AUTH & LOGIN ----------------------------
 def show_login():
     st.subheader("🔐 Sign In")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
-    role = st.selectbox("Role", ["Admin", "Staff"])
+
     if st.button("Login"):
-        if username and password:
+        user = USERS.get(username)
+        if user and user["password"] == password:
             st.session_state.authenticated = True
-            st.session_state.role = role
+            st.session_state.username = username
+            st.session_state.name = user["name"]
+            st.session_state.role = user["role"]
             st.experimental_rerun()
         else:
-            st.error("❌ Invalid credentials")
+            st.error("❌ Invalid username or password.")
 
 def top_logout_button():
-    if st.session_state.authenticated:
-        if st.button("🚪 Logout", key="logout", help="Click to log out"):
-            st.session_state.authenticated = False
-            st.session_state.role = None
+    if st.session_state.get("authenticated"):
+        st.markdown("""<div style='position:fixed; top:10px; right:20px;'>""",
+                    unsafe_allow_html=True)
+        if st.button("🚪 Logout", key="logout"):
+            for key in ["authenticated", "role", "username", "name"]:
+                st.session_state.pop(key, None)
             st.experimental_rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
-# -------------------- Tabs --------------------
+# --------------------------- TABS ------------------------------------
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
-
     inventory_df = read_worksheet(INVENTORY_WS)
+    if "Screen Size" in inventory_df.columns:
+        inventory_df["Screen Size"] = inventory_df["Screen Size"].astype(str)
+
     if inventory_df.empty:
-        st.warning("No inventory data available.")
+        st.warning("Inventory is empty. Cannot proceed.")
         return
 
     serial_list = inventory_df["Serial Number"].dropna().unique().tolist()
+    user_list = inventory_df["USER"].dropna().unique().tolist()
 
     with st.form("transfer_device"):
         serial = st.selectbox("Select Serial Number", serial_list)
-        new_owner = st.text_input("New Owner")
+        new_owner = st.selectbox("Select New Owner", user_list)
+        submitted = st.form_submit_button("Transfer Device")
 
-        submit = st.form_submit_button("Transfer Device")
-
-        if submit:
+        if submitted:
             match = inventory_df[inventory_df["Serial Number"] == serial]
             if match.empty:
-                st.warning("⚠️ Serial number not found.")
+                st.warning("Serial number not found.")
                 return
 
             row = match.iloc[0].copy()
@@ -171,83 +181,49 @@ def transfer_tab():
 def history_tab():
     st.subheader("📝 Transfer Log")
     df = read_worksheet(TRANSFERLOG_WS)
-    st.dataframe(df if not df.empty else pd.DataFrame())
+    if df.empty:
+        st.info("No transfer history found.")
+    else:
+        st.dataframe(df)
 
 def inventory_tab():
     st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
     if df.empty:
-        st.warning("No inventory data found.")
+        st.warning("Inventory is empty.")
     else:
         st.dataframe(df)
-
         if st.session_state.role == "Admin":
             csv = df.to_csv(index=False).encode("utf-8")
             st.download_button("⬇️ Download CSV", csv, "inventory.csv", "text/csv")
 
-def register_tab():
-    st.subheader("📦 Register New Device")
-    with st.form("register_device"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            serial = st.text_input("Serial Number")
-            device_type = st.selectbox("Device Type", ["Desktop", "Printer", "Monitor", "Other"])
-            brand = st.text_input("Brand")
-        with col2:
-            model = st.text_input("Model")
-            user = st.text_input("Current User")
-            department = st.text_input("Department")
-        with col3:
-            location = st.text_input("Location")
-            email = st.text_input("Email Address")
-            phone = st.text_input("Contact Number")
-            date_issued = st.date_input("Date Issued", value=datetime.now())
-
-        if st.form_submit_button("Register Device"):
-            new_device = pd.DataFrame([{
-                "Serial Number": serial,
-                "Device Type": device_type,
-                "Brand": brand,
-                "Model": model,
-                "USER": user,
-                "Department": department,
-                "Location": location,
-                "Email Address": email,
-                "Contact Number": phone,
-                "Date issued": date_issued.strftime(DATE_FMT),
-                "Registered by": user
-            }])
-            append_to_worksheet(INVENTORY_WS, new_device)
-            st.success(f"✅ Device {serial} registered.")
-
-# -------------------- Main --------------------
-if not st.session_state.authenticated:
-    show_login()
-else:
+# --------------------------- MAIN APP -------------------------------
+def run_app():
     top_logout_button()
-    st.title(APP_TITLE)
-    st.caption(SUBTITLE)
-    st.success(f"👤 Logged in as: {st.session_state.role}")
+    st.success(f"👋 Welcome, {st.session_state.name} — {st.session_state.role}")
 
-    role = st.session_state.role
-    if role == "Admin":
-        tab_labels = ["Register", "Transfer", "History", "Export"]
+    if st.session_state.role == "Admin":
+        tabs = st.tabs(["Register", "Transfer", "History", "Inventory"])
     else:
-        tab_labels = ["Transfer", "History", "Inventory"]
+        tabs = st.tabs(["Transfer", "History", "Inventory"])
 
-    tabs = st.tabs(tab_labels)
-    tab_map = {label: i for i, label in enumerate(tab_labels)}
+    if st.session_state.role == "Admin":
+        with tabs[0]:
+            st.subheader("📦 Register New Device (Admin only)")
+            st.info("Registration functionality goes here.")
+        with tabs[1]: transfer_tab()
+        with tabs[2]: history_tab()
+        with tabs[3]: inventory_tab()
+    else:
+        with tabs[0]: transfer_tab()
+        with tabs[1]: history_tab()
+        with tabs[2]: inventory_tab()
 
-    if "Register" in tab_labels:
-        with tabs[tab_map["Register"]]:
-            register_tab()
-    with tabs[tab_map["Transfer"]]:
-        transfer_tab()
-    with tabs[tab_map["History"]]:
-        history_tab()
-    if "Export" in tab_labels:
-        with tabs[tab_map["Export"]]:
-            inventory_tab()
-    if "Inventory" in tab_labels:
-        with tabs[tab_map["Inventory"]]:
-            inventory_tab()
+# --------------------------- ENTRY POINT -----------------------------
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if st.session_state.authenticated:
+    run_app()
+else:
+    show_login()
