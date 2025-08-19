@@ -16,7 +16,7 @@ df = conn.read(worksheet="truckingsysteminventory", ttl=0)  # ttl=0 disables cac
 df = conn.read(worksheet="transfer_log", ttl=0)
 
 # Optional: ensure proper dtypes / clean up if needed
-df = df.convert_dtypes()
+#df = df.convert_dtypes()
 
 st.dataframe(df, use_container_width=True)
 
