@@ -3,7 +3,8 @@
 
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
+from st_gsheets_connection import GSheetsConnection
+
 
 st.set_page_config(page_title="Inventory", page_icon="📊", layout="wide")
 st.title("📊 Inventory from Google Sheets")
