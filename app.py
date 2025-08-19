@@ -48,8 +48,6 @@
 
 # def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 #     pass
-
-
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -67,20 +65,5 @@ TRANSFERLOG_WS = "transfer_log"
 # ----------------- PAGE SETUP -----------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
-# ----------------- GOOGLE SHEET SETUP -----------------
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
-creds = Credentials.from_service_account_info(
-    st.secrets["gcp_service_account"], scopes=SCOPES
-)
-gc = gspread.authorize(creds)
-sh = gc.open_by_url(st.secrets["sheets"]["url"])
+# ----------------- GOOGLE SHEET SE
 
-
-def get_or_create_ws(title, rows=100, cols=26):
-    try:
-        return sh.worksheet(title)
-    except gspread.exceptions.WorksheetNotFound:
-        r
