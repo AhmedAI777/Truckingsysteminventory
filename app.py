@@ -767,7 +767,7 @@ COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")  # ensure component mounts
 def _cookie_key() -> str:
     # Put a strong random value in secrets:
     # [auth]
-    # cookie_key = "your-long-random-secret"
+    # cookie_key = "sddxcfgfggftrtdrte77yuyt"
     return st.secrets["auth"].get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
 
 def _sign(raw: bytes) -> str:
@@ -933,10 +933,14 @@ def _canon_header(h: str) -> str:
     return HEADER_SYNONYMS.get(key, h.strip())
 
 def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
+    # ensure required columns exist
     for c in desired:
         if c not in df.columns:
             df[c] = ""
-    return df[desired + c for c in df.columns if c not in desired]
+    # keep desired first, then any extra columns in their current order
+    tail = [c for c in df.columns if c not in desired]
+    return df[desired + tail]
+
 
 # --- Worksheet discovery that tolerates duplicates named the same ---
 def _find_ws_candidates(title: str):
