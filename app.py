@@ -936,7 +936,7 @@ def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     for c in desired:
         if c not in df.columns:
             df[c] = ""
-    return df[desired + [c for c in df.columns if c not in desired]
+    return df[desired + [c for c in df.columns if c not in desired]]
 
 # --- Worksheet discovery that tolerates duplicates named the same ---
 def _find_ws_candidates(title: str):
