@@ -115,7 +115,11 @@ def render_header():
 
     with c_logo:
         if os.path.exists("company_logo.jpeg"):
-            st.image("company_logo.jpeg", use_container_width=True)
+            # Streamlit compatibility: some versions use use_column_width, newer use use_container_width
+            try:
+                st.image("company_logo.jpeg", use_container_width=True)
+            except TypeError:
+                st.image("company_logo.jpeg", use_column_width=True)
 
     with c_title:
         st.markdown(f"### {APP_TITLE}")
@@ -139,6 +143,7 @@ def render_header():
             st.rerun()
 
     st.markdown("<hr style='margin-top:0.8rem;'>", unsafe_allow_html=True)
+
 
 def hide_table_toolbar_for_non_admin():
     if st.session_state.get("role") != "Admin":
