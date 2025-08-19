@@ -64,10 +64,6 @@ DATE_FMT = "%Y-%m-%d %H:%M:%S"
 INVENTORY_WS = "truckinventory"
 TRANSFERLOG_WS = "transfer_log"
 
-USERS = {
-    "admin1": {"password": "adminpass", "name": "Ahmed Albarakati", "role": "Admin"},
-    "staff1": {"password": "staffpass", "name": "Ayan Albarakati", "role": "Staff"}
-}
 
 # --------------------------- PAGE CONFIG -----------------------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
