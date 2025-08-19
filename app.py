@@ -377,7 +377,7 @@
 st.title("📊 Inventory from Google Sheets")
 
 # Connect
-conn = st.connection("gsheets", type=GSheetsConnection)
+conn = st.connection("truckingsysteminventory", type=GSheetsConnection)
 
 # Read your worksheet
 df = conn.read(worksheet="truckingsysteminventory", ttl=0)  # ttl=0 disables caching
