@@ -5,7 +5,7 @@ import pytest
 import streamlit as st
 from pandas.testing import assert_frame_equal
 
-from streamlit_gsheets import GSheetsConnection
+from st_gsheets_connection import GSheetsConnection
 
 
 @pytest.fixture()
