@@ -1392,6 +1392,9 @@ def export_tab():
 # =============================================================================
 def run_app():
     render_header()
+    if st.button("Refresh data"):
+    st.cache_data.clear()
+    st.rerun()
     hide_table_toolbar_for_non_admin()
 
     if st.session_state.role == "Admin":
@@ -1418,9 +1421,6 @@ def run_app():
         with tabs[0]: inventory_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: history_tab()
-    if st.button("Refresh data"):
-    st.cache_data.clear()
-    st.rerun()
 # =============================================================================
 # ENTRY
 # =============================================================================
