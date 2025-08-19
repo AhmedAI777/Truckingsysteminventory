@@ -118,16 +118,6 @@ def show_login():
         else:
             st.error("❌ Invalid username or password.")
 
-def top_logout_button():
-    if st.session_state.get("authenticated"):
-        st.markdown("""<div style='position:fixed; top:10px; right:20px;'>""",
-                    unsafe_allow_html=True)
-        if st.button("🚪 Logout", key="logout"):
-            for key in ["authenticated", "role", "username", "name"]:
-                st.session_state.pop(key, None)
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
-
 # --------------------------- TABS ------------------------------------
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
