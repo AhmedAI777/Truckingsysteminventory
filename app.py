@@ -47,6 +47,7 @@ ALL_COLS = [
 ]
 
 def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    pass
 
 
 
