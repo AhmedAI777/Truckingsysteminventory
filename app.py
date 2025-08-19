@@ -1015,19 +1015,41 @@ def get_or_create_ws(title, rows=500, cols=80):
     except gspread.exceptions.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
+# Cache reads for 120s so reruns & multiple users don't hammer Sheets.
+@st.cache_data(ttl=120, show_spinner=False)
+def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
+    if ws_title == EMPLOYEE_WS:
+        ws = get_employee_ws()
+        df, header_idx, overlap = _read_ws_as_dataframe(ws, EMPLOYEE_CANON_COLS)
+        # optional debug info
+        st.session_state.emp_debug = {
+            "title": ws.title,
+            "gid": ws.id,
+            "header_row": header_idx + 1,
+            "overlap": overlap,
+            "rows": len(df),
+        }
+        return df
+
+    ws = get_or_create_ws(ws_title)
+    data = ws.get_all_records()
+    df = pd.DataFrame(data)
+    if ws_title == INVENTORY_WS:
+        return reorder_columns(df, INVENTORY_COLS)
+    if ws_title == TRANSFERLOG_WS:
+        return reorder_columns(df, LOG_COLS)
+    return df
+
+
 def read_worksheet(ws_title):
     try:
-        if ws_title == EMPLOYEE_WS:
-            ws = get_employee_ws()
-            df, header_idx, overlap = _read_ws_as_dataframe(ws, EMPLOYEE_CANON_COLS)
-            st.session_state.emp_debug = {
-                "title": ws.title,
-                "gid": ws.id,
-                "header_row": header_idx + 1,
-                "overlap": overlap,
-                "rows": len(df),
-            }
-            return df
+        return _read_worksheet_cached(ws_title)
+    except Exception as e:
+        st.error(f"Error reading sheet '{ws_title}': {e}")
+        if ws_title == INVENTORY_WS:   return pd.DataFrame(columns=INVENTORY_COLS)
+        if ws_title == TRANSFERLOG_WS: return pd.DataFrame(columns=LOG_COLS)
+        if ws_title == EMPLOYEE_WS:    return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
+        return pd.DataFrame()
 
         ws = get_or_create_ws(ws_title)
         data = ws.get_all_records()
@@ -1051,6 +1073,7 @@ def write_worksheet(ws_title, df):
         ws = get_or_create_ws(ws_title)
     ws.clear()
     set_with_dataframe(ws, df)
+    st.cache_data.clear()   # << bust cached reads
 
 def append_to_worksheet(ws_title, new_data):
     if ws_title == EMPLOYEE_WS:
@@ -1060,6 +1083,7 @@ def append_to_worksheet(ws_title, new_data):
     df_existing = pd.DataFrame(ws.get_all_records())
     df_combined = pd.concat([df_existing, new_data], ignore_index=True)
     set_with_dataframe(ws, df_combined)
+    st.cache_data.clear()   # << bust cached reads
 
 # =============================================================================
 # AUTH (simple, from secrets) + LOGIN FORM
@@ -1367,6 +1391,7 @@ def run_app():
     hide_table_toolbar_for_non_admin()
 
     if st.session_state.role == "Admin":
+
         # Employees first, then device tabs
         tabs = st.tabs([
             "🧑‍💼 Employee Register",
@@ -1389,7 +1414,9 @@ def run_app():
         with tabs[0]: inventory_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: history_tab()
-
+    if st.button("Refresh data"):
+    st.cache_data.clear()
+    st.rerun()
 # =============================================================================
 # ENTRY
 # =============================================================================
