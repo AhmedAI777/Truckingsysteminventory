@@ -49,6 +49,7 @@
 # def _ensure_cols(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 #     pass
 
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -107,12 +108,12 @@ def show_login():
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        user = st.secrets["users"].get(username)
-        if user and user["password"] == password:
+        user = st.secrets["auth"]["admins"].get(username) if username in st.secrets["auth"]["admins"] else st.secrets["auth"]["staff"].get(username)
+        if user and user == password:
             st.session_state.authenticated = True
             st.session_state.username = username
-            st.session_state.name = user["name"]
-            st.session_state.role = user["role"]
+            st.session_state.name = username
+            st.session_state.role = "Admin" if username in st.secrets["auth"]["admins"] else "Staff"
             st.experimental_rerun()
         else:
             st.error("❌ Invalid username or password.")
