@@ -48,7 +48,7 @@ EMPLOYEE_CANON_COLS = [
 
 # Accept common synonym/typo headers and normalize to canon
 HEADER_SYNONYMS = {
-    "new employee": "New Employeer",      # typo vs intended
+    "new employee": "New Employeer",
     "new employeer": "New Employeer",
     "employeeid": "Employee ID",
     "newsignature": "New Signature",
@@ -62,18 +62,16 @@ HEADER_SYNONYMS = {
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
 # =============================================================================
-# AUTH PERSISTENCE (COOKIE-BASED)
+# AUTH PERSISTENCE (COOKIE-BASED) — mounts the component up-front
 # =============================================================================
 COOKIE_NAME = "ac_auth"
 COOKIE_TTL_DAYS = 30  # sliding window
+COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")  # ensure component mounts
 
 def _cookie_key() -> str:
-    # Put a strong random value in secrets: [auth] cookie_key="your-256bit-random-string"
-    return st.secrets["auth"].get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
-
-@st.cache_resource
-def _cookie_mgr():
-    return stx.CookieManager()
+    #secret.toml
+     cookie_key="sddxcfgfggftrtdrte77yuyt"
+    return st.secrets["auth"].get("cookie_key", "sddxcfgfggftrtdrte77yuyt")
 
 def _sign(raw: bytes) -> str:
     return hmac.new(_cookie_key().encode(), raw, hashlib.sha256).hexdigest()
@@ -83,26 +81,36 @@ def _issue_cookie(username: str, role: str):
     payload = {"u": username, "r": role, "exp": exp}
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
-    _cookie_mgr().set(COOKIE_NAME, token, expires_at=datetime.utcnow() + timedelta(days=COOKIE_TTL_DAYS))
+    # set cookie
+    COOKIE_MGR.set(COOKIE_NAME, token, expires_at=datetime.utcnow() + timedelta(days=COOKIE_TTL_DAYS))
 
 def _read_cookie():
-    token = _cookie_mgr().get(COOKIE_NAME)
+    token = COOKIE_MGR.get(COOKIE_NAME)
     if not token:
         return None
     try:
         data_b64, sig = token.split(".", 1)
         raw = base64.urlsafe_b64decode(data_b64.encode())
         if not hmac.compare_digest(sig, _sign(raw)):
-            _cookie_mgr().delete(COOKIE_NAME); return None
+            COOKIE_MGR.delete(COOKIE_NAME)
+            return None
         payload = json.loads(raw.decode())
         if payload.get("exp", 0) < int(datetime.utcnow().timestamp()):
-            _cookie_mgr().delete(COOKIE_NAME); return None
-        # Sliding refresh: extend cookie on every valid hit
+            COOKIE_MGR.delete(COOKIE_NAME)
+            return None
+        # sliding refresh
         _issue_cookie(payload["u"], payload["r"])
         return payload
     except Exception:
-        _cookie_mgr().delete(COOKIE_NAME)
+        COOKIE_MGR.delete(COOKIE_NAME)
         return None
+
+# One-time bootstrap: let CookieManager mount, then re-run once so .get() returns consistently
+if "cookie_bootstrapped" not in st.session_state:
+    st.session_state.cookie_bootstrapped = True
+    # Touch the component so it renders immediately
+    _ = COOKIE_MGR.get_all()  # harmless; ensures mounting
+    st.rerun()
 
 # =============================================================================
 # STYLE (font + header + optional toolbar hide)
@@ -135,7 +143,6 @@ def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
         unsafe_allow_html=True,
     )
 
-
 def render_header():
     _inject_font_css("FounderGroteskCondensed-Regular.otf")
 
@@ -165,13 +172,12 @@ def render_header():
             unsafe_allow_html=True,
         )
         if st.button("Logout"):
-            _cookie_mgr().delete(COOKIE_NAME)  # clear persistent login
+            COOKIE_MGR.delete(COOKIE_NAME)
             for key in ["authenticated", "role", "username", "name"]:
                 st.session_state.pop(key, None)
             st.rerun()
 
     st.markdown("<hr style='margin-top:0.8rem;'>", unsafe_allow_html=True)
-
 
 def hide_table_toolbar_for_non_admin():
     if st.session_state.get("role") != "Admin":
@@ -198,20 +204,16 @@ gc = gspread.authorize(creds)
 SHEET_URL = st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
 sh = gc.open_by_url(SHEET_URL)
 
-
 def _norm_title(t: str) -> str:
     return (t or "").strip().lower()
-
 
 def _norm_header(h: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
     return s
 
-
 def _canon_header(h: str) -> str:
     key = _norm_header(h)
     return HEADER_SYNONYMS.get(key, h.strip())
-
 
 def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     for c in desired:
@@ -219,16 +221,12 @@ def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
             df[c] = ""
     return df[desired + [c for c in df.columns if c not in desired]]
 
-
 # --- Worksheet discovery that tolerates duplicates named the same ---
-
 def _find_ws_candidates(title: str):
     target = _norm_title(title)
     return [ws for ws in sh.worksheets() if _norm_title(ws.title) == target]
 
-
 def _score_header(values: list[list[str]], expected_canon: set[str]) -> tuple[int, int]:
-    """Return (best_row_index, best_overlap_count). Scan first 10 rows."""
     best_idx, best_count = 0, 0
     rows_to_scan = min(len(values), 10)
     for i in range(rows_to_scan):
@@ -239,9 +237,7 @@ def _score_header(values: list[list[str]], expected_canon: set[str]) -> tuple[in
             best_idx, best_count = i, overlap
     return best_idx, best_count
 
-
 def _read_ws_as_dataframe(ws: gspread.Worksheet, expected_cols: list[str]) -> tuple[pd.DataFrame, int, int]:
-    """Return (DataFrame, header_row_idx, overlap_score)."""
     values = ws.get_all_values() or []
     if not values:
         return pd.DataFrame(columns=expected_cols), 0, 0
@@ -251,25 +247,17 @@ def _read_ws_as_dataframe(ws: gspread.Worksheet, expected_cols: list[str]) -> tu
 
     headers_raw = values[header_idx]
     headers_canon = [_canon_header(h) for h in headers_raw]
-    # Map canon back to preferred labels (keep original if not mapped to a known canonical)
     preferred = []
     for h, canon in zip(headers_raw, headers_canon):
         preferred.append(HEADER_SYNONYMS.get(_norm_header(h), h))
 
     data_rows = values[header_idx + 1 :]
     df = pd.DataFrame(data_rows, columns=preferred).replace({None: ""})
-
-    # Drop fully empty rows
     df = df.dropna(how="all").reset_index(drop=True)
-
-    # Ensure expected columns exist and in order
     df = reorder_columns(df, expected_cols)
     return df, header_idx, score
 
-
 def get_employee_ws() -> gspread.Worksheet:
-    """Robustly pick the correct 'mainlists' worksheet when duplicates exist."""
-    # If we've already chosen a worksheet id, reuse it
     ws_id = st.session_state.get("emp_ws_id")
     if ws_id:
         ws = sh.get_worksheet_by_id(ws_id)
@@ -277,7 +265,7 @@ def get_employee_ws() -> gspread.Worksheet:
             return ws
 
     cands = _find_ws_candidates(EMPLOYEE_WS)
-    if not cands:  # create if missing
+    if not cands:
         ws = sh.add_worksheet(title=EMPLOYEE_WS, rows=500, cols=80)
         st.session_state.emp_ws_id = ws.id
         return ws
@@ -287,7 +275,6 @@ def get_employee_ws() -> gspread.Worksheet:
         st.session_state.emp_ws_id = ws.id
         return ws
 
-    # More than one: choose the one with best header overlap with expected columns
     best_ws, best_score = None, -1
     for ws in cands:
         try:
@@ -301,15 +288,11 @@ def get_employee_ws() -> gspread.Worksheet:
     st.session_state.emp_ws_id = ws.id
     return ws
 
-
-# Basic (non-employee) helpers
-
 def get_or_create_ws(title, rows=500, cols=80):
     try:
         return sh.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
-
 
 def read_worksheet(ws_title):
     try:
@@ -340,7 +323,6 @@ def read_worksheet(ws_title):
         if ws_title == EMPLOYEE_WS:    return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
         return pd.DataFrame()
 
-
 def write_worksheet(ws_title, df):
     if ws_title == EMPLOYEE_WS:
         ws = get_employee_ws()
@@ -348,7 +330,6 @@ def write_worksheet(ws_title, df):
         ws = get_or_create_ws(ws_title)
     ws.clear()
     set_with_dataframe(ws, df)
-
 
 def append_to_worksheet(ws_title, new_data):
     if ws_title == EMPLOYEE_WS:
@@ -362,7 +343,6 @@ def append_to_worksheet(ws_title, new_data):
 # =============================================================================
 # AUTH (simple, from secrets) + LOGIN FORM
 # =============================================================================
-
 def load_users():
     admins = st.secrets["auth"]["admins"]
     staff  = st.secrets["auth"]["staff"]
@@ -374,9 +354,7 @@ def load_users():
         users[user] = {"password": pw, "role": "Staff", "name": user}
     return users
 
-
 USERS = load_users()
-
 
 def show_login():
     st.subheader("🔐 Sign In")
@@ -389,7 +367,7 @@ def show_login():
             st.session_state.username = username
             st.session_state.name = user["name"]
             st.session_state.role = user["role"]
-            _issue_cookie(username, user["role"])   # persist login across refresh
+            _issue_cookie(username, user["role"])
             st.rerun()
         else:
             st.error("❌ Invalid username or password.")
@@ -397,7 +375,6 @@ def show_login():
 # =============================================================================
 # TABS
 # =============================================================================
-
 def employees_view_tab():
     st.subheader("📇 Employees (mainlists)")
     df = read_worksheet(EMPLOYEE_WS)
@@ -405,7 +382,6 @@ def employees_view_tab():
         st.info("No employees found in 'mainlists'.")
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
-
 
 def inventory_tab():
     st.subheader("📋 Inventory")
@@ -417,7 +393,6 @@ def inventory_tab():
             st.dataframe(df, use_container_width=True)
         else:
             st.dataframe(df, use_container_width=True, hide_index=True)
-
 
 def register_device_tab():
     st.subheader("📝 Register New Device")
@@ -509,7 +484,6 @@ def register_device_tab():
         write_worksheet(INVENTORY_WS, inv)
         st.success("✅ Device registered and added to Inventory.")
 
-
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
     inventory_df = read_worksheet(INVENTORY_WS)
@@ -562,7 +536,6 @@ def transfer_tab():
 
         st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
 
-
 def history_tab():
     st.subheader("📜 Transfer Log")
     df = read_worksheet(TRANSFERLOG_WS)
@@ -570,7 +543,6 @@ def history_tab():
         st.info("No transfer history found.")
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
-
 
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
@@ -647,7 +619,6 @@ def employee_register_tab():
         write_worksheet(EMPLOYEE_WS, new_df)
         st.success("✅ Employee saved to 'mainlists'.")
 
-
 def export_tab():
     st.subheader("⬇️ Export (always fresh)")
     inv = read_worksheet(INVENTORY_WS)
@@ -670,13 +641,12 @@ def export_tab():
 # =============================================================================
 # MAIN
 # =============================================================================
-
 def run_app():
     render_header()
     hide_table_toolbar_for_non_admin()
 
     if st.session_state.role == "Admin":
-        # Re-ordered: Employees first, then device tabs
+        # Employees first, then devices
         tabs = st.tabs([
             "🧑‍💼 Employee Register",
             "📇 View Employees",
@@ -686,10 +656,10 @@ def run_app():
             "📜 Transfer Log",
             "⬇️ Export"
         ])
-        with tabs[2]: employee_register_tab()
-        with tabs[3]: employees_view_tab()
-        with tabs[0]: register_device_tab()
-        with tabs[1]: inventory_tab()
+        with tabs[0]: employee_register_tab()
+        with tabs[1]: employees_view_tab()
+        with tabs[2]: register_device_tab()
+        with tabs[3]: inventory_tab()
         with tabs[4]: transfer_tab()
         with tabs[5]: history_tab()
         with tabs[6]: export_tab()
