@@ -50,6 +50,7 @@
 #     pass
 
 
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -57,19 +58,17 @@ import gspread
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
 
-# --------------------------- CONFIGURATION ---------------------------
+# ----------------- CONFIG -----------------
 APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE = "AdvancedConstruction"
 DATE_FMT = "%Y-%m-%d %H:%M:%S"
-
 INVENTORY_WS = "truckinventory"
 TRANSFERLOG_WS = "transfer_log"
 
-# --------------------------- PAGE CONFIG -----------------------------
+# ----------------- PAGE SETUP -----------------
 st.set_page_config(page_title=APP_TITLE, layout="wide")
-st.markdown(f"## {APP_TITLE}\n**{SUBTITLE}**")
 
-# --------------------------- GOOGLE SHEETS ---------------------------
+# ----------------- GOOGLE SHEET SETUP -----------------
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
 gc = gspread.authorize(creds)
@@ -87,7 +86,7 @@ def read_worksheet(ws_title):
         data = ws.get_all_records()
         return pd.DataFrame(data)
     except Exception as e:
-        st.error(f"❌ Error reading sheet '{ws_title}': {e}")
+        st.error(f"Error reading sheet '{ws_title}': {e}")
         return pd.DataFrame()
 
 def write_worksheet(ws_title, df):
@@ -101,51 +100,66 @@ def append_to_worksheet(ws_title, new_data):
     df_combined = pd.concat([df_existing, new_data], ignore_index=True)
     set_with_dataframe(ws, df_combined)
 
-# --------------------------- AUTH & LOGIN ----------------------------
+# ----------------- AUTH -----------------
+def load_users():
+    admins = st.secrets["auth"]["admins"]
+    staff = st.secrets["auth"]["staff"]
+    users = {}
+    for user, pw in admins.items():
+        if user != "type":
+            users[user] = {"password": pw, "role": "Admin", "name": user}
+    for user, pw in staff.items():
+        users[user] = {"password": pw, "role": "Staff", "name": user}
+    return users
+
+USERS = load_users()
+
 def show_login():
     st.subheader("🔐 Sign In")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        user = st.secrets["auth"]["admins"].get(username) if username in st.secrets["auth"]["admins"] else st.secrets["auth"]["staff"].get(username)
-        if user and user == password:
+        user = USERS.get(username)
+        if user and user["password"] == password:
             st.session_state.authenticated = True
             st.session_state.username = username
-            st.session_state.name = username
-            st.session_state.role = "Admin" if username in st.secrets["auth"]["admins"] else "Staff"
+            st.session_state.name = user["name"]
+            st.session_state.role = user["role"]
             st.rerun()
         else:
             st.error("❌ Invalid username or password.")
 
 def top_logout_button():
     if st.session_state.get("authenticated"):
-        st.markdown("""<div style='position:fixed; top:10px; right:20px;'>""",
-                    unsafe_allow_html=True)
-        if st.button("🚪 Logout", key="logout"):
-            for key in ["authenticated", "role", "username", "name"]:
-                st.session_state.pop(key, None)
-            st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
+        col1, col2 = st.columns([10, 1])
+        with col2:
+            st.markdown(f"**Welcome, {st.session_state.username}**
 
-# --------------------------- TABS ------------------------------------
+Role: **{st.session_state.role}**")
+            if st.button("Logout"):
+                for key in ["authenticated", "role", "username", "name"]:
+                    st.session_state.pop(key, None)
+                st.rerun()
+
+# ----------------- TABS -----------------
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
     inventory_df = read_worksheet(INVENTORY_WS)
+    if inventory_df.empty:
+        st.warning("Inventory is empty.")
+        return
+
     if "Screen Size" in inventory_df.columns:
         inventory_df["Screen Size"] = inventory_df["Screen Size"].astype(str)
-
-    if inventory_df.empty:
-        st.warning("Inventory is empty. Cannot proceed.")
-        return
 
     serial_list = inventory_df["Serial Number"].dropna().unique().tolist()
     user_list = inventory_df["USER"].dropna().unique().tolist()
 
     with st.form("transfer_device"):
-        serial = st.selectbox("Select Serial Number", serial_list)
-        new_owner = st.selectbox("Select New Owner", user_list)
-        submitted = st.form_submit_button("Transfer Device")
+        serial = st.selectbox("Serial Number", serial_list)
+        new_owner = st.selectbox("New Owner", user_list)
+        submitted = st.form_submit_button("Transfer Now")
 
         if submitted:
             match = inventory_df[inventory_df["Serial Number"] == serial]
@@ -161,9 +175,9 @@ def transfer_tab():
             row["USER"] = new_owner
 
             idx = match.index[0]
-            inventory_df.loc[idx, "USER"] = new_owner
-            inventory_df.loc[idx, "Date issued"] = row["Date issued"]
-            inventory_df.loc[idx, "Registered by"] = new_owner
+            for col in ["USER", "Date issued", "Registered by"]:
+                inventory_df.loc[idx, col] = row[col]
+
             write_worksheet(INVENTORY_WS, inventory_df)
 
             transfer_row = row[[
@@ -175,73 +189,50 @@ def transfer_tab():
             st.success(f"✅ Device {serial} transferred to {new_owner}")
 
 def history_tab():
-    st.subheader("📝 Transfer Log")
+    st.subheader("📜 Transfer Log")
     df = read_worksheet(TRANSFERLOG_WS)
     if df.empty:
         st.info("No transfer history found.")
     else:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, use_container_width=True)
 
 def inventory_tab():
     st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
-    if "Screen Size" in df.columns:
-        df["Screen Size"] = df["Screen Size"].astype(str)
     if df.empty:
         st.warning("Inventory is empty.")
     else:
-        st.dataframe(df, use_container_width=True, hide_index=True)
         if st.session_state.role == "Admin":
-            csv = df.to_csv(index=False).encode("utf-8")
-            st.download_button("⬇️ Download CSV", csv, "inventory.csv", "text/csv")
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
+def export_tab():
+    st.subheader("⬇️ Export Inventory")
+    df = read_worksheet(INVENTORY_WS)
+    if df.empty:
+        st.warning("Nothing to export.")
+        return
+    csv = df.to_csv(index=False).encode("utf-8")
+    st.download_button("Download CSV", csv, "inventory.csv", "text/csv")
 
-# --------------------------- HEADER LAYOUT -------------------------------
-def render_header():
-    col1, col2, col3 = st.columns([1, 6, 2])
-    with col1:
-        st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/4/4a/Logo_2013_Advanced_Construction_Company.svg/1024px-Logo_2013_Advanced_Construction_Company.svg.png", width=60)
-    with col2:
-        st.markdown(
-            f"""
-            <h1 style='margin-bottom:0;'>Tracking Inventory Management System</h1>
-            <div style='color:gray;font-weight:300;margin-top:0;'>Advanced Construction</div>
-            """, unsafe_allow_html=True)
-    with col3:
-        st.markdown(f"""
-            <div style='text-align:right'>
-                <strong>Welcome, {st.session_state.name}</strong><br>
-                <span style='color:gray'>Role: <b>{st.session_state.role}</b></span><br>
-                <form action='/' method='post'>
-                    <button style='margin-top:5px;background:#fff;color:#000;border:1px solid #ddd;padding:6px 12px;border-radius:6px;cursor:pointer;' 
-                        onclick="window.location.reload(true);">Logout</button>
-                </form>
-            </div>
-        """, unsafe_allow_html=True)
-
+# ----------------- MAIN APP -----------------
 def run_app():
-    render_header()
     top_logout_button()
-    
 
     if st.session_state.role == "Admin":
         tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log", "⬇️ Export"])
-    else:
-        tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log"])
-
-    if st.session_state.role == "Admin":
-        with tabs[0]:
-            st.subheader("📦 Register New Device (Admin only)")
-            st.info("Registration functionality goes here.")
+        with tabs[0]: inventory_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: history_tab()
-        with tabs[3]: inventory_tab()
+        with tabs[3]: export_tab()
     else:
-        with tabs[0]: transfer_tab()
-        with tabs[1]: history_tab()
-        with tabs[2]: inventory_tab()
+        tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log"])
+        with tabs[0]: inventory_tab()
+        with tabs[1]: transfer_tab()
+        with tabs[2]: history_tab()
 
-# --------------------------- ENTRY POINT -----------------------------
+# ----------------- ENTRY -----------------
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
