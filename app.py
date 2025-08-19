@@ -1,4 +1,3 @@
-
 # app.py
 import os
 import base64
@@ -20,8 +19,9 @@ DATE_FMT  = "%Y-%m-%d %H:%M:%S"
 SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
 # Worksheet titles (created if missing)
-INVENTORY_WS   = "truckinventory"
-TRANSFERLOG_WS = "transfer_log"
+INVENTORY_WS    = "truckinventory"
+TRANSFERLOG_WS  = "transfer_log"
+EMPLOYEE_WS     = "mainlists"          # <-- you were using this but hadn't defined it
 
 # Canonical inventory columns (includes your new fields)
 INVENTORY_COLS = [
@@ -31,8 +31,14 @@ INVENTORY_COLS = [
     "Department","Email Address","Contact Number","Department.1","Location","Office",
     "Notes","Date issued","Registered by"
 ]
-
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
+
+# Employees sheet columns (exact names from your screenshot)
+EMPLOYEE_COLS = [
+    "New Employeer","Employee ID","New Signature","Name","Address",
+    "APLUS","Active","Position","Department","Location (KSA)",
+    "Project","Microsoft Teams","Mobile Number"
+]
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
@@ -74,6 +80,7 @@ def render_header():
 
     with c_logo:
         if os.path.exists("company_logo.jpeg"):
+            # compatibility across Streamlit versions
             try:
                 st.image("company_logo.jpeg", use_container_width=True)
             except TypeError:
@@ -124,25 +131,37 @@ gc = gspread.authorize(creds)
 SHEET_URL = st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
 sh = gc.open_by_url(SHEET_URL)
 
-def get_or_create_ws(title, rows=200, cols=40):
+def get_or_create_ws(title, rows=500, cols=80):
     try:
         return sh.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
+def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
+    for c in desired:
+        if c not in df.columns:
+            df[c] = ""
+    return df[desired + [c for c in df.columns if c not in desired]]
+
 def read_worksheet(ws_title):
+    """Read a worksheet and ensure its expected columns exist (per sheet)."""
     try:
         ws = get_or_create_ws(ws_title)
         data = ws.get_all_records()
         df = pd.DataFrame(data)
-        # ensure missing columns exist
-        for c in INVENTORY_COLS:
-            if c not in df.columns:
-                df[c] = ""
+        if ws_title == INVENTORY_WS:
+            return reorder_columns(df, INVENTORY_COLS)
+        if ws_title == TRANSFERLOG_WS:
+            return reorder_columns(df, LOG_COLS)
+        if ws_title == EMPLOYEE_WS:
+            return reorder_columns(df, EMPLOYEE_COLS)
         return df
     except Exception as e:
         st.error(f"Error reading sheet '{ws_title}': {e}")
-        return pd.DataFrame(columns=INVENTORY_COLS if ws_title == INVENTORY_WS else LOG_COLS)
+        if ws_title == INVENTORY_WS:   return pd.DataFrame(columns=INVENTORY_COLS)
+        if ws_title == TRANSFERLOG_WS: return pd.DataFrame(columns=LOG_COLS)
+        if ws_title == EMPLOYEE_WS:    return pd.DataFrame(columns=EMPLOYEE_COLS)
+        return pd.DataFrame()
 
 def write_worksheet(ws_title, df):
     ws = get_or_create_ws(ws_title)
@@ -154,12 +173,6 @@ def append_to_worksheet(ws_title, new_data):
     df_existing = pd.DataFrame(ws.get_all_records())
     df_combined = pd.concat([df_existing, new_data], ignore_index=True)
     set_with_dataframe(ws, df_combined)
-
-def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
-    for c in desired:
-        if c not in df.columns:
-            df[c] = ""
-    return df[desired + [c for c in df.columns if c not in desired]]
 
 # =============================================================================
 # AUTH (simple, from secrets)
@@ -195,8 +208,6 @@ def show_login():
 # =============================================================================
 # TABS
 # =============================================================================
-
-
 def employees_view_tab():
     st.subheader("📇 Employees (mainlists)")
     df = read_worksheet(EMPLOYEE_WS)
@@ -208,7 +219,6 @@ def employees_view_tab():
 def inventory_tab():
     st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
-    df = reorder_columns(df, INVENTORY_COLS)
     if df.empty:
         st.warning("Inventory is empty.")
     else:
@@ -217,7 +227,7 @@ def inventory_tab():
         else:
             st.dataframe(df, use_container_width=True, hide_index=True)
 
-def register_tab():
+def register_device_tab():  # <-- renamed to match run_app()
     st.subheader("📝 Register New Device")
 
     with st.form("register_device", clear_on_submit=True):
@@ -309,15 +319,13 @@ def register_tab():
         }
 
         new_df = pd.concat([inv, pd.DataFrame([row])], ignore_index=True) if not inv.empty else pd.DataFrame([row])
-        new_df = reorder_columns(new_df, INVENTORY_COLS)  # keep column order tidy
+        new_df = reorder_columns(new_df, INVENTORY_COLS)
         write_worksheet(INVENTORY_WS, new_df)
         st.success("✅ Device registered and added to Inventory.")
-
 
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
     inventory_df = read_worksheet(INVENTORY_WS)
-    inventory_df = reorder_columns(inventory_df, INVENTORY_COLS)
     if inventory_df.empty:
         st.warning("Inventory is empty.")
         return
@@ -375,24 +383,101 @@ def history_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-def export_tab():
-    st.subheader("⬇️ Export")
+def employee_register_tab():
+    """Admin-only: register employees into 'mainlists' (separate system)."""
+    st.subheader("🧑‍💼 Register New Employee (mainlists)")
 
+    emp_df = read_worksheet(EMPLOYEE_WS)
+    # light suggestion for next ID
+    try:
+        ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
+        next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
+    except Exception:
+        next_id_suggestion = str(len(emp_df) + 1)
+
+    with st.form("register_employee", clear_on_submit=True):
+        r1c1, r1c2, r1c3 = st.columns(3)
+        with r1c1:
+            new_emp_status = st.text_input("New Employeer", value="Created")
+        with r1c2:
+            emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
+        with r1c3:
+            new_sig = st.text_input("New Signature")
+
+        r2c1, r2c2, r2c3 = st.columns(3)
+        with r2c1:
+            name = st.text_input("Name *")
+        with r2c2:
+            address = st.text_input("Address")
+        with r2c3:
+            aplus = st.text_input("APLUS", value="Yes")
+
+        r3c1, r3c2, r3c3 = st.columns(3)
+        with r3c1:
+            active = st.text_input("Active", value="Yes")
+        with r3c2:
+            position = st.text_input("Position")
+        with r3c3:
+            department = st.text_input("Department")
+
+        r4c1, r4c2, r4c3 = st.columns(3)
+        with r4c1:
+            location_ksa = st.text_input("Location (KSA)")
+        with r4c2:
+            project = st.text_input("Project")
+        with r4c3:
+            teams = st.text_input("Microsoft Teams")
+
+        mobile = st.text_input("Mobile Number")
+
+        submitted = st.form_submit_button("Save Employee", type="primary")
+
+    if submitted:
+        if not name.strip():
+            st.error("Name is required.")
+            return
+        if emp_id.strip() and not emp_df.empty and emp_id.strip() in emp_df["Employee ID"].astype(str).values:
+            st.error(f"Employee ID '{emp_id}' already exists.")
+            return
+
+        row = {
+            "New Employeer": new_emp_status.strip(),
+            "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
+            "New Signature": new_sig.strip(),
+            "Name": name.strip(),
+            "Address": address.strip(),
+            "APLUS": aplus.strip(),
+            "Active": active.strip(),
+            "Position": position.strip(),
+            "Department": department.strip(),
+            "Location (KSA)": location_ksa.strip(),
+            "Project": project.strip(),
+            "Microsoft Teams": teams.strip(),
+            "Mobile Number": mobile.strip(),
+        }
+        new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True) if not emp_df.empty else pd.DataFrame([row])
+        new_df = reorder_columns(new_df, EMPLOYEE_COLS)
+        write_worksheet(EMPLOYEE_WS, new_df)
+        st.success("✅ Employee saved to 'mainlists'.")
+
+def export_tab():
+    st.subheader("⬇️ Export (always fresh)")
     inv = read_worksheet(INVENTORY_WS)
     log = read_worksheet(TRANSFERLOG_WS)
     emp = read_worksheet(EMPLOYEE_WS)
 
-    inv_csv = inv.to_csv(index=False).encode("utf-8")
-    log_csv = log.to_csv(index=False).encode("utf-8")
-    emp_csv = emp.to_csv(index=False).encode("utf-8")
+    st.caption(f"Last fetched: {datetime.now().strftime(DATE_FMT)}")
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.download_button("Inventory CSV", inv_csv, "inventory.csv", "text/csv")
+        st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"),
+                           "inventory.csv", "text/csv")
     with c2:
-        st.download_button("Transfer Log CSV", log_csv, "transfer_log.csv", "text/csv")
+        st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"),
+                           "transfer_log.csv", "text/csv")
     with c3:
-        st.download_button("Employees CSV", emp_csv, "employees.csv", "text/csv")
+        st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"),
+                           "employees.csv", "text/csv")
 
 # =============================================================================
 # MAIN
@@ -408,22 +493,22 @@ def run_app():
             "🔁 Transfer Device",
             "📜 Transfer Log",
             "🧑‍💼 Employee Register",
-            "📇 View Employees",   # <— NEW
+            "📇 View Employees",
             "⬇️ Export"
         ])
-        with tabs[0]: register_device_tab()
+        with tabs[0]: register_device_tab()     # <-- existed mismatch fixed
         with tabs[1]: inventory_tab()
         with tabs[2]: transfer_tab()
         with tabs[3]: history_tab()
-        with tabs[4]: employee_register_tab()
-        with tabs[5]: employees_view_tab()   # <— NEW
+        with tabs[4]: employee_register_tab()   # <-- now defined
+        with tabs[5]: employees_view_tab()
         with tabs[6]: export_tab()
     else:
         tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log"])
         with tabs[0]: inventory_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: history_tab()
-            
+
 # =============================================================================
 # ENTRY
 # =============================================================================
