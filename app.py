@@ -70,7 +70,7 @@ COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")  # ensure component mounts
 
 def _cookie_key() -> str:
     #secret.toml
-     cookie_key="sddxcfgfggftrtdrte77yuyt"
+    #cookie_key="sddxcfgfggftrtdrte77yuyt"
     return st.secrets["auth"].get("cookie_key", "sddxcfgfggftrtdrte77yuyt")
 
 def _sign(raw: bytes) -> str:
