@@ -642,26 +642,27 @@ def run_app():
 
     if st.session_state.role == "Admin":
         tabs = st.tabs([
+            "📇 View Employees",
+            "🧑‍💼 Employee Register",
             "📝 Register Device",
             "📋 View Inventory",
             "🔁 Transfer Device",
             "📜 Transfer Log",
-            "🧑‍💼 Employee Register",
-            "📇 View Employees",
-            "⬇️ Export"
+            "⬇️ Export",
         ])
-        with tabs[0]: register_device_tab()
-        with tabs[1]: inventory_tab()
-        with tabs[2]: transfer_tab()
-        with tabs[3]: history_tab()
-        with tabs[4]: employee_register_tab()
-        with tabs[5]: employees_view_tab()
+        with tabs[0]: employees_view_tab()
+        with tabs[1]: employee_register_tab()
+        with tabs[2]: register_device_tab()
+        with tabs[3]: inventory_tab()
+        with tabs[4]: transfer_tab()
+        with tabs[5]: history_tab()
         with tabs[6]: export_tab()
     else:
         tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log"])
         with tabs[0]: inventory_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: history_tab()
+
 
 # =============================================================================
 # ENTRY
