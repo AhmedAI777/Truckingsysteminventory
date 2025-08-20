@@ -912,7 +912,7 @@ def run_app():
     if st.session_state.role == "Admin":
         tabs = st.tabs([
             "🧑‍💼 Employee Register",
-            "📇 View Employees",
+            "📇 Main Employees",
             "📝 Register Device",
             "📋 Main Inventory",
             "🔁 Transfer Device",
