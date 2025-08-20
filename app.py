@@ -555,8 +555,8 @@ def inventory_tab():
                 # else: proceed after a valid override
 
        def register_device_tab():
-    st.subheader("📝 Register New Device")
-    with st.form("register_device", clear_on_submit=True):
+        st.subheader("📝 Register New Device")
+        with st.form("register_device", clear_on_submit=True):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
             serial = st.text_input("Serial Number *")
