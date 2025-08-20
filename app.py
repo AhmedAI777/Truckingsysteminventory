@@ -914,7 +914,7 @@ def run_app():
             "🧑‍💼 Employee Register",
             "📇 View Employees",
             "📝 Register Device",
-            "📋 View Inventory",
+            "📋 Main Inventory",
             "🔁 Transfer Device",
             "📜 History Transfer",
             "⬇️ Export"
@@ -927,7 +927,7 @@ def run_app():
         with tabs[5]: history_tab()
         with tabs[6]: export_tab()
     else:
-        tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 History Transfer"])
+        tabs = st.tabs(["📋 Main Inventory", "🔁 Transfer Device", "📜 History Transfer"])
         with tabs[0]: inventory_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: history_tab()
