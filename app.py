@@ -45,7 +45,7 @@ INVENTORY_COLS = [
     "Serial Number","Device Type","Brand","Model","CPU",
     "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
     "USER","Previous User","TO",
-    "Department","Email Address","Contact Number","Department.1","Location","Office",
+    "Department","Email Address","Contact Number","Current user ","Location","Office",
     "Notes","Date issued","Registered by"
 ]
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
@@ -581,7 +581,7 @@ def register_device_tab():
         with r5c1:
             dept   = st.text_input("Department")
         with r5c2:
-            dept1  = st.text_input("Department.1")
+            dept1  = st.text_input("Current user ")
         with r5c3:
             location = st.text_input("Location")
 
@@ -641,7 +641,7 @@ def register_device_tab():
             "Department": dept.strip(),
             "Email Address": email.strip(),
             "Contact Number": contact.strip(),
-            "Department.1": dept1.strip(),
+            "Current user ": dept1.strip(),
             "Location": location.strip(),
             "Office": office.strip(),
             "Notes": notes.strip(),
