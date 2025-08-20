@@ -712,6 +712,7 @@ def employee_register_tab():
 
 
 
+
 def export_tab():
     st.subheader("⬇️ Export (always fresh)")
     inv = read_worksheet(INVENTORY_WS)
