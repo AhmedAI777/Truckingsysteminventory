@@ -2462,7 +2462,7 @@ def employee_register_tab():
 
 
 def export_tab():
-    st.subheader("⬇️ Export (always fresh)")
+    st.subheader("⬇️ Export")
     inv = read_worksheet(INVENTORY_WS)
     log = read_worksheet(TRANSFERLOG_WS)
     emp = read_worksheet(EMPLOYEE_WS)
