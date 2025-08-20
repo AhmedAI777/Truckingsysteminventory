@@ -23,13 +23,13 @@ APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE = "Advanced Construction"
 DATE_FMT = "%Y-%m-%d %H:%M:%S"
 
-# Cookie/session config (persist login across refresh; set SESSION_TTL_DAYS=0 for session-only)
+# Cookie/session config
 SESSION_TTL_DAYS = 30
 SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60
 COOKIE_NAME = "ac_auth"
 COOKIE_PATH = "/"
-COOKIE_SECURE = False  # set True if app is served over HTTPS
-COOKIE_SAMESITE = "Lax"  # or "Strict" / "None" (with SECURE=True)
+COOKIE_SECURE = False
+COOKIE_SAMESITE = "Lax"
 
 # Default to your sheet URL; can be overridden in secrets
 SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
@@ -39,7 +39,7 @@ INVENTORY_WS = "truckinventory"
 TRANSFERLOG_WS = "transfer_log"
 EMPLOYEE_WS = "mainlists"
 
-# Canonical inventory columns (uses "Current user"; removed Department.1)
+# Inventory columns (uses "Current user"; no Department.1)
 INVENTORY_COLS = [
     "Serial Number",
     "Device Type",
@@ -72,8 +72,7 @@ LOG_COLS = [
     "Registered by",
 ]
 
-# Employees sheet columns (canonical names)
-# ❗️Removed Email entirely (by request)
+# Employees sheet columns (NO Email by request)
 EMPLOYEE_CANON_COLS = [
     "Employee ID",
     "New Signature",
@@ -89,15 +88,18 @@ EMPLOYEE_CANON_COLS = [
     "Mobile Number",
 ]
 
-# Accept common synonym/typo headers and normalize to canon (employees)
-# Mapping to None => drop that column (e.g., legacy "New Employeer", any Email fields)
+# -----------------------------------------------------------------------------
+# Header normalization
+# -----------------------------------------------------------------------------
+# Map (normalized header) -> canonical name or None to DROP
 HEADER_SYNONYMS = {
-    # legacy to drop
-    "new employee": None,
-    "new employeer": None,
+    # Drop these entirely (legacy/undesired)
+    "newemployee": None,
+    "newemployeer": None,
     "email": None,
     "emailaddress": None,
-    # normalized names
+
+    # Normalize variants
     "employeeid": "Employee ID",
     "newsignature": "New Signature",
     "locationksa": "Location (KSA)",
@@ -107,31 +109,31 @@ HEADER_SYNONYMS = {
     "mobilenumber": "Mobile Number",
 }
 
-# Map old inventory headers → new canonical names
+# Map old inventory headers -> canonical
 INVENTORY_HEADER_SYNONYMS = {
     "user": "Current user",
     "currentuser": "Current user",
     "previoususer": "Previous User",
     "to": "TO",
-    "department1": None,  # drop this header entirely if present
+    "department1": None,  # drop
 }
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
-
-# Mount CookieManager once
 COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 
 # =============================================================================
-# SMALL HELPERS
+# HELPERS
 # =============================================================================
 
+def _norm_header(h: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
+
+
 def normalize_serial(s: str) -> str:
-    """Uppercase and strip all non-alphanumerics for stable serial comparison."""
     return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
 
 
 def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
-    """Compute Levenshtein distance with early-exit when distance > max_dist."""
     if a == b:
         return 0
     la, lb = len(a), len(b)
@@ -154,11 +156,11 @@ def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
         prev = cur
     return prev[-1]
 
-# Normalizers for employee duplicate checks
-_name_ws = re.compile(r"\s+")
+# Name/phone normalizers for duplicates
+_ws = re.compile(r"\s+")
 
 def norm_name(x: str) -> str:
-    return _name_ws.sub(" ", (x or "").strip().lower())
+    return _ws.sub(" ", (x or "").strip().lower())
 
 
 def norm_phone(x: str) -> str:
@@ -240,7 +242,6 @@ def do_logout():
     st.session_state.just_logged_out = True
     st.rerun()
 
-# Ensure CookieManager is mounted before first read
 if "cookie_bootstrapped" not in st.session_state:
     st.session_state.cookie_bootstrapped = True
     _ = COOKIE_MGR.get_all()
@@ -256,11 +257,8 @@ def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
     ext = os.path.splitext(font_path)[1].lower()
     mime = "font/ttf" if ext == ".ttf" else "font/otf"
     fmt = "truetype" if ext == ".ttf" else "opentype"
-    try:
-        with open(font_path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode("utf-8")
-    except Exception:
-        return
+    with open(font_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
     st.markdown(
         f"""
         <style>
@@ -349,7 +347,7 @@ def hide_table_toolbar_for_non_admin():
         )
 
 # =============================================================================
-# GOOGLE SHEETS — LAZY + RETRY + CACHED READS
+# GOOGLE SHEETS — CLIENT / UTILITIES
 # =============================================================================
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -382,66 +380,75 @@ def get_sh():
     raise last_exc
 
 
-def _norm_title(t: str) -> str:
-    return (t or "").strip().lower()
+def get_or_create_ws(title, rows=500, cols=80):
+    sh = get_sh()
+    try:
+        return sh.worksheet(title)
+    except gspread.exceptions.WorksheetNotFound:
+        return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
 
-def _norm_header(h: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
+def get_employee_ws() -> gspread.Worksheet:
+    sh = get_sh()
+    try:
+        return sh.worksheet(EMPLOYEE_WS)
+    except gspread.exceptions.WorksheetNotFound:
+        return sh.add_worksheet(title=EMPLOYEE_WS, rows=500, cols=80)
 
-# ---------- Employee header cleanup utilities ----------
+# ---------- EMPLOYEE DF CLEANING (robust) ----------
 
-def _rename_employee_synonyms(cols: list[str]) -> list[str]:
-    out = []
+def _map_employee_headers(cols: list[str]) -> dict:
+    """Return mapping original->canonical/None using HEADER_SYNONYMS."""
+    mapping = {}
     for h in cols:
-        key = _norm_header(h)
-        mapped = HEADER_SYNONYMS.get(key, h.strip())
-        if mapped is None:
-            out.append(f"DROP__{h}")
-        else:
-            out.append(mapped)
-    return out
-
-
-def _coalesce_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
-    from collections import Counter
-    counts = Counter(df.columns)
-    for name, n in list(counts.items()):
-        if n > 1:
-            cols = [c for c in df.columns if c == name]
-            combined = df[cols].replace(["", None], pd.NA).bfill(axis=1).iloc[:, 0].fillna("")
-            df = df.drop(columns=cols).assign(**{name: combined})
-    return df
+        key = _norm_header(str(h))
+        mapping[h] = HEADER_SYNONYMS.get(key, h.strip())
+    return mapping
 
 
 def _clean_employee_df(df: pd.DataFrame) -> pd.DataFrame:
-    # 1) drop marked legacy/synonym columns
-    drop_cols = [c for c in df.columns if str(c).startswith("DROP__")]
-    if drop_cols:
-        df = df.drop(columns=drop_cols)
-    # 2) coalesce duplicates (e.g., two Department columns)
-    df = _coalesce_duplicate_columns(df)
-    # 3) keep only canonical columns in the right order
-    df = reorder_columns(df, EMPLOYEE_CANON_COLS)
-    df = df[EMPLOYEE_CANON_COLS]
-    return df
+    if df.empty:
+        return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
 
-# ---------- Inventory header normalization ----------
+    # 1) Map headers and collect by canonical name
+    mapping = _map_employee_headers(list(df.columns))
+    buckets: dict[str, list[str]] = {}
+    for orig, canon in mapping.items():
+        if canon is None:
+            continue  # to be dropped
+        buckets.setdefault(canon, []).append(orig)
+
+    # 2) Build a new dataframe with only canonical columns
+    out = pd.DataFrame(index=df.index)
+    for canon in EMPLOYEE_CANON_COLS:
+        cols = buckets.get(canon, [])
+        if not cols:
+            out[canon] = ""  # fill missing column
+        elif len(cols) == 1:
+            out[canon] = df[cols[0]].astype(str)
+        else:
+            # coalesce duplicates: first non-empty from left to right
+            combined = df[cols].replace(["", None], pd.NA).bfill(axis=1).iloc[:, 0].fillna("").astype(str)
+            out[canon] = combined
+
+    return out[EMPLOYEE_CANON_COLS]
+
+# ---------- INVENTORY HEADER NORMALIZATION ----------
 
 def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
-    rename, drop_cols = {}, []
-    for c in df.columns:
-        key = _norm_header(c)
-        if key in INVENTORY_HEADER_SYNONYMS:
-            new = INVENTORY_HEADER_SYNONYMS[key]
-            if new:
-                rename[c] = new
-            else:
-                drop_cols.append(c)
-    if rename:
-        df = df.rename(columns=rename)
-    if drop_cols:
-        df = df.drop(columns=drop_cols)
+    if df.empty:
+        return reorder_columns(df, INVENTORY_COLS)
+    ren, drops = {}, []
+    for c in list(df.columns):
+        new = INVENTORY_HEADER_SYNONYMS.get(_norm_header(c))
+        if new is None:
+            drops.append(c)
+        elif new:
+            ren[c] = new
+    if ren:
+        df = df.rename(columns=ren)
+    if drops:
+        df = df.drop(columns=drops)
     return df
 
 
@@ -452,85 +459,7 @@ def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     tail = [c for c in df.columns if c not in desired]
     return df[desired + tail]
 
-
-def _find_ws_candidates(title: str):
-    sh = get_sh()
-    target = _norm_title(title)
-    return [ws for ws in sh.worksheets() if _norm_title(ws.title) == target]
-
-
-def _score_header(values: list[list[str]], expected_canon: set[str]) -> tuple[int, int]:
-    best_idx, best_count = 0, 0
-    rows_to_scan = min(len(values), 10)
-    for i in range(rows_to_scan):
-        row = values[i]
-        canon = {c for c in row if str(c).strip()}
-        overlap = len(canon & expected_canon)
-        if overlap > best_count:
-            best_idx, best_count = i, overlap
-    return best_idx, best_count
-
-
-def _read_ws_as_dataframe(ws: gspread.Worksheet, expected_cols: list[str]) -> tuple[pd.DataFrame, int, int]:
-    values = ws.get_all_values() or []
-    if not values:
-        return pd.DataFrame(columns=expected_cols), 0, 0
-
-    expected_canon = set(expected_cols)
-    header_idx, score = _score_header(values, expected_canon)
-    headers_raw = values[header_idx]
-    preferred = [HEADER_SYNONYMS.get(_norm_header(h), h) for h in headers_raw]
-
-    data_rows = values[header_idx + 1 :]
-    df = pd.DataFrame(data_rows, columns=preferred).replace({None: ""})
-    df = df.dropna(how="all").reset_index(drop=True)
-    df = reorder_columns(df, expected_cols)
-    return df, header_idx, score
-
-
-def get_employee_ws() -> gspread.Worksheet:
-    sh = get_sh()
-    ws_id = st.session_state.get("emp_ws_id")
-    if ws_id:
-        ws = sh.get_worksheet_by_id(ws_id)
-        if ws is not None:
-            return ws
-
-    cands = _find_ws_candidates(EMPLOYEE_WS)
-    if not cands:
-        ws = sh.add_worksheet(title=EMPLOYEE_WS, rows=500, cols=80)
-        st.session_state.emp_ws_id = ws.id
-        return ws
-
-    if len(cands) == 1:
-        ws = cands[0]
-        st.session_state.emp_ws_id = ws.id
-        return ws
-
-    best_ws, best_score = None, -1
-    for ws in cands:
-        try:
-            values = ws.get_all_values() or []
-            header = values[0] if values else []
-            header = _rename_employee_synonyms(header)
-            score = len(set(header) & set(EMPLOYEE_CANON_COLS))
-            if score > best_score:
-                best_ws, best_score = ws, score
-        except Exception:
-            continue
-
-    ws = best_ws or cands[0]
-    st.session_state.emp_ws_id = ws.id
-    return ws
-
-
-def get_or_create_ws(title, rows=500, cols=80):
-    sh = get_sh()
-    try:
-        return sh.worksheet(title)
-    except gspread.exceptions.WorksheetNotFound:
-        return sh.add_worksheet(title=title, rows=rows, cols=cols)
-
+# ---------- READ/CACHE LAYERS ----------
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
@@ -539,17 +468,13 @@ def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
         values = ws.get_all_values() or []
         if not values:
             return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
-        header = _rename_employee_synonyms(values[0])
-        data = values[1:]
-        df = pd.DataFrame(data, columns=header).replace({None: ""})
-        df = _clean_employee_df(df)
-        st.session_state.emp_debug = {
-            "title": ws.title,
-            "gid": ws.id,
-            "rows": len(df),
-        }
+        header = values[0]
+        rows = values[1:]
+        df_raw = pd.DataFrame(rows, columns=header)
+        df = _clean_employee_df(df_raw)
         return df
 
+    # default path for other sheets
     ws = get_or_create_ws(ws_title)
     data = ws.get_all_records()
     df = pd.DataFrame(data)
@@ -561,9 +486,13 @@ def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
     return df
 
 
-def read_worksheet(ws_title):
+def read_worksheet(ws_title: str) -> pd.DataFrame:
     try:
-        return _read_worksheet_cached(ws_title)
+        df = _read_worksheet_cached(ws_title)
+        # Final safety: ensure no duplicate columns reach Streamlit
+        if ws_title == EMPLOYEE_WS:
+            df = _clean_employee_df(df)
+        return df
     except Exception as e:
         st.error(f"Error reading sheet '{ws_title}': {e}")
         if ws_title == INVENTORY_WS:
@@ -574,34 +503,40 @@ def read_worksheet(ws_title):
             return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
         return pd.DataFrame()
 
+# ---------- WRITE HELPERS ----------
 
-def write_worksheet(ws_title, df):
-    if ws_title == INVENTORY_WS:
-        df = canon_inventory_columns(df)
-        df = reorder_columns(df, INVENTORY_COLS)
+def write_worksheet(ws_title: str, df: pd.DataFrame):
     if ws_title == EMPLOYEE_WS:
-        # Force canonical-only columns (drops legacy Email columns, etc.)
-        df = reorder_columns(df, EMPLOYEE_CANON_COLS)
+        df = _clean_employee_df(df)
         df = df[EMPLOYEE_CANON_COLS]
-    ws = get_employee_ws() if ws_title == EMPLOYEE_WS else get_or_create_ws(ws_title)
+        ws = get_employee_ws()
+    else:
+        if ws_title == INVENTORY_WS:
+            df = canon_inventory_columns(df)
+            df = reorder_columns(df, INVENTORY_COLS)
+        ws = get_or_create_ws(ws_title)
     ws.clear()
     set_with_dataframe(ws, df)
     st.cache_data.clear()
 
 
-def append_to_worksheet(ws_title, new_data):
-    ws = get_employee_ws() if ws_title == EMPLOYEE_WS else get_or_create_ws(ws_title)
-    df_existing = pd.DataFrame(ws.get_all_records())
-    if ws_title == INVENTORY_WS:
-        df_existing = canon_inventory_columns(df_existing)
-        df_existing = reorder_columns(df_existing, INVENTORY_COLS)
+def append_to_worksheet(ws_title: str, new_data: pd.DataFrame):
     if ws_title == EMPLOYEE_WS:
-        df_existing = _clean_employee_df(
-            pd.DataFrame(ws.get_all_values()[1:], columns=_rename_employee_synonyms(ws.get_all_values()[0]))
-        ) if ws.get_all_values() else pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
-    df_combined = pd.concat([df_existing, new_data], ignore_index=True)
-    if ws_title == EMPLOYEE_WS:
+        ws = get_employee_ws()
+        values = ws.get_all_values() or []
+        if values:
+            df_existing = _clean_employee_df(pd.DataFrame(values[1:], columns=values[0]))
+        else:
+            df_existing = pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
+        df_combined = pd.concat([df_existing, _clean_employee_df(new_data)], ignore_index=True)
         df_combined = _clean_employee_df(df_combined)
+    else:
+        ws = get_or_create_ws(ws_title)
+        df_existing = pd.DataFrame(ws.get_all_records())
+        if ws_title == INVENTORY_WS:
+            df_existing = canon_inventory_columns(df_existing)
+            df_existing = reorder_columns(df_existing, INVENTORY_COLS)
+        df_combined = pd.concat([df_existing, new_data], ignore_index=True)
     set_with_dataframe(ws, df_combined)
     st.cache_data.clear()
 
@@ -636,7 +571,7 @@ def show_login():
             st.error("❌ Invalid username or password.")
 
 # =============================================================================
-# ADMIN OVERRIDE (for near-duplicate serials)
+# ADMIN OVERRIDE FOR NEAR-DUP SERIALS
 # =============================================================================
 
 def admin_override_widget(s_norm: str, similar_serials: list[str]) -> bool:
@@ -669,7 +604,7 @@ def employees_view_tab():
     if df.empty:
         st.info("No employees found in 'mainlists'.")
     else:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df[EMPLOYEE_CANON_COLS], use_container_width=True, hide_index=True)
 
 
 def inventory_tab():
@@ -873,7 +808,6 @@ def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
     emp_df = read_worksheet(EMPLOYEE_WS)
 
-    # build suggestion lists from existing data (avoid blanks)
     def _opts(col):
         return sorted({str(x).strip() for x in emp_df.get(col, pd.Series(dtype=str)).dropna().astype(str) if str(x).strip()})
 
@@ -929,7 +863,6 @@ def employee_register_tab():
             st.error("Name is required.")
             return
 
-        # Duplicate checks (do not modify emp_df)
         id_set = set(emp_df["Employee ID"].astype(str).str.strip().str.lower()) if "Employee ID" in emp_df.columns else set()
         name_set = set(emp_df["Name"].astype(str).str.lower().str.replace(r"\s+", " ", regex=True)) if "Name" in emp_df.columns else set()
         phone_set = set(emp_df["Mobile Number"].astype(str).str.replace(r"\D+", "", regex=True)) if "Mobile Number" in emp_df.columns else set()
@@ -963,8 +896,7 @@ def employee_register_tab():
             "Mobile Number": mobile.strip(),
         }
         new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True) if not emp_df.empty else pd.DataFrame([row])
-        new_df = reorder_columns(new_df, EMPLOYEE_CANON_COLS)
-        new_df = new_df[EMPLOYEE_CANON_COLS]
+        new_df = _clean_employee_df(new_df)
         write_worksheet(EMPLOYEE_WS, new_df)
         st.success("✅ Employee saved to 'mainlists'.")
 
@@ -992,17 +924,15 @@ def run_app():
     hide_table_toolbar_for_non_admin()
 
     if st.session_state.role == "Admin":
-        tabs = st.tabs(
-            [
-                "🧑‍💼 Employee Register",
-                "🧾 Main Employees",
-                "📝 Register Device",
-                "📋 Main Inventory",
-                "🔁 Transfer Device",
-                "📜 History Transfer",
-                "⬇️ Export",
-            ]
-        )
+        tabs = st.tabs([
+            "🧑‍💼 Employee Register",
+            "🧾 Main Employees",
+            "📝 Register Device",
+            "📋 Main Inventory",
+            "🔁 Transfer Device",
+            "📜 History Transfer",
+            "⬇️ Export",
+        ])
         with tabs[0]:
             employee_register_tab()
         with tabs[1]:
