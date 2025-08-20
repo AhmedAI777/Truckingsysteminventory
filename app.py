@@ -648,7 +648,7 @@ def employee_register_tab():
     with st.form("register_employee", clear_on_submit=True):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
-            new_emp_status = st.text_input("New Employeer", value="Created")
+            new_emp_status = st.text_input("New Employeer")  # blank by default
         with r1c2:
             emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
         with r1c3:
@@ -660,11 +660,11 @@ def employee_register_tab():
         with r2c2:
             address = st.text_input("Address")
         with r2c3:
-            aplus = st.text_input("APLUS", value="Yes")
+            aplus = st.text_input("APLUS")  # blank by default
 
         r3c1, r3c2, r3c3 = st.columns(3)
         with r3c1:
-            active = st.text_input("Active", value="Yes")
+            active = st.text_input("Active")  # blank by default
         with r3c2:
             position = st.text_input("Position")
         with r3c3:
@@ -709,6 +709,7 @@ def employee_register_tab():
         new_df = reorder_columns(new_df, EMPLOYEE_CANON_COLS)
         write_worksheet(EMPLOYEE_WS, new_df)
         st.success("✅ Employee saved to 'mainlists'.")
+
 
 
 def export_tab():
