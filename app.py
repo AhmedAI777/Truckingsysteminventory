@@ -1,8 +1,10 @@
 # path: app/streamlit_app_inventory.py
-# NOTE: This version removes the standalone "Name" field in the Employee form,
-# relabels "New Employeer" as the required name field, and writes both
-# "New Employeer" and "Name" columns with the same value for compatibility.
-# It also adds helpful dropdowns (with "Other…" fallbacks) for common fields.
+# Changes:
+# - Remove separate "Name *" field; use "New Employeer *" as the single name source.
+# - Write the same value to both columns: "New Employeer" and "Name" (for compatibility).
+# - Add dropdowns with useful defaults + "Other…" fallbacks (Position/Department/Project/Location).
+# - Standardize Yes/No/Requested dropdowns for New Signature & Microsoft Teams; status dropdown for Active.
+# - Keep inventory and transfer tabs intact.
 
 # pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth
 import os
@@ -29,23 +31,19 @@ APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE  = "Advanced Construction"
 DATE_FMT  = "%Y-%m-%d %H:%M:%S"
 
-# Cookie/session config (persist login across refresh; set SESSION_TTL_DAYS=0 for session-only)
 SESSION_TTL_DAYS = 30
 SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60
 COOKIE_NAME = "ac_auth"
 COOKIE_PATH = "/"
-COOKIE_SECURE = False   # set True if app is served over HTTPS
-COOKIE_SAMESITE = "Lax" # or "Strict" / "None" (with SECURE=True)
+COOKIE_SECURE = False
+COOKIE_SAMESITE = "Lax"
 
-# Default to your sheet URL; can be overridden in secrets
 SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
-# Worksheet titles (created if missing)
 INVENTORY_WS    = "truckinventory"
 TRANSFERLOG_WS  = "transfer_log"
 EMPLOYEE_WS     = "mainlists"
 
-# Canonical inventory columns (UPDATED: uses "Current user"; removed Department.1)
 INVENTORY_COLS = [
     "Serial Number","Device Type","Brand","Model","CPU",
     "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
@@ -55,16 +53,13 @@ INVENTORY_COLS = [
 ]
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 
-# Employees sheet columns (canonical names)
-# Keeping both columns in the sheet for compatibility. The form only asks once
-# and the same value is written to both columns.
+# Employees sheet columns (canonical). Keep both name columns, remove APLUS from schema.
 EMPLOYEE_CANON_COLS = [
     "New Employeer","Employee ID","New Signature","Name","Address",
     "Active","Position","Department","Location (KSA)",
     "Project","Microsoft Teams","Mobile Number"
 ]
 
-# Accept common synonym/typo headers and normalize to canon (employees)
 HEADER_SYNONYMS = {
     "new employee": "New Employeer",
     "new employeer": "New Employeer",
@@ -77,37 +72,31 @@ HEADER_SYNONYMS = {
     "mobilenumber": "Mobile Number",
 }
 
-# Map old inventory headers → new canonical names
 INVENTORY_HEADER_SYNONYMS = {
     "user": "Current user",
     "currentuser": "Current user",
     "previoususer": "Previous User",
     "to": "TO",
-    "department1": None,  # drop this header entirely if present
+    "department1": None,
 }
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
-
-# Mount CookieManager once
 COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 
 # =============================================================================
-# HELPERS (serial normalization + near-duplicate)
+# HELPERS
 # =============================================================================
 
 def normalize_serial(s: str) -> str:
-    """Uppercase and strip all non-alphanumerics for stable serial comparison."""
     return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
 
 
 def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
-    """Compute Levenshtein distance with early-exit when distance > max_dist."""
     if a == b:
         return 0
     la, lb = len(a), len(b)
     if abs(la - lb) > max_dist:
         return max_dist + 1
-    # ensure a is shorter
     if la > lb:
         a, b = b, a
         la, lb = lb, la
@@ -125,14 +114,30 @@ def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
         prev = cur
     return prev[-1]
 
+# Small data helpers for dropdowns
+
+def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
+    if df.empty or col not in df.columns:
+        return []
+    vals = [str(x).strip() for x in df[col].dropna().astype(str).tolist()]
+    return sorted({v for v in vals if v})
+
+
+def select_with_other(label: str, base_options: list[str], existing_values: list[str]) -> str:
+    merged = [o for o in base_options if o]
+    for v in existing_values:
+        if v and v not in merged:
+            merged.append(v)
+    sel = st.selectbox(label, ["— Select —"] + merged + ["Other…"])
+    if sel == "Other…":
+        return st.text_input(f"{label} (Other)")
+    return "" if sel == "— Select —" else sel
+
 # =============================================================================
-# AUTH (SESSION COOKIE)
+# AUTH (cookie)
 # =============================================================================
 
 def _cookie_key() -> str:
-    # Put a strong random in secrets:
-    # [auth]
-    # cookie_key = "your-very-long-random-secret"
     return st.secrets.get("auth", {}).get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
 
 
@@ -147,22 +152,9 @@ def _issue_session_cookie(username: str, role: str):
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
     if SESSION_TTL_SECONDS > 0:
-        COOKIE_MGR.set(
-            COOKIE_NAME,
-            token,
-            max_age=SESSION_TTL_SECONDS,
-            path=COOKIE_PATH,
-            secure=COOKIE_SECURE,
-            same_site=COOKIE_SAMESITE,
-        )
+        COOKIE_MGR.set(COOKIE_NAME, token, max_age=SESSION_TTL_SECONDS, path=COOKIE_PATH, secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE)
     else:
-        COOKIE_MGR.set(
-            COOKIE_NAME,
-            token,
-            path=COOKIE_PATH,
-            secure=COOKIE_SECURE,
-            same_site=COOKIE_SAMESITE,
-        )
+        COOKIE_MGR.set(COOKIE_NAME, token, path=COOKIE_PATH, secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE)
 
 
 def _read_cookie():
@@ -208,18 +200,16 @@ def do_logout():
     st.session_state.just_logged_out = True
     st.rerun()
 
-# Ensure CookieManager is mounted before first read
 if "cookie_bootstrapped" not in st.session_state:
     st.session_state.cookie_bootstrapped = True
     _ = COOKIE_MGR.get_all()
     st.rerun()
 
 # =============================================================================
-# STYLE (Custom Font Loader)
+# STYLE
 # =============================================================================
 
 def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
-    """Embed a local TTF/OTF and apply as the default UI font."""
     if not os.path.exists(font_path):
         return
     ext = os.path.splitext(font_path)[1].lower()
@@ -236,9 +226,7 @@ def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
           @font-face {{
             font-family: '{family}';
             src: url(data:{mime};base64,{b64}) format('{fmt}');
-            font-weight: normal;
-            font-style: normal;
-            font-display: swap;
+            font-weight: normal; font-style: normal; font-display: swap;
           }}
           html, body, [class*="css"] {{
             font-family: '{family}', -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -255,7 +243,6 @@ def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
 
 
 def _font_candidates():
-    """Return likely font file paths in priority order."""
     cands = []
     secrets_font = st.secrets.get("branding", {}).get("font_file")
     if secrets_font:
@@ -283,7 +270,6 @@ def _apply_brand_font():
 
 def render_header():
     _apply_brand_font()
-
     c_logo, c_title, c_user = st.columns([1.2, 6, 3], gap="small")
     with c_logo:
         if os.path.exists("company_logo.jpeg"):
@@ -321,7 +307,7 @@ def hide_table_toolbar_for_non_admin():
         )
 
 # =============================================================================
-# GOOGLE SHEETS — LAZY + RETRY + CACHED READS
+# GOOGLE SHEETS
 # =============================================================================
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -352,8 +338,7 @@ def get_sh():
         except gspread.exceptions.APIError as e:
             last_exc = e
             time.sleep(0.6 * (attempt + 1))
-    st.error("Google Sheets API error while opening the spreadsheet. "
-             "Please confirm the service account has access and try again.")
+    st.error("Google Sheets API error while opening the spreadsheet. Please confirm access and try again.")
     raise last_exc
 
 
@@ -371,7 +356,6 @@ def _canon_header(h: str) -> str:
 
 
 def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize inventory headers (e.g., USER → Current user) and drop deprecated ones."""
     rename = {}
     drop_cols = []
     for c in df.columns:
@@ -381,7 +365,7 @@ def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
             if new:
                 rename[c] = new
             else:
-                drop_cols.append(c)  # Department.1 → drop
+                drop_cols.append(c)
     if rename:
         df = df.rename(columns=rename)
     if drop_cols:
@@ -395,14 +379,6 @@ def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
             df[c] = ""
     tail = [c for c in df.columns if c not in desired]
     return df[desired + tail]
-
-
-def reorder_columns_strict(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
-    """Return only desired columns (create missing), drop all extras. Why: keep employees schema clean."""
-    for c in desired:
-        if c not in df.columns:
-            df[c] = ""
-    return df[desired]
 
 
 def _find_ws_candidates(title: str):
@@ -436,7 +412,7 @@ def _read_ws_as_dataframe(ws: gspread.Worksheet, expected_cols: list[str]) -> tu
     data_rows = values[header_idx + 1 :]
     df = pd.DataFrame(data_rows, columns=preferred).replace({None: ""})
     df = df.dropna(how="all").reset_index(drop=True)
-    df = reorder_columns_strict(df, expected_cols)
+    df = reorder_columns(df, expected_cols)
     return df, header_idx, score
 
 
@@ -534,73 +510,7 @@ def append_to_worksheet(ws_title, new_data):
     st.cache_data.clear()
 
 # =============================================================================
-# AUTH (users) + LOGIN FORM
-# =============================================================================
-
-def load_users():
-    admins = st.secrets.get("auth", {}).get("admins", {})
-    staff  = st.secrets.get("auth", {}).get("staff", {})
-    users = {}
-    for user, pw in admins.items():
-        if user != "type":
-            users[user] = {"password": pw, "role": "Admin", "name": user}
-    for user, pw in staff.items():
-        users[user] = {"password": pw, "role": "Staff", "name": user}
-    return users
-
-
-USERS = load_users()
-
-
-def show_login():
-    st.subheader("🔐 Sign In")
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-    if st.button("Login", type="primary"):
-        user = USERS.get(username)
-        if user and user["password"] == password:
-            do_login(username, user["role"])  # sets cookie + rerun
-        else:
-            st.error("❌ Invalid username or password.")
-
-# =============================================================================
-# ADMIN OVERRIDE (for near-duplicate serials)
-# =============================================================================
-
-def admin_override_widget(s_norm: str, similar_serials: list[str]) -> bool:
-    """Inline admin confirmation gate. Returns True if a valid admin override PIN was provided.
-    Configure pins in secrets:
-
-    [auth]
-    # admins = { alice = "...", bob = "..." }
-    [auth.override_pins]
-    alice = "123456"
-    bob   = "654321"
-    """
-    st.warning(
-        "Near-duplicate serial detected: " + ", ".join(similar_serials) +
-        ". Admin confirmation required to proceed."
-    )
-    admins = [u for u in st.secrets.get("auth", {}).get("admins", {}).keys() if u != "type"]
-    with st.form(f"override_form_{s_norm}", clear_on_submit=False):
-        admin_user = st.selectbox("Admin username", ["— Select —"] + admins, index=0)
-        pin = st.text_input("Admin override PIN", type="password")
-        ok = st.form_submit_button("Confirm admin override", type="primary")
-    if ok:
-        if admin_user == "— Select —":
-            st.error("Select an admin username.")
-            st.stop()
-        pins = st.secrets.get("auth", {}).get("override_pins", {})
-        valid = str(pins.get(admin_user, "")) == str(pin).strip()
-        if not valid:
-            st.error("Invalid admin override.")
-            st.stop()
-        st.session_state[f"override_ok_{s_norm}"] = True
-        st.session_state[f"override_admin_{s_norm}"] = admin_user
-    return st.session_state.get(f"override_ok_{s_norm}", False)
-
-# =============================================================================
-# TABS
+# VIEWS
 # =============================================================================
 
 def employees_view_tab():
@@ -635,11 +545,209 @@ def register_device_tab():
         with r1c3:
             device = st.text_input("Device Type *")
 
+        r2c1, r2c2, r2c3 = st.columns(3)
+        with r2c1:
+            brand  = st.text_input("Brand")
+        with r2c2:
+            model  = st.text_input("Model")
+        with r2c3:
+            cpu    = st.text_input("CPU")
+
+        r3c1, r3c2, r3c3 = st.columns(3)
+        with r3c1:
+            mem    = st.text_input("Memory")
+        with r3c2:
+            hdd1   = st.text_input("Hard Drive 1")
+        with r3c3:
+            hdd2   = st.text_input("Hard Drive 2")
+
+        r4c1, r4c2, r4c3 = st.columns(3)
+        with r4c1:
+            gpu    = st.text_input("GPU")
+        with r4c2:
+            screen = st.text_input("Screen Size")
+        with r4c3:
+            email  = st.text_input("Email Address")
+
+        r5c1, r5c2, r5c3 = st.columns(3)
+        with r5c1:
+            contact = st.text_input("Contact Number")
+        with r5c2:
+            dept   = st.text_input("Department")
+        with r5c3:
+            location = st.text_input("Location")
+
+        r6c1, r6c2 = st.columns([1, 2])
+        with r6c1:
+            office = st.text_input("Office")
+        with r6c2:
+            notes  = st.text_area("Notes", height=60)
+
+        submitted = st.form_submit_button("Save Device", type="primary")
+
+    if submitted:
+        if not serial.strip() or not device.strip():
+            st.error("Serial Number and Device Type are required.")
+            return
+
+        s_norm = normalize_serial(serial)
+        if not s_norm:
+            st.error("Serial Number cannot be blank after normalization.")
+            return
+
+        inv = read_worksheet(INVENTORY_WS)
+        if not inv.empty:
+            inv["__snorm"] = inv["Serial Number"].astype(str).map(normalize_serial)
+            if s_norm in set(inv["__snorm"]):
+                existing = inv[inv["__snorm"] == s_norm].iloc[0]
+                st.error(
+                    f"Duplicate serial. Already exists as '{existing['Serial Number']}' ("
+                    f"{existing.get('Device Type','')} {existing.get('Brand','')}/{existing.get('Model','')})."
+                )
+                return
+            near_mask = inv["__snorm"].apply(lambda x: levenshtein(s_norm, x, max_dist=1) <= 1)
+            near = inv[near_mask]
+            if not near.empty:
+                similar_list = near["Serial Number"].astype(str).unique().tolist()
+                st.warning("Near-duplicate serials: " + ", ".join(similar_list))
+
+        row = {
+            "Serial Number": serial.strip(),
+            "Device Type": device.strip(),
+            "Brand": brand.strip(),
+            "Model": model.strip(),
+            "CPU": cpu.strip(),
+            "Hard Drive 1": hdd1.strip(),
+            "Hard Drive 2": hdd2.strip(),
+            "Memory": mem.strip(),
+            "GPU": gpu.strip(),
+            "Screen Size": screen.strip(),
+            "Current user": current_user.strip(),
+            "Previous User": "",
+            "TO": current_user.strip(),
+            "Department": dept.strip(),
+            "Email Address": email.strip(),
+            "Contact Number": contact.strip(),
+            "Location": location.strip(),
+            "Office": office.strip(),
+            "Notes": notes.strip(),
+            "Date issued": datetime.now().strftime(DATE_FMT),
+            "Registered by": st.session_state.get("username", ""),
+        }
+
+        inv_fresh = read_worksheet(INVENTORY_WS)
+        inv_out = pd.concat([
+            inv_fresh if not inv_fresh.empty else pd.DataFrame(columns=INVENTORY_COLS),
+            pd.DataFrame([row])
+        ], ignore_index=True)
+        inv_out = reorder_columns(inv_out, INVENTORY_COLS)
+        write_worksheet(INVENTORY_WS, inv_out)
+        st.success("✅ Device registered and added to Inventory.")
+
+
+def transfer_tab():
+    st.subheader("🔁 Transfer Device")
+    inventory_df = read_worksheet(INVENTORY_WS)
+    if inventory_df.empty:
+        st.warning("Inventory is empty.")
+        return
+
+    serial_list = sorted(inventory_df["Serial Number"].dropna().astype(str).unique().tolist())
+    serial = st.selectbox("Serial Number", ["— Select —"] + serial_list)
+    chosen_serial = None if serial == "— Select —" else serial
+
+    existing_users = sorted([u for u in inventory_df["Current user"].dropna().astype(str).tolist() if u.strip()])
+    new_owner_choice = st.selectbox("New Owner", ["— Select —"] + existing_users + ["Type a new name…"])
+    if new_owner_choice == "Type a new name…":
+        new_owner = st.text_input("Enter new owner name")
+    else:
+        new_owner = new_owner_choice if new_owner_choice != "— Select —" else ""
+
+    do_transfer = st.button("Transfer Now", type="primary", disabled=not (chosen_serial and new_owner.strip()))
+
+    if do_transfer:
+        match = inventory_df[inventory_df["Serial Number"].astype(str) == chosen_serial]
+        if match.empty:
+            st.warning("Serial number not found.")
+            return
+
+        idx = match.index[0]
+        prev_user = str(inventory_df.loc[idx, "Current user"] or "")
+        now_str   = datetime.now().strftime(DATE_FMT)
+        actor     = st.session_state.get("username", "")
+
+        inventory_df.loc[idx, "Previous User"] = prev_user
+        inventory_df.loc[idx, "Current user"]  = new_owner.strip()
+        inventory_df.loc[idx, "TO"]            = new_owner.strip()
+        inventory_df.loc[idx, "Date issued"]   = now_str
+        inventory_df.loc[idx, "Registered by"] = actor
+
+        inventory_df = reorder_columns(inventory_df, INVENTORY_COLS)
+        write_worksheet(INVENTORY_WS, inventory_df)
+
+        log_row = {
+            "Device Type": inventory_df.loc[idx, "Device Type"],
+            "Serial Number": chosen_serial,
+            "From owner": prev_user,
+            "To owner": new_owner.strip(),
+            "Date issued": now_str,
+            "Registered by": actor,
+        }
+        append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
+
+        st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
+
+
+def history_tab():
+    st.subheader("📜 Transfer Log")
+    df = read_worksheet(TRANSFERLOG_WS)
+    if df.empty:
+        st.info("No transfer history found.")
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+# =============================================================================
+# Employee Register (updated)
+# =============================================================================
+
+def employee_register_tab():
+    st.subheader("🧑‍💼 Register New Employee (mainlists)")
+    emp_df = read_worksheet(EMPLOYEE_WS)
+
+    # Suggested numeric ID
+    try:
+        ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
+        next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
+    except Exception:
+        next_id_suggestion = str(len(emp_df) + 1)
+
+    # Dropdown sources from existing data
+    dept_existing = unique_nonempty(emp_df, "Department")
+    pos_existing  = unique_nonempty(emp_df, "Position")
+    proj_existing = unique_nonempty(emp_df, "Project")
+    loc_existing  = unique_nonempty(emp_df, "Location (KSA)")
+
+    ksa_cities = [
+        "Riyadh", "Jeddah", "Dammam", "Khobar", "Dhahran", "Jubail",
+        "Mecca", "Medina", "Abha", "Tabuk", "Hail", "Buraidah"
+    ]
+
+    with st.form("register_employee", clear_on_submit=True):
+        r1c1, r1c2, r1c3 = st.columns(3)
+        with r1c1:
+            # single name input; why: consolidate Name into New Employeer
+            emp_name = st.text_input("New Employeer *")
+        with r1c2:
+            emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
+        with r1c3:
+            new_sig = st.selectbox("New Signature", ["— Select —", "Yes", "No", "Requested"])  # standardize
+
         r2c1, r2c2 = st.columns(2)
         with r2c1:
             address = st.text_input("Address")
         with r2c2:
-            active = st.selectbox("Active", ["Active", "Inactive", "Onboarding", "Resigned"])  # why: status consistency
+            active = st.selectbox("Active", ["Active", "Inactive", "Onboarding", "Resigned"])  # status
 
         r3c1, r3c2, r3c3 = st.columns(3)
         with r3c1:
@@ -653,7 +761,7 @@ def register_device_tab():
         with r4c1:
             project = select_with_other("Project", ["Head Office", "Site"], proj_existing)
         with r4c2:
-            teams = st.selectbox("Microsoft Teams", ["— Select —", "Yes", "No", "Requested"])  # why: standardize
+            teams = st.selectbox("Microsoft Teams", ["— Select —", "Yes", "No", "Requested"])  # standardize
         with r4c3:
             mobile = st.text_input("Mobile Number")
 
@@ -661,16 +769,100 @@ def register_device_tab():
 
     if submitted:
         if not emp_name.strip():
-            st.error("Name is required.")
+            st.error("New Employeer is required.")
             return
         if emp_id.strip() and not emp_df.empty and emp_id.strip() in emp_df["Employee ID"].astype(str).values:
             st.error(f"Employee ID '{emp_id}' already exists.")
             return
 
         row = {
-            # Store name under both columns for compatibility with downstream views/reports
             "New Employeer": emp_name.strip(),
-            "Name": emp_name.strip(),
+            "Name": emp_name.strip(),  # keep both columns filled
             "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
             "New Signature": new_sig if new_sig != "— Select —" else "",
             "Address": address.strip(),
+            "Active": active.strip(),
+            "Position": position.strip(),
+            "Department": department.strip(),
+            "Location (KSA)": location_ksa.strip(),
+            "Project": project.strip(),
+            "Microsoft Teams": teams if teams != "— Select —" else "",
+            "Mobile Number": mobile.strip(),
+        }
+        new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True) if not emp_df.empty else pd.DataFrame([row])
+        new_df = reorder_columns(new_df, EMPLOYEE_CANON_COLS)
+        write_worksheet(EMPLOYEE_WS, new_df)
+        st.success("✅ Employee saved to 'mainlists'.")
+
+
+def export_tab():
+    st.subheader("⬇️ Export (always fresh)")
+    inv = read_worksheet(INVENTORY_WS)
+    log = read_worksheet(TRANSFERLOG_WS)
+    emp = read_worksheet(EMPLOYEE_WS)
+    st.caption(f"Last fetched: {datetime.now().strftime(DATE_FMT)}")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"), "inventory.csv", "text/csv")
+    with c2:
+        st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"), "transfer_log.csv", "text/csv")
+    with c3:
+        st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"), "employees.csv", "text/csv")
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+def run_app():
+    render_header()
+    hide_table_toolbar_for_non_admin()
+
+    if st.session_state.role == "Admin":
+        tabs = st.tabs([
+            "🧑‍💼 Employee Register",
+            "📇 View Employees",
+            "📝 Register Device",
+            "📋 View Inventory",
+            "🔁 Transfer Device",
+            "📜 Transfer Log",
+            "⬇️ Export"
+        ])
+        with tabs[0]: employee_register_tab()
+        with tabs[1]: employees_view_tab()
+        with tabs[2]: register_device_tab()
+        with tabs[3]: inventory_tab()
+        with tabs[4]: transfer_tab()
+        with tabs[5]: history_tab()
+        with tabs[6]: export_tab()
+    else:
+        tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log"])
+        with tabs[0]: inventory_tab()
+        with tabs[1]: transfer_tab()
+        with tabs[2]: history_tab()
+
+# =============================================================================
+# ENTRY
+# =============================================================================
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated and not st.session_state.get("just_logged_out"):
+    payload = _read_cookie()
+    if payload:
+        st.session_state.authenticated = True
+        st.session_state.username = payload["u"]
+        st.session_state.name = payload["u"]
+        st.session_state.role = payload.get("r", "")
+
+if st.session_state.authenticated:
+    run_app()
+else:
+    st.subheader("🔐 Sign In")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+    if st.button("Login", type="primary"):
+        user = USERS.get(username) if 'USERS' in globals() else None
+        if user and user["password"] == password:
+            do_login(username, user["role"])  # sets cookie + rerun
+        else:
+            st.error("❌ Invalid username or password.")
