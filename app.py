@@ -158,7 +158,7 @@ def _verify_sig(sig: str, raw: bytes) -> bool:
             return True
     return False
 
-def _issue_session_cookie(username: str, role: str):(username: str, role: str):
+def _issue_session_cookie(username: str, role: str):
     iat = int(time.time())
     exp = iat + (SESSION_TTL_SECONDS if SESSION_TTL_SECONDS > 0 else 0)
     payload = {"u": username, "r": role, "iat": iat, "exp": exp, "v": 1}
