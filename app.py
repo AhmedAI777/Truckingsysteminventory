@@ -48,7 +48,7 @@ SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo
 # Worksheet titles (created if missing)
 INVENTORY_WS     = "truckinventory"
 TRANSFERLOG_WS   = "transfer_log"
-EMPLOYEE_WS      = "mainlists"
+EMPLOYEE_WS      = "mainlists"  # can be overridden by [sheets].employees_ws in secrets
 PENDING_WS       = "pending_devices"   # staff submissions awaiting admin approval
 
 # Inventory columns (uses "Current user"; no Department.1)
@@ -146,6 +146,7 @@ def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
     return prev[-1]
 
 _ws = re.compile(r"\s+")
+
 def norm_name(x: str) -> str:
     return _ws.sub(" ", (x or "").strip().lower())
 
@@ -353,15 +354,32 @@ def get_sh():
     st.error("Google Sheets API error while opening the spreadsheet. Please confirm access and try again.")
     raise last_exc
 
+# Safer: try to find an existing Employees-like worksheet before creating a new one
+
+def get_employee_ws() -> gspread.Worksheet:
+    sh = get_sh()
+    wanted = st.secrets.get("sheets", {}).get("employees_ws", EMPLOYEE_WS)
+    try:
+        return sh.worksheet(wanted)
+    except gspread.exceptions.WorksheetNotFound:
+        titles = [ws.title for ws in sh.worksheets()]
+        def norm(s: str) -> str:
+            return re.sub(r"[^a-z0-9]+", "", s.lower())
+        wn = norm(wanted)
+        # try exact-normalized, contains, or known synonyms like mainlist(s)
+        for t in titles:
+            tn = norm(t)
+            if tn == wn or wn in tn or "mainlist" in tn:
+                return sh.worksheet(t)
+        # nothing matched: create with the requested name
+        return sh.add_worksheet(title=wanted, rows=500, cols=80)
+
 def get_or_create_ws(title, rows=500, cols=80):
     sh = get_sh()
     try:
         return sh.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
-
-def get_employee_ws() -> gspread.Worksheet:
-    return get_or_create_ws(EMPLOYEE_WS)
 
 # ---------- EMPLOYEE DF CLEANING ----------
 
@@ -610,7 +628,7 @@ def _refresh_button(key: str):
     with col1:
         if st.button("🔄 Refresh data", key=f"refresh_btn_{key}"):
             st.cache_data.clear()
-            st.experimental_rerun()
+            st.rerun()
 
 # ---------- Employees ----------
 
@@ -1009,7 +1027,7 @@ def transfer_tab():
                             pend.at[row_index, "Decision Note"] = note
                             write_worksheet(PENDING_WS, pend)
                             st.success("Approved and added to Inventory.")
-                            st.experimental_rerun()
+                            st.rerun()
                     with c2:
                         if st.button("❌ Reject", key=f"apx_reject_{row['Serial Number']}_{ridx}"):
                             pend.at[row_index, "Status"] = "Rejected"
@@ -1018,7 +1036,7 @@ def transfer_tab():
                             pend.at[row_index, "Decision Note"] = note
                             write_worksheet(PENDING_WS, pend)
                             st.warning("Rejected.")
-                            st.experimental_rerun()
+                            st.rerun()
 
 # ---------- History ----------
 
@@ -1125,6 +1143,19 @@ def run_app():
         with tabs[1]: register_device_tab()
         with tabs[2]: transfer_tab()
         with tabs[3]: history_tab()
+
+# Optional DEBUG panel (enable with [debug] show=true in secrets)
+if st.secrets.get("debug", {}).get("show", False):
+    with st.expander("🔍 Debug: Google Sheets", expanded=False):
+        st.write("Sheet URL:", _get_sheet_url())
+        try:
+            sh = get_sh()
+            st.write("Worksheets:", [ws.title for ws in sh.worksheets()])
+            ws = get_employee_ws()
+            st.write("Employees worksheet used:", ws.title)
+            st.write("Employees row count:", len(ws.get_all_values()))
+        except Exception as e:
+            st.error(f"GS read error: {e}")
 
 # =============================================================================
 # ENTRY
