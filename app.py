@@ -9,7 +9,8 @@ import hashlib
 import time
 import io
 from datetime import datetime, timedelta
-
+from pydrive2.auth import GoogleAuth
+from pydrive2.drive import GoogleDrive
 import streamlit as st
 import pandas as pd
 import gspread
