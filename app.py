@@ -1057,17 +1057,6 @@ def do_login(username: str, role: str):
     st.rerun()
 
 
-def do_logout():
-    try:
-        COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
-        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1), path=COOKIE_PATH)
-    except Exception:
-        pass
-    for k in ["authenticated", "role", "username", "name"]:
-        st.session_state.pop(k, None)
-    st.session_state.just_logged_out = True
-    st.rerun()
-
 # Bootstrap CookieManager once so cookies are available before rendering auth UI
 if "cookie_bootstrapped" not in st.session_state:
     st.session_state.cookie_bootstrapped = True
