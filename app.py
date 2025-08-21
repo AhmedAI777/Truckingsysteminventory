@@ -53,12 +53,13 @@ INVENTORY_COLS = [
 ]
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 
-# Employees sheet columns (canonical). Keep both name columns, remove APLUS from schema.
+# 1) === SCHEMA: drop APLUS ================================================
 EMPLOYEE_CANON_COLS = [
-    "New Employeer","Employee ID","New Signature","Address",
+    "New Employeer","Employee ID","New Signature","Name","Address",
     "Active","Position","Department","Location (KSA)",
     "Project","Microsoft Teams","Mobile Number"
 ]
+
 
 
 HEADER_SYNONYMS = {
@@ -373,12 +374,14 @@ def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# 2) === STRICT REORDER util (keeps only desired cols) ======================
 def reorder_columns_strict(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
-    """Keep only desired columns; create any missing. (Why: drop obsolete cols like APLUS)"""
+    """Keep only desired columns (drop extras like APLUS); create missing if needed."""
     for c in desired:
         if c not in df.columns:
             df[c] = ""
     return df[desired]
+
 
 def _find_ws_candidates(title: str):
     sh = get_sh()
@@ -487,15 +490,18 @@ def read_worksheet(ws_title):
         if ws_title == EMPLOYEE_WS:    return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
         return pd.DataFrame()
 
-
+# 3) === WRITE: make employees strict on write ==============================
 def write_worksheet(ws_title, df):
     if ws_title == INVENTORY_WS:
         df = canon_inventory_columns(df)
         df = reorder_columns(df, INVENTORY_COLS)
+    if ws_title == EMPLOYEE_WS:
+        df = reorder_columns_strict(df, EMPLOYEE_CANON_COLS)  # <- drop APLUS etc.
     ws = get_employee_ws() if ws_title == EMPLOYEE_WS else get_or_create_ws(ws_title)
     ws.clear()
     set_with_dataframe(ws, df)
     st.cache_data.clear()
+
 
 
 def append_to_worksheet(ws_title, new_data):
@@ -530,21 +536,14 @@ def migrate_employees_schema():
         write_worksheet(EMPLOYEE_WS, df_strict)
 
 
+# 5) === Employees view: hide Name column ===================================
 def employees_view_tab():
     st.subheader("📇 Employees (mainlists)")
-
-    # Run one-time migration here too (if form wasn't opened)
-    if st.session_state.get("role") == "Admin" and not st.session_state.get("emp_schema_migrated"):
-        try:
-            migrate_employees_schema()
-        finally:
-            st.session_state.emp_schema_migrated = True
-
     df = read_worksheet(EMPLOYEE_WS)
     if df.empty:
         st.info("No employees found in 'mainlists'.")
     else:
-        view_df = df.drop(columns=["Name"], errors="ignore")
+        view_df = df.drop(columns=["Name"], errors="ignore")  # hide duplicate 'Name'
         st.dataframe(view_df, use_container_width=True, hide_index=True)
 
 
@@ -737,6 +736,7 @@ def history_tab():
 # =============================================================================
 # Employee Register (updated)
 # =============================================================================
+# 4) === Helpers for dropdowns =============================================
 def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
     if df.empty or col not in df.columns:
         return []
@@ -744,8 +744,8 @@ def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
     return sorted({v for v in vals if v})
 
 def select_with_other(label: str, base_options: list[str], existing_values: list[str]) -> str:
-    opts = []
-    seen = set()
+    # merge base + existing, dedupe, add Other…
+    seen, opts = set(), []
     for v in base_options + existing_values:
         if v and v not in seen:
             seen.add(v); opts.append(v)
@@ -753,26 +753,21 @@ def select_with_other(label: str, base_options: list[str], existing_values: list
     if choice == "Other…":
         return st.text_input(f"{label} (Other)")
     return "" if choice == "— Select —" else choice
-    
-def employee_register_tab():
-    # One-time migration (admin only): drop obsolete cols like APLUS
-    if st.session_state.get("role") == "Admin" and not st.session_state.get("emp_schema_migrated"):
-        try:
-            migrate_employees_schema()
-        finally:
-            st.session_state.emp_schema_migrated = True
 
+    
+# 6) === Employee Register tab: remove Name & APLUS; use New Employeer ======
+def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
     emp_df = read_worksheet(EMPLOYEE_WS)
 
-    # Suggested numeric ID
+    # Suggest next numeric ID
     try:
         ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
         next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
     except Exception:
         next_id_suggestion = str(len(emp_df) + 1)
 
-    # Dropdown sources
+    # Sources for dropdowns (also include existing sheet values)
     dept_existing = unique_nonempty(emp_df, "Department")
     pos_existing  = unique_nonempty(emp_df, "Position")
     proj_existing = unique_nonempty(emp_df, "Project")
@@ -782,7 +777,7 @@ def employee_register_tab():
     with st.form("register_employee", clear_on_submit=True):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
-            # single name input now
+            # single required name field (replaces the old 'Name *' input)
             name_val = st.text_input("New Employeer *")
         with r1c2:
             emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
@@ -797,9 +792,13 @@ def employee_register_tab():
 
         r3c1, r3c2, r3c3 = st.columns(3)
         with r3c1:
-            position = select_with_other("Position", ["Engineer","Technician","Manager","Coordinator"], pos_existing)
+            position = select_with_other("Position",
+                                         ["Engineer","Technician","Manager","Coordinator"],
+                                         pos_existing)
         with r3c2:
-            department = select_with_other("Department", ["IT","HR","Finance","Operations","Procurement"], dept_existing)
+            department = select_with_other("Department",
+                                           ["IT","HR","Finance","Operations","Procurement"],
+                                           dept_existing)
         with r3c3:
             location_ksa = select_with_other("Location (KSA)", ksa_cities, loc_existing)
 
@@ -821,9 +820,10 @@ def employee_register_tab():
             st.error(f"Employee ID '{emp_id}' already exists.")
             return
 
+        # Write single name into both columns for compatibility with existing views
         row = {
-            # write same value to both columns for compatibility
             "New Employeer": name_val.strip(),
+            "Name": name_val.strip(),
             "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
             "New Signature": "" if new_sig == "— Select —" else new_sig,
             "Address": address.strip(),
