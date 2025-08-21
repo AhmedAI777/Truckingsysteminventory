@@ -1065,26 +1065,30 @@ def _read_cookie():
         return None
 
 
-def do_login(username: str, role: str):
-    st.session_state.authenticated = True
-    st.session_state.username = username
-    st.session_state.name = username
-    st.session_state.role = role
-    st.session_state.just_logged_out = False
-    _issue_session_cookie(username, role)
-    st.rerun()
+# def do_login(username: str, role: str):
+#     st.session_state.authenticated = True
+#     st.session_state.username = username
+#     st.session_state.name = username
+#     st.session_state.role = role
+#     st.session_state.just_logged_out = False
+#     _issue_session_cookie(username, role)
+#     st.rerun()
+# ---- Simple user store (from secrets) ----
 
 
-def do_logout():
-    try:
-        COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
-        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1), path=COOKIE_PATH)
-    except Exception:
-        pass
-    for k in ["authenticated", "role", "username", "name"]:
-        st.session_state.pop(k, None)
-    st.session_state.just_logged_out = True
-    st.rerun()
+def _load_users_from_secrets():
+    users_cfg = st.secrets.get("auth", {}).get("users", [])
+    users = {}
+    for u in users_cfg:
+        users[u["username"]] = {"password": u["password"], "role": u.get("role", "Staff")}
+    return users
+
+USERS = _load_users_from_secrets()
+
+def _verify_password(raw: str, stored: str) -> bool:
+    # plaintext compare for now (keep it simple)
+    return hmac.compare_digest(str(stored), str(raw))
+
 
 if "cookie_bootstrapped" not in st.session_state:
     st.session_state.cookie_bootstrapped = True
