@@ -1,230 +1,53 @@
-# Tracking Inventory Management System — fixed Google Sheets connection
-# -------------------------------------------------------------------
-# What changed (high level):
-# 1) Robust Google Sheets open logic (supports either full URL or just ID)
-# 2) **Do NOT auto-create worksheets when reading** — avoids silently
-#    creating empty tabs that make your tables look empty.
-# 3) Safer worksheet title matching (case/space-insensitive) and a
-#    debug panel (Admin) that lists found worksheet titles.
-# 4) Minor hardening around header rows and caching.
-# 5) Added notes for disabling Streamlit file watcher noise.
-#
-# Optional: create .streamlit/config.toml with:
-#   [server]\nfileWatcherType = "none"
-# to silence inotify warnings on some hosts.
-# -------------------------------------------------------------------
-
+# app.py
 import os
-import re
-import glob
-import io
 import base64
-import json
-import hmac
-import hashlib
-import time
-from datetime import datetime, timedelta
-
+from datetime import datetime
 import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
-import extra_streamlit_components as stx
-
-# Google Drive API for PDF storage (optional but recommended)
-try:
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaIoBaseUpload
-    HAS_DRIVE = True
-except Exception:
-    HAS_DRIVE = False
 
 # =============================================================================
-# CONFIG / CONSTANTS
+# CONFIG
 # =============================================================================
 APP_TITLE = "Tracking Inventory Management System"
-SUBTITLE = "Advanced Construction"
-DATE_FMT = "%Y-%m-%d %H:%M:%S"
+SUBTITLE  = "AdvancedConstruction"
+DATE_FMT  = "%Y-%m-%d %H:%M:%S"
 
-# Cookie/session config
-SESSION_TTL_DAYS = 30
-SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60
-COOKIE_NAME = "ac_auth"
-COOKIE_PATH = "/"
-COOKIE_SECURE = False
-COOKIE_SAMESITE = "Lax"
-
-# Your spreadsheet URL (can be overridden in secrets)
+# Default to your sheet URL; can be overridden in secrets
 SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
-# Worksheet titles
-INVENTORY_WS           = "truckinventory"
-TRANSFERLOG_WS         = "transfer_log"
-EMPLOYEE_WS            = "mainlists"
-PENDING_DEVICES_WS     = "pending_devices"   # device registrations awaiting admin approval (kept)
-PENDING_TRANSFERS_WS   = "pending_transfers" # staff-submitted transfers awaiting admin approval
+# Worksheet titles (created if missing)
+INVENTORY_WS    = "truckinventory"
+TRANSFERLOG_WS  = "transfer_log"
+EMPLOYEE_WS     = "mainlists"          # <-- you were using this but hadn't defined it
 
-# Debug flag (optional): set [debug].show = true in secrets to expose diagnostics
-DEBUG_SHOW = bool(st.secrets.get("debug", {}).get("show", False))
-
-# Inventory columns (map legacy 'USER' to 'Current user')
+# Canonical inventory columns (includes your new fields)
 INVENTORY_COLS = [
     "Serial Number","Device Type","Brand","Model","CPU",
     "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
-    "Current user","Previous User","TO",
-    "Department","Email Address","Contact Number","Location","Office",
+    "USER","Previous User","TO",
+    "Department","Email Address","Contact Number","Department.1","Location","Office",
     "Notes","Date issued","Registered by"
 ]
+LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 
-# Transfer log columns (with form URL)
-LOG_COLS = [
-    "Device Type","Serial Number","From owner","To owner",
-    "Date issued","Registered by","Form URL"
-]
-
-# Employees columns
-EMPLOYEE_CANON_COLS = [
-    "Employee ID","New Signature","Name","Address",
-    "Active","Position","Department","Location (KSA)",
+# Employees sheet columns (exact names from your screenshot)
+EMPLOYEE_COLS = [
+    "New Employeer","Employee ID","New Signature","Name","Address",
+    "APLUS","Active","Position","Department","Location (KSA)",
     "Project","Microsoft Teams","Mobile Number"
 ]
 
-# Pending device registration columns
-PENDING_DEVICE_COLS = INVENTORY_COLS + [
-    "Submitted by","Submitted at","Status","Approver","Approved at","Decision Note"
-]
-
-# Pending transfer columns (NEW)
-PENDING_TRANSFER_COLS = [
-    "Serial Number","Device Type","From owner","To owner",
-    "Submitted by","Submitted at","PDF URL",
-    "Status","Approver","Approved at","Decision Note"
-]
-
-# Header normalization maps
-HEADER_SYNONYMS = {
-    # drop
-    "newemployee": None,
-    "newemployeer": None,
-    "email": None,
-    "emailaddress": None,
-    "aplus": None,
-    # normalize
-    "employeeid": "Employee ID",
-    "newsignature": "New Signature",
-    "locationksa": "Location (KSA)",
-    "microsoftteams": "Microsoft Teams",
-    "microsoftteam": "Microsoft Teams",
-    "mobile": "Mobile Number",
-    "mobilenumber": "Mobile Number",
-}
-
-INVENTORY_HEADER_SYNONYMS = {
-    "user": "Current user",
-    "currentuser": "Current user",
-    "previoususer": "Previous User",
-    "to": "TO",
-    "department1": None,
-}
-
 st.set_page_config(page_title=APP_TITLE, layout="wide")
-COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 
 # =============================================================================
-# HELPERS
+# STYLE (font + header + optional toolbar hide)
 # =============================================================================
-
-def _norm_header(h: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
-
-def _norm_ws_title(t: str) -> str:
-    return re.sub(r"\s+", "", (t or "").strip().lower())
-
-def normalize_serial(s: str) -> str:
-    return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
-
-# =============================================================================
-# AUTH (SESSION COOKIE)
-# =============================================================================
-
-def _cookie_key() -> str:
-    return st.secrets.get("auth", {}).get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
-
-
-def _sign(raw: bytes) -> str:
-    return hmac.new(_cookie_key().encode(), raw, hashlib.sha256).hexdigest()
-
-
-def _issue_session_cookie(username: str, role: str):
-    iat = int(time.time())
-    exp = iat + (SESSION_TTL_SECONDS if SESSION_TTL_SECONDS > 0 else 0)
-    payload = {"u": username, "r": role, "iat": iat, "exp": exp, "v": 1}
-    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
-    token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
-    if SESSION_TTL_SECONDS > 0:
-        COOKIE_MGR.set(COOKIE_NAME, token, max_age=SESSION_TTL_SECONDS, path=COOKIE_PATH, secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE)
-    else:
-        COOKIE_MGR.set(COOKIE_NAME, token, path=COOKIE_PATH, secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE)
-
-
-def _read_cookie():
-    token = COOKIE_MGR.get(COOKIE_NAME)
-    if not token:
-        return None
-    try:
-        data_b64, sig = token.split(".", 1)
-        raw = base64.urlsafe_b64decode(data_b64.encode())
-        if not hmac.compare_digest(sig, _sign(raw)):
-            COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
-            return None
-        payload = json.loads(raw.decode())
-        if int(payload.get("exp", 0)) and int(time.time()) > int(payload.get("exp", 0)):
-            COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
-            return None
-        return payload
-    except Exception:
-        COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
-        return None
-
-
-def do_login(username: str, role: str):
-    st.session_state.authenticated = True
-    st.session_state.username = username
-    st.session_state.name = username
-    st.session_state.role = role
-    st.session_state.just_logged_out = False
-    _issue_session_cookie(username, role)
-    st.rerun()
-
-
-def do_logout():
-    try:
-        COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
-        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1), path=COOKIE_PATH)
-    except Exception:
-        pass
-    for k in ["authenticated", "role", "username", "name"]:
-        st.session_state.pop(k, None)
-    st.session_state.just_logged_out = True
-    st.rerun()
-
-
-if "cookie_bootstrapped" not in st.session_state:
-    st.session_state.cookie_bootstrapped = True
-    _ = COOKIE_MGR.get_all()
-    st.rerun()
-
-# =============================================================================
-# BRANDING CSS (optional)
-# =============================================================================
-
-def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
+def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
     if not os.path.exists(font_path):
         return
-    ext = os.path.splitext(font_path)[1].lower()
-    mime = "font/ttf" if ext == ".ttf" else "font/otf"
-    fmt = "truetype" if ext == ".ttf" else "opentype"
     with open(font_path, "rb") as f:
         b64 = base64.b64encode(f.read()).decode("utf-8")
     st.markdown(
@@ -232,385 +55,131 @@ def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
         <style>
           @font-face {{
             font-family: '{family}';
-            src: url(data:{mime};base64,{b64}) format('{fmt}');
-            font-weight: normal; font-style: normal; font-display: swap;
+            src: url(data:font/otf;base64,{b64}) format('opentype');
+            font-weight: normal;
+            font-style: normal;
+            font-display: swap;
           }}
           html, body, [class*="css"] {{
             font-family: '{family}', -apple-system, BlinkMacSystemFont, "Segoe UI",
                          Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif !important;
           }}
-          h1,h2,h3,h4,h5,h6, .stTabs [role="tab"] {{ font-family: '{family}', sans-serif !important; }}
+          h1,h2,h3,h4,h5,h6, .stTabs [role="tab"] {{
+            font-family: '{family}', sans-serif !important;
+          }}
           section.main > div {{ padding-top: 0.6rem; }}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
-
-def _font_candidates():
-    cands = []
-    secrets_font = st.secrets.get("branding", {}).get("font_file")
-    if secrets_font:
-        cands.append(secrets_font)
-    cands += [
-        "company_font.ttf","company_font.otf","ACBrandFont.ttf","ACBrandFont.otf",
-        "FounderGroteskCondensed-Regular.otf","Cairo-Regular.ttf",
-    ]
-    try:
-        cands += sorted(glob.glob("fonts/*.ttf")) + sorted(glob.glob("fonts/*.otf"))
-    except Exception:
-        pass
-    return cands
-
-
-def _apply_brand_font():
-    fam = st.secrets.get("branding", {}).get("font_family", "ACBrandFont")
-    for p in _font_candidates():
-        if os.path.exists(p):
-            _inject_font_css(p, family=fam)
-            return
-
-
 def render_header():
-    _apply_brand_font()
+    _inject_font_css("FounderGroteskCondensed-Regular.otf")
 
     c_logo, c_title, c_user = st.columns([1.2, 6, 3], gap="small")
+
     with c_logo:
         if os.path.exists("company_logo.jpeg"):
+            # compatibility across Streamlit versions
             try:
                 st.image("company_logo.jpeg", use_container_width=True)
             except TypeError:
                 st.image("company_logo.jpeg", use_column_width=True)
+
     with c_title:
         st.markdown(f"### {APP_TITLE}")
         st.caption(SUBTITLE)
+
     with c_user:
         username = st.session_state.get("username", "")
         role = st.session_state.get("role", "")
         st.markdown(
-            f"""<div style=\"display:flex; align-items:center; justify-content:flex-end; gap:1rem;\">\n                   <div>\n                     <div style=\"font-weight:600;\">Welcome, {username or '—'}</div>\n                     <div>Role: <b>{role or '—'}</b></div>\n                   </div>\n                 </div>""",
+            f"""<div style="display:flex; align-items:center; justify-content:flex-end; gap:1rem;">
+                   <div>
+                     <div style="font-weight:600;">Welcome, {username}</div>
+                     <div>Role: <b>{role}</b></div>
+                   </div>
+                 </div>""",
             unsafe_allow_html=True,
         )
-        if st.session_state.get("authenticated") and st.button("Logout", key="logout_btn"):
-            do_logout()
+        if st.button("Logout"):
+            for key in ["authenticated", "role", "username", "name"]:
+                st.session_state.pop(key, None)
+            st.rerun()
 
     st.markdown("<hr style='margin-top:0.8rem;'>", unsafe_allow_html=True)
-
 
 def hide_table_toolbar_for_non_admin():
     if st.session_state.get("role") != "Admin":
         st.markdown(
             """
             <style>
-              div[data-testid=\"stDataFrame\"] div[data-testid=\"stElementToolbar\"] { display:none !important; }
-              div[data-testid=\"stDataEditor\"]  div[data-testid=\"stElementToolbar\"] { display:none !important; }
-              div[data-testid=\"stElementToolbar\"] { display:none !important; }
+              div[data-testid="stDataFrame"] div[data-testid="stElementToolbar"] { display:none !important; }
+              div[data-testid="stDataEditor"]  div[data-testid="stElementToolbar"] { display:none !important; }
+              div[data-testid="stElementToolbar"] { display:none !important; }
             </style>
             """,
-            unsafe_allow_html=True,
+            unsafe_allow_html=True
         )
 
 # =============================================================================
-# GOOGLE SHEETS CLIENT
+# GOOGLE SHEETS (gspread)
 # =============================================================================
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
+gc = gspread.authorize(creds)
+SHEET_URL = st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
+sh = gc.open_by_url(SHEET_URL)
 
-
-def _extract_sheet_id(url_or_id: str) -> str:
-    if not url_or_id:
-        return ""
-    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url_or_id)
-    return m.group(1) if m else url_or_id
-
-
-@st.cache_resource(show_spinner=False)
-def _get_gc():
-    creds = Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]), scopes=SCOPES)
-    return gspread.authorize(creds)
-
-
-@st.cache_resource(show_spinner=False)
-def _get_sheet_key() -> str:
-    # Prefer explicit id in secrets; fallback to URL (default or secrets)
-    sheet_id = st.secrets.get("sheets", {}).get("id")
-    if sheet_id:
-        return sheet_id
-    url = st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
-    return _extract_sheet_id(url)
-
-
-def get_sh() -> gspread.Spreadsheet:
-    gc = _get_gc()
-    key = _get_sheet_key()
-    if not key:
-        raise RuntimeError("Missing sheet id/url in secrets and default is blank.")
+def get_or_create_ws(title, rows=500, cols=80):
     try:
-        return gc.open_by_key(key)
-    except gspread.SpreadsheetNotFound:
-        raise RuntimeError("Service account cannot open the spreadsheet.\n"
-                           "• Verify the sheet ID/URL\n"
-                           "• Share the sheet with your service account email as Editor.")
-
-
-# IMPORTANT: When **reading**, never auto-create missing worksheets.
-# This avoids creating empty tabs that make the UI look empty.
-
-def _find_ws_existing(sh: gspread.Spreadsheet, title: str) -> gspread.Worksheet:
-    t_norm = _norm_ws_title(title)
-    for ws in sh.worksheets():
-        if ws.title == title or _norm_ws_title(ws.title) == t_norm:
-            return ws
-    raise gspread.exceptions.WorksheetNotFound(title)
-
-
-def _get_or_create_ws(sh: gspread.Spreadsheet, title: str, rows=500, cols=80, create_if_missing: bool = True) -> gspread.Worksheet:
-    try:
-        return _find_ws_existing(sh, title)
+        return sh.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
-        if create_if_missing:
-            return sh.add_worksheet(title=title, rows=rows, cols=cols)
-        raise
-
-
-# Convenience wrappers
-
-def get_employee_ws() -> gspread.Worksheet:
-    sh = get_sh()
-    preferred = [EMPLOYEE_WS, "Employees", "Employee List", "Main Lists", "Mainlists"]
-    for cand in preferred:
-        try:
-            return _find_ws_existing(sh, cand)
-        except gspread.exceptions.WorksheetNotFound:
-            continue
-    # For employees we can create if missing
-    return _get_or_create_ws(sh, EMPLOYEE_WS, create_if_missing=True)
-
-# =============================================================================
-# DATAFRAME CLEANING & IO
-# =============================================================================
-
-def _coalesce_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
-    from collections import Counter
-    counts = Counter(df.columns)
-    for name, n in list(counts.items()):
-        if n > 1:
-            cols = [c for c in df.columns if c == name]
-            combined = df[cols].replace(["", None], pd.NA).bfill(axis=1).iloc[:, 0].fillna("").astype(str)
-            df = df.drop(columns=cols).assign(**{name: combined})
-    return df
-
-
-def _clean_employee_df(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
-    drops = [c for c in df.columns if _norm_header(c) in {k for k, v in HEADER_SYNONYMS.items() if v is None}]
-    if drops:
-        df = df.drop(columns=drops)
-    df = _coalesce_duplicate_columns(df)
-    for c in EMPLOYEE_CANON_COLS:
-        if c not in df.columns:
-            df[c] = ""
-    return df[EMPLOYEE_CANON_COLS]
-
-
-def _guess_employee_header_row(values: list[list[str]]) -> int:
-    max_scan = min(len(values), 25)
-    acceptable = set(EMPLOYEE_CANON_COLS)
-    for k, v in HEADER_SYNONYMS.items():
-        if v and v in acceptable:
-            acceptable.add(v)
-    best_i, best_score = 0, -1
-    for i in range(max_scan):
-        row = values[i]
-        mapped = []
-        for h in row:
-            key = _norm_header(h)
-            mapped_h = HEADER_SYNONYMS.get(key, h.strip())
-            if mapped_h is None:
-                continue
-            mapped.append(mapped_h)
-        score = len(set(mapped) & set(EMPLOYEE_CANON_COLS))
-        if score > best_score:
-            best_i, best_score = i, score
-    if best_score <= 0:
-        for i in range(max_scan):
-            if any(x.strip() for x in values[i]):
-                return i
-    return best_i
-
-
-def _read_employee_df(ws: gspread.Worksheet) -> pd.DataFrame:
-    values = ws.get_all_values() or []
-    if not values:
-        return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
-    hdr_idx = _guess_employee_header_row(values)
-    headers_raw = values[hdr_idx]
-    mapped_headers = []
-    for h in headers_raw:
-        key = _norm_header(h)
-        mapped = HEADER_SYNONYMS.get(key, h.strip())
-        if mapped is None:
-            mapped_headers.append(f"DROP__{h}")
-        else:
-            mapped_headers.append(mapped)
-    data_rows = values[hdr_idx + 1 :]
-    if not data_rows:
-        return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
-    df = pd.DataFrame(data_rows, columns=mapped_headers)
-    df = df.dropna(how="all").replace({None: ""})
-    df = _clean_employee_df(df)
-    return df
-
-
-def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return reorder_columns(df, INVENTORY_COLS)
-    ren, drops = {}, []
-    for c in list(df.columns):
-        new = INVENTORY_HEADER_SYNONYMS.get(_norm_header(c))
-        if new is None:
-            drops.append(c)
-        elif new:
-            ren[c] = new
-    if ren:
-        df = df.rename(columns=ren)
-    if drops:
-        df = df.drop(columns=drops)
-    return df
-
+        return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
 def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     for c in desired:
         if c not in df.columns:
             df[c] = ""
-    tail = [c for c in df.columns if c not in desired]
-    return df[desired + tail]
+    return df[desired + [c for c in df.columns if c not in desired]]
 
-
-@st.cache_data(ttl=30, show_spinner=False)
-def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
-    sh = get_sh()
-
-    # Employees: special handling
-    if ws_title == EMPLOYEE_WS:
-        ws = get_employee_ws()
-        return _read_employee_df(ws)
-
-    # For all other reads, **do not create** if missing
+def read_worksheet(ws_title):
+    """Read a worksheet and ensure its expected columns exist (per sheet)."""
     try:
-        ws = _find_ws_existing(sh, ws_title)
-    except gspread.exceptions.WorksheetNotFound as e:
-        # Surface a helpful error with available tabs — prevents silent empty tables
-        available = [w.title for w in sh.worksheets()]
-        raise RuntimeError(f"Worksheet '{ws_title}' not found. Available tabs: {available}") from e
-
-    data = ws.get_all_records()
-    df = pd.DataFrame(data)
-    if ws_title == INVENTORY_WS:
-        df = canon_inventory_columns(df)
-        return reorder_columns(df, INVENTORY_COLS)
-    if ws_title == TRANSFERLOG_WS:
-        return reorder_columns(df, LOG_COLS)
-    if ws_title == PENDING_DEVICES_WS:
-        return reorder_columns(df, PENDING_DEVICE_COLS)
-    if ws_title == PENDING_TRANSFERS_WS:
-        return reorder_columns(df, PENDING_TRANSFER_COLS)
-    return df
-
-
-def read_worksheet(ws_title: str) -> pd.DataFrame:
-    try:
-        return _read_worksheet_cached(ws_title)
+        ws = get_or_create_ws(ws_title)
+        data = ws.get_all_records()
+        df = pd.DataFrame(data)
+        if ws_title == INVENTORY_WS:
+            return reorder_columns(df, INVENTORY_COLS)
+        if ws_title == TRANSFERLOG_WS:
+            return reorder_columns(df, LOG_COLS)
+        if ws_title == EMPLOYEE_WS:
+            return reorder_columns(df, EMPLOYEE_COLS)
+        return df
     except Exception as e:
         st.error(f"Error reading sheet '{ws_title}': {e}")
-        if ws_title == INVENTORY_WS:
-            return pd.DataFrame(columns=INVENTORY_COLS)
-        if ws_title == TRANSFERLOG_WS:
-            return pd.DataFrame(columns=LOG_COLS)
-        if ws_title == EMPLOYEE_WS:
-            return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
-        if ws_title == PENDING_DEVICES_WS:
-            return pd.DataFrame(columns=PENDING_DEVICE_COLS)
-        if ws_title == PENDING_TRANSFERS_WS:
-            return pd.DataFrame(columns=PENDING_TRANSFER_COLS)
+        if ws_title == INVENTORY_WS:   return pd.DataFrame(columns=INVENTORY_COLS)
+        if ws_title == TRANSFERLOG_WS: return pd.DataFrame(columns=LOG_COLS)
+        if ws_title == EMPLOYEE_WS:    return pd.DataFrame(columns=EMPLOYEE_COLS)
         return pd.DataFrame()
 
-
-def write_worksheet(ws_title: str, df: pd.DataFrame):
-    sh = get_sh()
-    if ws_title == EMPLOYEE_WS:
-        df = _clean_employee_df(df)
-        ws = get_employee_ws()  # may create
-    else:
-        if ws_title == INVENTORY_WS:
-            df = canon_inventory_columns(df)
-            df = reorder_columns(df, INVENTORY_COLS)
-        if ws_title == TRANSFERLOG_WS:
-            df = reorder_columns(df, LOG_COLS)
-        if ws_title == PENDING_DEVICES_WS:
-            df = reorder_columns(df, PENDING_DEVICE_COLS)
-        if ws_title == PENDING_TRANSFERS_WS:
-            df = reorder_columns(df, PENDING_TRANSFER_COLS)
-        ws = _get_or_create_ws(sh, ws_title, create_if_missing=True)
+def write_worksheet(ws_title, df):
+    ws = get_or_create_ws(ws_title)
     ws.clear()
     set_with_dataframe(ws, df)
-    st.cache_data.clear()
 
-
-def append_to_worksheet(ws_title: str, new_data: pd.DataFrame):
-    sh = get_sh()
-    ws = _get_or_create_ws(sh, ws_title, create_if_missing=True)
+def append_to_worksheet(ws_title, new_data):
+    ws = get_or_create_ws(ws_title)
     df_existing = pd.DataFrame(ws.get_all_records())
     df_combined = pd.concat([df_existing, new_data], ignore_index=True)
-    if ws_title == INVENTORY_WS:
-        df_combined = canon_inventory_columns(df_combined)
-        df_combined = reorder_columns(df_combined, INVENTORY_COLS)
-    if ws_title == TRANSFERLOG_WS:
-        df_combined = reorder_columns(df_combined, LOG_COLS)
-    if ws_title == PENDING_DEVICES_WS:
-        df_combined = reorder_columns(df_combined, PENDING_DEVICE_COLS)
-    if ws_title == PENDING_TRANSFERS_WS:
-        df_combined = reorder_columns(df_combined, PENDING_TRANSFER_COLS)
     set_with_dataframe(ws, df_combined)
-    st.cache_data.clear()
 
 # =============================================================================
-# DRIVE UPLOADS (PDF forms)
+# AUTH (simple, from secrets)
 # =============================================================================
-
-def _get_drive_service():
-    if not HAS_DRIVE:
-        raise RuntimeError("google-api-python-client not installed")
-    creds = Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]), scopes=[
-        "https://www.googleapis.com/auth/drive",
-        "https://www.googleapis.com/auth/drive.file",
-    ])
-    return build('drive','v3', credentials=creds, cache_discovery=False)
-
-
-def upload_pdf_to_drive(filename: str, content: bytes) -> str:
-    folder_id = st.secrets.get("drive", {}).get("folder_id")
-    if not folder_id:
-        raise RuntimeError("Missing [drive].folder_id in secrets")
-    service = _get_drive_service()
-    file_metadata = {"name": filename, "parents": [folder_id]}
-    media = MediaIoBaseUpload(io.BytesIO(content), mimetype="application/pdf", resumable=False)
-    created = service.files().create(body=file_metadata, media_body=media, fields="id, webViewLink").execute()
-    file_id = created["id"]
-    service.permissions().create(fileId=file_id, body={"role":"reader","type":"anyone"}).execute()
-    info = service.files().get(fileId=file_id, fields="webViewLink").execute()
-    return info.get("webViewLink")
-
-# =============================================================================
-# AUTH (users) + LOGIN FORM
-# =============================================================================
-
 def load_users():
-    admins = st.secrets.get("auth", {}).get("admins", {})
-    staff  = st.secrets.get("auth", {}).get("staff", {})
+    admins = st.secrets["auth"]["admins"]
+    staff  = st.secrets["auth"]["staff"]
     users = {}
     for user, pw in admins.items():
         if user != "type":
@@ -621,353 +190,321 @@ def load_users():
 
 USERS = load_users()
 
-
 def show_login():
     st.subheader("🔐 Sign In")
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
-    if st.button("Login", type="primary", key="login_btn"):
+    if st.button("Login", type="primary"):
         user = USERS.get(username)
         if user and user["password"] == password:
-            do_login(username, user["role"])  # sets cookie + rerun
+            st.session_state.authenticated = True
+            st.session_state.username = username
+            st.session_state.name = user["name"]
+            st.session_state.role = user["role"]
+            st.rerun()
         else:
             st.error("❌ Invalid username or password.")
 
 # =============================================================================
-# UI UTIL
+# TABS
 # =============================================================================
-
-def _refresh_button(key: str):
-    col1, col2 = st.columns([1,8])
-    with col1:
-        if st.button("🔄 Refresh data", key=f"refresh_btn_{key}"):
-            st.cache_data.clear()
-            st.rerun()
-
-# =============================================================================
-# TABS – EMPLOYEES
-# =============================================================================
-
 def employees_view_tab():
-    st.subheader("📇 Main Employees (mainlists)")
-    _refresh_button("employees")
-    if DEBUG_SHOW and st.session_state.get("role") == "Admin":
-        with st.expander("🔍 Debug: worksheet list & shapes"):
-            try:
-                sh = get_sh()
-                st.write("Sheet ID:", _get_sheet_key())
-                titles = [ws.title for ws in sh.worksheets()]
-                st.write("Worksheets:", titles)
-                try:
-                    inv = _find_ws_existing(sh, INVENTORY_WS)
-                    st.write(f"'{INVENTORY_WS}' rows x cols:", inv.row_count, inv.col_count)
-                except Exception as e:
-                    st.write("Inventory tab missing:", e)
-            except Exception as e:
-                st.error(str(e))
+    st.subheader("📇 Employees (mainlists)")
     df = read_worksheet(EMPLOYEE_WS)
     if df.empty:
         st.info("No employees found in 'mainlists'.")
     else:
-        st.dataframe(df[EMPLOYEE_CANON_COLS], use_container_width=True, hide_index=True)
-
-# =============================================================================
-# TABS – INVENTORY
-# =============================================================================
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
 def inventory_tab():
-    st.subheader("📋 Main Inventory")
-    _refresh_button("inventory")
+    st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
     if df.empty:
-        st.warning("Inventory is empty or worksheet not found (see debug panel).")
+        st.warning("Inventory is empty.")
     else:
-        st.dataframe(df, use_container_width=True)
+        if st.session_state.role == "Admin":
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
-# =============================================================================
-# TABS – TRANSFERS (NEW WORKFLOW)
-# =============================================================================
+def register_device_tab():  # <-- renamed to match run_app()
+    st.subheader("📝 Register New Device")
+
+    with st.form("register_device", clear_on_submit=True):
+        # Row 1
+        r1c1, r1c2, r1c3 = st.columns(3)
+        with r1c1:
+            serial = st.text_input("Serial Number *")
+        with r1c2:
+            device = st.text_input("Device Type *")
+        with r1c3:
+            brand  = st.text_input("Brand")
+
+        # Row 2
+        r2c1, r2c2, r2c3 = st.columns(3)
+        with r2c1:
+            model  = st.text_input("Model")
+        with r2c2:
+            cpu    = st.text_input("CPU")
+        with r2c3:
+            mem    = st.text_input("Memory")
+
+        # Row 3
+        r3c1, r3c2, r3c3 = st.columns(3)
+        with r3c1:
+            hdd1   = st.text_input("Hard Drive 1")
+        with r3c2:
+            hdd2   = st.text_input("Hard Drive 2")
+        with r3c3:
+            gpu    = st.text_input("GPU")
+
+        # Row 4
+        r4c1, r4c2, r4c3 = st.columns(3)
+        with r4c1:
+            screen = st.text_input("Screen Size")
+        with r4c2:
+            email  = st.text_input("Email Address")
+        with r4c3:
+            contact = st.text_input("Contact Number")
+
+        # Row 5
+        r5c1, r5c2, r5c3 = st.columns(3)
+        with r5c1:
+            dept   = st.text_input("Department")
+        with r5c2:
+            dept1  = st.text_input("Department.1")
+        with r5c3:
+            location = st.text_input("Location")
+
+        # Row 6
+        r6c1, r6c2 = st.columns([1, 2])
+        with r6c1:
+            office = st.text_input("Office")
+        with r6c2:
+            notes  = st.text_area("Notes", height=60)
+
+        submitted = st.form_submit_button("Save Device", type="primary")
+
+    if submitted:
+        if not serial.strip() or not device.strip():
+            st.error("Serial Number and Device Type are required.")
+            return
+
+        inv = read_worksheet(INVENTORY_WS)
+        if not inv.empty and serial.strip() in inv["Serial Number"].astype(str).values:
+            st.error(f"Serial Number '{serial}' already exists.")
+            return
+
+        row = {
+            "Serial Number": serial.strip(),
+            "Device Type": device.strip(),
+            "Brand": brand.strip(),
+            "Model": model.strip(),
+            "CPU": cpu.strip(),
+            "Hard Drive 1": hdd1.strip(),
+            "Hard Drive 2": hdd2.strip(),
+            "Memory": mem.strip(),
+            "GPU": gpu.strip(),
+            "Screen Size": screen.strip(),
+            "USER": "", "Previous User": "", "TO": "",
+            "Department": dept.strip(),
+            "Email Address": email.strip(),
+            "Contact Number": contact.strip(),
+            "Department.1": dept1.strip(),
+            "Location": location.strip(),
+            "Office": office.strip(),
+            "Notes": notes.strip(),
+            "Date issued": datetime.now().strftime(DATE_FMT),
+            "Registered by": st.session_state.get("username", ""),
+        }
+
+        new_df = pd.concat([inv, pd.DataFrame([row])], ignore_index=True) if not inv.empty else pd.DataFrame([row])
+        new_df = reorder_columns(new_df, INVENTORY_COLS)
+        write_worksheet(INVENTORY_WS, new_df)
+        st.success("✅ Device registered and added to Inventory.")
 
 def transfer_tab():
-    """Staff can submit a transfer with a signed PDF; Admins approve and apply it."""
-    st.subheader("🔁 Transfer Device (Admin approval with PDF)")
-
-    inv_df = read_worksheet(INVENTORY_WS)
-    if inv_df.empty:
+    st.subheader("🔁 Transfer Device")
+    inventory_df = read_worksheet(INVENTORY_WS)
+    if inventory_df.empty:
         st.warning("Inventory is empty.")
         return
 
-    # STAFF SUBMISSION UI ------------------------------------------------------
-    if st.session_state.get("role") == "Staff":
-        st.markdown("#### Submit Transfer for Approval")
-        _refresh_button("transfer_staff")
+    serial_list = sorted(inventory_df["Serial Number"].dropna().astype(str).unique().tolist())
+    serial = st.selectbox("Serial Number", ["— Select —"] + serial_list)
+    chosen_serial = None if serial == "— Select —" else serial
 
-        serials = sorted(inv_df["Serial Number"].dropna().astype(str).unique().tolist())
-        serial = st.selectbox("Serial Number", ["— Select —"] + serials, key="t_sn")
-        if serial != "— Select —":
-            row = inv_df[inv_df["Serial Number"].astype(str) == serial].iloc[0]
-            current_owner = str(row.get("Current user", ""))
-            st.info(f"Current owner: **{current_owner or '(blank)'}**")
-        else:
-            current_owner = ""
-
-        candidate_users = sorted([u for u in inv_df["Current user"].astype(str).tolist() if u.strip()])
-        to_owner_choice = st.selectbox("New Owner", ["— Select —"] + candidate_users + ["Type a new name…"], key="t_to_owner_choice")
-        if to_owner_choice == "Type a new name…":
-            to_owner = st.text_input("Enter new owner name", key="t_to_owner_custom")
-        else:
-            to_owner = "" if to_owner_choice == "— Select —" else to_owner_choice
-
-        uploaded_pdf = st.file_uploader(
-            "Upload signed approval form (PDF, ≤ 2 MB) *",
-            type=["pdf"], accept_multiple_files=False, key="t_pdf_staff"
-        )
-
-        def _pdf_ok(f):
-            if not f:
-                return False, "Please upload the signed approval form (PDF)."
-            if getattr(f, "type", "") != "application/pdf":
-                return False, "Only PDF files are allowed."
-            size = getattr(f, "size", None)
-            if size is None:
-                f.seek(0, os.SEEK_END); size = f.tell(); f.seek(0)
-            if size <= 0 or size > 2 * 1024 * 1024:
-                return False, "PDF must be between 1 byte and 2 MB."
-            return True, ""
-
-        ok_file, err = _pdf_ok(uploaded_pdf)
-        if not ok_file and uploaded_pdf is not None:
-            st.error(err)
-
-        submit_btn = st.button(
-            "📨 Submit for Admin Approval",
-            type="primary",
-            disabled=not (serial != "— Select —" and to_owner.strip() and ok_file),
-            key="t_submit"
-        )
-
-        if submit_btn:
-            try:
-                pdf_bytes = uploaded_pdf.getvalue()
-                pdf_url = upload_pdf_to_drive(
-                    f"transfer_{serial}_{int(time.time())}.pdf", pdf_bytes
-                )
-            except Exception as e:
-                st.error(f"Could not store PDF form. Ask admin to set [drive].folder_id in secrets. Detail: {e}")
-                return
-
-            payload = {
-                "Serial Number": serial,
-                "Device Type": str(row.get("Device Type", "")) if serial != "— Select —" else "",
-                "From owner": current_owner,
-                "To owner": to_owner.strip(),
-                "Submitted by": st.session_state.get("username", ""),
-                "Submitted at": datetime.now().strftime(DATE_FMT),
-                "PDF URL": pdf_url,
-                "Status": "Pending",
-                "Approver": "",
-                "Approved at": "",
-                "Decision Note": "",
-            }
-            append_to_worksheet(PENDING_TRANSFERS_WS, pd.DataFrame([payload]))
-            st.success("✅ Transfer submitted. Admin will review and approve.")
-
-    # ADMIN REVIEW & DIRECT TRANSFER ------------------------------------------
+    existing_users = sorted([u for u in inventory_df["USER"].dropna().astype(str).unique().tolist() if u.strip()])
+    new_owner_choice = st.selectbox("New Owner", ["— Select —"] + existing_users + ["Type a new name…"])
+    if new_owner_choice == "Type a new name…":
+        new_owner = st.text_input("Enter new owner name")
     else:
-        st.markdown("#### Admin – Pending Transfer Approvals")
-        _refresh_button("transfer_admin")
-        pend = read_worksheet(PENDING_TRANSFERS_WS)
-        if pend.empty or not (pend.get("Status", pd.Series()).eq("Pending")).any():
-            st.info("No pending transfers.")
-        else:
-            for ridx, row in pend[pend["Status"] == "Pending"].reset_index().iterrows():
-                label = f"SN {row['Serial Number']} – {row['From owner']} → {row['To owner']}"
-                with st.expander(label):
-                    st.write({
-                        "Serial Number": row["Serial Number"],
-                        "From": row["From owner"],
-                        "To": row["To owner"],
-                        "Submitted by": row["Submitted by"],
-                        "Submitted at": row["Submitted at"],
-                    })
-                    if row.get("PDF URL"):
-                        st.link_button("Open PDF form", row["PDF URL"], key=f"open_pdf_{row['Serial Number']}_{ridx}")
-                    c1, c2, c3 = st.columns([1,1,3])
-                    with c3:
-                        note = st.text_input("Decision note", key=f"tr_note_{row['Serial Number']}_{ridx}")
-                    real_idx = row["index"]
+        new_owner = new_owner_choice if new_owner_choice != "— Select —" else ""
 
-                    def _apply_transfer(inv_df_local: pd.DataFrame, serial: str, to_owner: str):
-                        match = inv_df_local[inv_df_local["Serial Number"].astype(str) == str(serial)]
-                        if match.empty:
-                            st.error("Serial not found in inventory.")
-                            return False
-                        idx = match.index[0]
-                        prev_user = str(inv_df_local.loc[idx, "Current user"] or "")
-                        now_str   = datetime.now().strftime(DATE_FMT)
-                        actor     = st.session_state.get("username", "")
-                        inv_df_local.loc[idx, "Previous User"] = prev_user
-                        inv_df_local.loc[idx, "Current user"]  = to_owner
-                        inv_df_local.loc[idx, "TO"]            = to_owner
-                        inv_df_local.loc[idx, "Date issued"]   = now_str
-                        inv_df_local.loc[idx, "Registered by"] = actor
-                        write_worksheet(INVENTORY_WS, reorder_columns(inv_df_local, INVENTORY_COLS))
-                        log_row = {
-                            "Device Type": inv_df_local.loc[idx, "Device Type"],
-                            "Serial Number": serial,
-                            "From owner": prev_user,
-                            "To owner": to_owner,
-                            "Date issued": now_str,
-                            "Registered by": actor,
-                            "Form URL": row.get("PDF URL", ""),
-                        }
-                        append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
-                        return True
+    do_transfer = st.button("Transfer Now", type="primary", disabled=not (chosen_serial and new_owner.strip()))
 
-                    with c1:
-                        if st.button("✅ Approve", key=f"tr_approve_{row['Serial Number']}_{ridx}"):
-                            inv_fresh = read_worksheet(INVENTORY_WS)
-                            ok = _apply_transfer(inv_fresh, row["Serial Number"], row["To owner"])
-                            if ok:
-                                pend.at[real_idx, "Status"] = "Approved"
-                                pend.at[real_idx, "Approver"] = st.session_state.get("username", "")
-                                pend.at[real_idx, "Approved at"] = datetime.now().strftime(DATE_FMT)
-                                pend.at[real_idx, "Decision Note"] = note
-                                write_worksheet(PENDING_TRANSFERS_WS, pend)
-                                st.success("Transfer approved and applied to inventory.")
-                                st.rerun()
-                    with c2:
-                        if st.button("❌ Reject", key=f"tr_reject_{row['Serial Number']}_{ridx}"):
-                            pend.at[real_idx, "Status"] = "Rejected"
-                            pend.at[real_idx, "Approver"] = st.session_state.get("username", "")
-                            pend.at[real_idx, "Approved at"] = datetime.now().strftime(DATE_FMT)
-                            pend.at[real_idx, "Decision Note"] = note
-                            write_worksheet(PENDING_TRANSFERS_WS, pend)
-                            st.warning("Transfer rejected.")
-                            st.rerun()
+    if do_transfer:
+        match = inventory_df[inventory_df["Serial Number"].astype(str) == chosen_serial]
+        if match.empty:
+            st.warning("Serial number not found.")
+            return
 
-        st.divider()
-        st.markdown("#### Admin – Direct Transfer (with PDF)")
-        serials = sorted(inv_df["Serial Number"].dropna().astype(str).unique().tolist())
-        serial = st.selectbox("Serial Number", ["— Select —"] + serials, key="t_sn_admin")
-        if serial != "— Select —":
-            match = inv_df[inv_df["Serial Number"].astype(str) == serial]
-            if not match.empty:
-                st.caption(f"Current owner: {match.iloc[0]['Current user']}")
-        candidate_users = sorted([u for u in inv_df["Current user"].astype(str).tolist() if u.strip()])
-        to_owner_choice = st.selectbox("New Owner", ["— Select —"] + candidate_users + ["Type a new name…"], key="t_to_owner_choice_admin")
-        if to_owner_choice == "Type a new name…":
-            to_owner = st.text_input("Enter new owner name", key="t_to_owner_custom_admin")
-        else:
-            to_owner = "" if to_owner_choice == "— Select —" else to_owner_choice
+        idx = match.index[0]
+        prev_user = str(inventory_df.loc[idx, "USER"] or "")
+        now_str   = datetime.now().strftime(DATE_FMT)
+        actor     = st.session_state.get("username", "")
 
-        pdf_admin = st.file_uploader(
-            "Upload signed approval form (PDF, ≤ 2 MB) *",
-            type=["pdf"], accept_multiple_files=False, key="t_pdf_admin"
-        )
-        ok_file = pdf_admin is not None
-        if ok_file and getattr(pdf_admin, "type", "") != "application/pdf":
-            st.error("Only PDF files are allowed.")
-            ok_file = False
+        inventory_df.loc[idx, "Previous User"] = prev_user
+        inventory_df.loc[idx, "USER"]          = new_owner.strip()
+        inventory_df.loc[idx, "TO"]            = new_owner.strip()
+        inventory_df.loc[idx, "Date issued"]   = now_str
+        inventory_df.loc[idx, "Registered by"] = actor
 
-        btn_apply = st.button(
-            "⚡ Apply Transfer Now (Admin)",
-            type="primary",
-            disabled=not (serial != "— Select —" and to_owner.strip() and ok_file),
-            key="t_apply_admin"
-        )
-        if btn_apply:
-            try:
-                pdf_bytes = pdf_admin.getvalue()
-                pdf_url = upload_pdf_to_drive(f"transfer_{serial}_{int(time.time())}.pdf", pdf_bytes)
-            except Exception as e:
-                st.error(f"Could not store PDF form. Set [drive].folder_id in secrets. Detail: {e}")
-                return
-            # apply immediately
-            match = inv_df[inv_df["Serial Number"].astype(str) == serial]
-            if match.empty:
-                st.error("Serial not found.")
-                return
-            idx = match.index[0]
-            prev_user = str(inv_df.loc[idx, "Current user"] or "")
-            now_str   = datetime.now().strftime(DATE_FMT)
-            actor     = st.session_state.get("username", "")
-            inv_df.loc[idx, "Previous User"] = prev_user
-            inv_df.loc[idx, "Current user"]  = to_owner
-            inv_df.loc[idx, "TO"]            = to_owner
-            inv_df.loc[idx, "Date issued"]   = now_str
-            inv_df.loc[idx, "Registered by"] = actor
-            write_worksheet(INVENTORY_WS, reorder_columns(inv_df, INVENTORY_COLS))
-            log_row = {
-                "Device Type": inv_df.loc[idx, "Device Type"],
-                "Serial Number": serial,
-                "From owner": prev_user,
-                "To owner": to_owner,
-                "Date issued": now_str,
-                "Registered by": actor,
-                "Form URL": pdf_url,
-            }
-            append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
-            st.success("✅ Transfer applied.")
+        inventory_df = reorder_columns(inventory_df, INVENTORY_COLS)
+        write_worksheet(INVENTORY_WS, inventory_df)
 
-# =============================================================================
-# TABS – HISTORY & EXPORT
-# =============================================================================
+        log_row = {
+            "Device Type": inventory_df.loc[idx, "Device Type"],
+            "Serial Number": chosen_serial,
+            "From owner": prev_user,
+            "To owner": new_owner.strip(),
+            "Date issued": now_str,
+            "Registered by": actor,
+        }
+        append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
+
+        st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
 
 def history_tab():
-    st.subheader("📜 History Transfer")
-    _refresh_button("history")
+    st.subheader("📜 Transfer Log")
     df = read_worksheet(TRANSFERLOG_WS)
     if df.empty:
         st.info("No transfer history found.")
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
+def employee_register_tab():
+    """Admin-only: register employees into 'mainlists' (separate system)."""
+    st.subheader("🧑‍💼 Register New Employee (mainlists)")
+
+    emp_df = read_worksheet(EMPLOYEE_WS)
+    # light suggestion for next ID
+    try:
+        ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
+        next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
+    except Exception:
+        next_id_suggestion = str(len(emp_df) + 1)
+
+    with st.form("register_employee", clear_on_submit=True):
+        r1c1, r1c2, r1c3 = st.columns(3)
+        with r1c1:
+            new_emp_status = st.text_input("New Employeer", value="Created")
+        with r1c2:
+            emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
+        with r1c3:
+            new_sig = st.text_input("New Signature")
+
+        r2c1, r2c2, r2c3 = st.columns(3)
+        with r2c1:
+            name = st.text_input("Name *")
+        with r2c2:
+            address = st.text_input("Address")
+        with r2c3:
+            aplus = st.text_input("APLUS", value="Yes")
+
+        r3c1, r3c2, r3c3 = st.columns(3)
+        with r3c1:
+            active = st.text_input("Active", value="Yes")
+        with r3c2:
+            position = st.text_input("Position")
+        with r3c3:
+            department = st.text_input("Department")
+
+        r4c1, r4c2, r4c3 = st.columns(3)
+        with r4c1:
+            location_ksa = st.text_input("Location (KSA)")
+        with r4c2:
+            project = st.text_input("Project")
+        with r4c3:
+            teams = st.text_input("Microsoft Teams")
+
+        mobile = st.text_input("Mobile Number")
+
+        submitted = st.form_submit_button("Save Employee", type="primary")
+
+    if submitted:
+        if not name.strip():
+            st.error("Name is required.")
+            return
+        if emp_id.strip() and not emp_df.empty and emp_id.strip() in emp_df["Employee ID"].astype(str).values:
+            st.error(f"Employee ID '{emp_id}' already exists.")
+            return
+
+        row = {
+            "New Employeer": new_emp_status.strip(),
+            "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
+            "New Signature": new_sig.strip(),
+            "Name": name.strip(),
+            "Address": address.strip(),
+            "APLUS": aplus.strip(),
+            "Active": active.strip(),
+            "Position": position.strip(),
+            "Department": department.strip(),
+            "Location (KSA)": location_ksa.strip(),
+            "Project": project.strip(),
+            "Microsoft Teams": teams.strip(),
+            "Mobile Number": mobile.strip(),
+        }
+        new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True) if not emp_df.empty else pd.DataFrame([row])
+        new_df = reorder_columns(new_df, EMPLOYEE_COLS)
+        write_worksheet(EMPLOYEE_WS, new_df)
+        st.success("✅ Employee saved to 'mainlists'.")
 
 def export_tab():
-    st.subheader("⬇️ Export")
-    _refresh_button("export")
-    inv  = read_worksheet(INVENTORY_WS)
-    log  = read_worksheet(TRANSFERLOG_WS)
-    emp  = read_worksheet(EMPLOYEE_WS)
-    pend_dev = read_worksheet(PENDING_DEVICES_WS)
-    pend_tr  = read_worksheet(PENDING_TRANSFERS_WS)
+    st.subheader("⬇️ Export (always fresh)")
+    inv = read_worksheet(INVENTORY_WS)
+    log = read_worksheet(TRANSFERLOG_WS)
+    emp = read_worksheet(EMPLOYEE_WS)
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    st.caption(f"Last fetched: {datetime.now().strftime(DATE_FMT)}")
+
+    c1, c2, c3 = st.columns(3)
     with c1:
-        st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"), "inventory.csv", "text/csv")
+        st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"),
+                           "inventory.csv", "text/csv")
     with c2:
-        st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"), "transfer_log.csv", "text/csv")
+        st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"),
+                           "transfer_log.csv", "text/csv")
     with c3:
-        st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"), "employees.csv", "text/csv")
-    with c4:
-        st.download_button("Pending Devices CSV", pend_dev.to_csv(index=False).encode("utf-8"), "pending_devices.csv", "text/csv")
-    with c5:
-        st.download_button("Pending Transfers CSV", pend_tr.to_csv(index=False).encode("utf-8"), "pending_transfers.csv", "text/csv")
+        st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"),
+                           "employees.csv", "text/csv")
 
 # =============================================================================
 # MAIN
 # =============================================================================
-
 def run_app():
     render_header()
     hide_table_toolbar_for_non_admin()
 
     if st.session_state.role == "Admin":
         tabs = st.tabs([
-            "🧾 Main Employees",
-            "📋 Main Inventory",
-            "🔁 Transfers",
-            "📜 History Transfer",
-            "⬇️ Export",
+            "📝 Register Device",
+            "📋 View Inventory",
+            "🔁 Transfer Device",
+            "📜 Transfer Log",
+            "🧑‍💼 Employee Register",
+            "📇 View Employees",
+            "⬇️ Export"
         ])
-        with tabs[0]: employees_view_tab()
+        with tabs[0]: register_device_tab()     # <-- existed mismatch fixed
         with tabs[1]: inventory_tab()
         with tabs[2]: transfer_tab()
         with tabs[3]: history_tab()
-        with tabs[4]: export_tab()
+        with tabs[4]: employee_register_tab()   # <-- now defined
+        with tabs[5]: employees_view_tab()
+        with tabs[6]: export_tab()
     else:
-        tabs = st.tabs(["📋 Main Inventory", "🔁 Transfer (Request)", "📜 History Transfer"])
+        tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log"])
         with tabs[0]: inventory_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: history_tab()
@@ -978,24 +515,7 @@ def run_app():
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
-if not st.session_state.authenticated and not st.session_state.get("just_logged_out"):
-    payload = _read_cookie()
-    if payload:
-        st.session_state.authenticated = True
-        st.session_state.username = payload["u"]
-        st.session_state.name = payload["u"]
-        st.session_state.role = payload.get("r", "")
-
 if st.session_state.authenticated:
     run_app()
 else:
-    if DEBUG_SHOW:
-        with st.expander("🔧 Debug – secrets checks"):
-            st.write("Sheet ID:", _get_sheet_key())
-            try:
-                st.write("Service account:", st.secrets["gcp_service_account"].get("client_email"))
-            except Exception:
-                st.error("Missing gcp_service_account in secrets")
-    st.subheader("Welcome")
-    st.caption("Please log in to continue.")
     show_login()
