@@ -868,6 +868,9 @@
 #             st.error("❌ Invalid username or password.")
 
 
+
+
+
 # pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth google-api-python-client
 import os
 import re
@@ -879,6 +882,7 @@ import hashlib
 import time
 import io
 from datetime import datetime, timedelta
+
 import streamlit as st
 import pandas as pd
 import gspread
@@ -973,10 +977,8 @@ COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 # =============================================================================
 # AUTH (users + cookie)
 # =============================================================================
-
 # ---- Users (from secrets) ----
 # In .streamlit/secrets.toml:
-
 
 def _load_users_from_secrets():
     users_cfg = st.secrets.get("auth", {}).get("users", [])
@@ -997,6 +999,7 @@ def _verify_password(raw: str, stored: str) -> bool:
 def do_logout():
     try:
         COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
+        # Belt & suspenders for old browsers:
         COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1), path=COOKIE_PATH)
     except Exception:
         pass
@@ -1010,16 +1013,12 @@ if "cookie_bootstrapped" not in st.session_state:
     _ = COOKIE_MGR.get_all()
     st.rerun()
 
-
-
 def _cookie_key() -> str:
     # MUST be stable across app restarts; set in secrets
     return st.secrets.get("auth", {}).get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
 
-
 def _sign(raw: bytes) -> str:
     return hmac.new(_cookie_key().encode(), raw, hashlib.sha256).hexdigest()
-
 
 def _issue_session_cookie(username: str, role: str):
     iat = int(time.time())
@@ -1028,17 +1027,15 @@ def _issue_session_cookie(username: str, role: str):
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
 
-    # Persistent cookie (survives refresh & browser restarts)
+    # Persistent cookie (survives refresh & restarts)
     COOKIE_MGR.set(
         COOKIE_NAME,
         token,
-        expires_at=datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS) if SESSION_TTL_SECONDS > 0 else None,
+        expires_at=(datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS)) if SESSION_TTL_SECONDS > 0 else None,
         path=COOKIE_PATH,
-        secure=COOKIE_SECURE,          # from secrets or default True
-        samesite=COOKIE_SAMESITE       # "None" if you embed, else "Lax"
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE
     )
-
-
 
 def _read_cookie():
     token = COOKIE_MGR.get(COOKIE_NAME)
@@ -1061,8 +1058,6 @@ def _read_cookie():
         COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
         return None
 
-
-
 def do_login(username: str, role: str):
     st.session_state.authenticated = True
     st.session_state.username = username
@@ -1071,25 +1066,6 @@ def do_login(username: str, role: str):
     st.session_state.just_logged_out = False
     _issue_session_cookie(username, role)
     st.rerun()
-
-def do_logout():
-    try:
-        COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
-        # belt & suspenders for older browsers
-        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1), path=COOKIE_PATH)
-    except Exception:
-        pass
-    for k in ["authenticated", "role", "username", "name"]:
-        st.session_state.pop(k, None)
-    st.session_state.just_logged_out = True
-    st.rerun()
-    
-    if "cookie_bootstrapped" not in st.session_state:
-    st.session_state.cookie_bootstrapped = True
-    _ = COOKIE_MGR.get_all()
-    st.rerun()
-
-
 
 # =============================================================================
 # STYLE
@@ -1127,7 +1103,6 @@ def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
         unsafe_allow_html=True,
     )
 
-
 def _font_candidates():
     cands = []
     secrets_font = st.secrets.get("branding", {}).get("font_file")
@@ -1145,14 +1120,12 @@ def _font_candidates():
         pass
     return cands
 
-
 def _apply_brand_font():
     fam = st.secrets.get("branding", {}).get("font_family", "ACBrandFont")
     for p in _font_candidates():
         if os.path.exists(p):
             _inject_font_css(p, family=fam)
             return
-
 
 def render_header():
     _apply_brand_font()
@@ -1183,7 +1156,6 @@ def render_header():
 
     st.markdown("<hr style='margin-top:0.8rem;'>", unsafe_allow_html=True)
 
-
 def hide_table_toolbar_for_non_admin():
     if st.session_state.get("role") != "Admin":
         st.markdown(
@@ -1205,7 +1177,6 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-
 @st.cache_resource(show_spinner=False)
 def _get_gc():
     creds = Credentials.from_service_account_info(
@@ -1213,24 +1184,20 @@ def _get_gc():
     )
     return gspread.authorize(creds)
 
-
 @st.cache_resource(show_spinner=False)
 def _get_creds():
     return Credentials.from_service_account_info(
         st.secrets["gcp_service_account"], scopes=SCOPES
     )
 
-
 @st.cache_resource(show_spinner=False)
 def _get_drive():
     creds = _get_creds()
     return build("drive", "v3", credentials=creds)
 
-
 @st.cache_resource(show_spinner=False)
 def _get_sheet_url():
     return st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
-
 
 def get_sh():
     gc = _get_gc()
@@ -1245,7 +1212,6 @@ def get_sh():
     st.error("Google Sheets API error while opening the spreadsheet. Please confirm access and try again.")
     raise last_exc
 
-
 # ---- Drive upload helpers ----
 
 def _drive_make_public(file_id: str):
@@ -1258,7 +1224,6 @@ def _drive_make_public(file_id: str):
         ).execute()
     except Exception:
         pass  # best-effort; if it fails, admins with Drive access can still view
-
 
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
     """Return (webViewLink, file_id)."""
@@ -1279,21 +1244,17 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
         _drive_make_public(file_id)
     return link, file_id
 
-
 # ---- Sheet helpers ----
 
 def _norm_title(t: str) -> str:
     return (t or "").strip().lower()
 
-
 def _norm_header(h: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
-
 
 def _canon_header(h: str) -> str:
     key = _norm_header(h)
     return HEADER_SYNONYMS.get(key, h.strip())
-
 
 def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
     rename = {}
@@ -1312,7 +1273,6 @@ def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.drop(columns=drop_cols)
     return df
 
-
 def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     for c in desired:
         if c not in df.columns:
@@ -1320,12 +1280,10 @@ def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     tail = [c for c in df.columns if c not in desired]
     return df[desired + tail]
 
-
 def _find_ws_candidates(title: str):
     sh = get_sh()
     target = _norm_title(title)
     return [ws for ws in sh.worksheets() if _norm_title(ws.title) == target]
-
 
 def _score_header(values: list[list[str]], expected_canon: set[str]) -> tuple[int, int]:
     best_idx, best_count = 0, 0
@@ -1337,7 +1295,6 @@ def _score_header(values: list[list[str]], expected_canon: set[str]) -> tuple[in
         if overlap > best_count:
             best_idx, best_count = i, overlap
     return best_idx, best_count
-
 
 def _read_ws_as_dataframe(ws: gspread.Worksheet, expected_cols: list[str]) -> tuple[pd.DataFrame, int, int]:
     values = ws.get_all_values() or []
@@ -1354,7 +1311,6 @@ def _read_ws_as_dataframe(ws: gspread.Worksheet, expected_cols: list[str]) -> tu
     df = df.dropna(how="all").reset_index(drop=True)
     df = reorder_columns(df, expected_cols)
     return df, header_idx, score
-
 
 def get_employee_ws() -> gspread.Worksheet:
     sh = get_sh()
@@ -1388,14 +1344,12 @@ def get_employee_ws() -> gspread.Worksheet:
     st.session_state.emp_ws_id = ws.id
     return ws
 
-
 def get_or_create_ws(title, rows=500, cols=80):
     sh = get_sh()
     try:
         return sh.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
-
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
@@ -1426,7 +1380,6 @@ def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
         return reorder_columns(df, LOG_COLS)
     return df
 
-
 def read_worksheet(ws_title):
     try:
         return _read_worksheet_cached(ws_title)
@@ -1438,7 +1391,6 @@ def read_worksheet(ws_title):
         if ws_title == PENDING_DEVICE_WS: return pd.DataFrame(columns=PENDING_DEVICE_COLS)
         if ws_title == PENDING_TRANSFER_WS: return pd.DataFrame(columns=PENDING_TRANSFER_COLS)
         return pd.DataFrame()
-
 
 def write_worksheet(ws_title, df):
     if ws_title == INVENTORY_WS:
@@ -1452,7 +1404,6 @@ def write_worksheet(ws_title, df):
     ws.clear()
     set_with_dataframe(ws, df)
     st.cache_data.clear()
-
 
 def append_to_worksheet(ws_title, new_data):
     ws = get_employee_ws() if ws_title == EMPLOYEE_WS else get_or_create_ws(ws_title)
@@ -1474,7 +1425,6 @@ def append_to_worksheet(ws_title, new_data):
 
 def normalize_serial(s: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
-
 
 def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
     if a == b:
@@ -1507,7 +1457,6 @@ def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
     vals = [str(x).strip() for x in df[col].dropna().astype(str).tolist()]
     return sorted({v for v in vals if v})
 
-
 def select_with_other(label: str, base_options: list[str], existing_values: list[str]) -> str:
     merged = [o for o in base_options if o]
     for v in existing_values:
@@ -1530,7 +1479,6 @@ def employees_view_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-
 def inventory_tab():
     st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
@@ -1541,7 +1489,6 @@ def inventory_tab():
             st.dataframe(df, use_container_width=True)
         else:
             st.dataframe(df, use_container_width=True, hide_index=True)
-
 
 def register_device_tab():
     st.subheader("📝 Register New Device")
@@ -1698,7 +1645,6 @@ def register_device_tab():
             append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
             st.success("🕒 Submitted for admin approval. You'll see it in Inventory once approved.")
 
-
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
     inventory_df = read_worksheet(INVENTORY_WS)
@@ -1780,7 +1726,6 @@ def transfer_tab():
             append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pend]))
             st.success("🕒 Transfer submitted for admin approval.")
 
-
 def history_tab():
     st.subheader("📜 Transfer Log")
     df = read_worksheet(TRANSFERLOG_WS)
@@ -1788,7 +1733,6 @@ def history_tab():
         st.info("No transfer history found.")
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
-
 
 # =============================================================================
 # Employee Register (updated)
@@ -1877,7 +1821,6 @@ def employee_register_tab():
         write_worksheet(EMPLOYEE_WS, new_df)
         st.success("✅ Employee saved to 'mainlists'.")
 
-
 # =============================================================================
 # Approvals dashboard (Admin only)
 # =============================================================================
@@ -1934,7 +1877,6 @@ def approvals_tab():
                     if r_col.button("Reject", key=f"reject_tr_{i}"):
                         _reject_row(PENDING_TRANSFER_WS, i, row)
 
-
 def _approve_device_row(row: pd.Series):
     # Append to inventory, then mark approved in pending sheet
     inv = read_worksheet(INVENTORY_WS)
@@ -1954,7 +1896,6 @@ def _approve_device_row(row: pd.Series):
     # Update pending row status
     _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
     st.success("✅ Device approved and added to Inventory.")
-
 
 def _approve_transfer_row(row: pd.Series):
     inv = read_worksheet(INVENTORY_WS)
@@ -1987,7 +1928,6 @@ def _approve_transfer_row(row: pd.Series):
     _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
     st.success("✅ Transfer approved and applied.")
 
-
 def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
     df = read_worksheet(ws_title)
     # Try to locate exact row via a composite key (Serial + Submitted at + Submitted by)
@@ -2008,11 +1948,9 @@ def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
     df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
     write_worksheet(ws_title, df)
 
-
 def _reject_row(ws_title: str, i: int, row: pd.Series):
     _mark_decision(ws_title, row, status="Rejected")
     st.info("❌ Request rejected.")
-
 
 # =============================================================================
 # Export (unchanged)
@@ -2125,4 +2063,3 @@ else:
             do_login(username, user.get("role", "Staff"))  # sets cookie + rerun
         else:
             st.error("❌ Invalid username or password.")
-
