@@ -1136,11 +1136,11 @@ def render_header():
         username = st.session_state.get("username", "")
         role = st.session_state.get("role", "")
         st.markdown(
-            f"""<div style=\"display:flex; align-items:center; justify-content:flex-end; gap:1rem;\">
-                   <div>
-                     <div style=\"font-weight:600;\">Welcome, {username or '—'}</div>
-                     <div>Role: <b>{role or '—'}</b></div>
-                   </div>
+            f"""<div style=\"display:flex; align-items:center; justify-content:flex-end; gap:1rem;\">\
+                   <div>\
+                     <div style=\"font-weight:600;\">Welcome, {username or '—'}</div>\
+                     <div>Role: <b>{role or '—'}</b></div>\
+                   </div>\
                  </div>""",
             unsafe_allow_html=True,
         )
