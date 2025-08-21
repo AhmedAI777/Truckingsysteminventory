@@ -171,7 +171,6 @@ def _issue_session_cookie(username: str, role: str):
         token,
         expires_at=(datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS)) if SESSION_TTL_SECONDS > 0 else None,
         secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE
     )
 
 def _read_cookie():
