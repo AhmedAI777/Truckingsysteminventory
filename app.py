@@ -51,15 +51,14 @@ LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued",
 
 # Employees sheet columns (canonical names)
 EMPLOYEE_CANON_COLS = [
-    "New Employeer","Employee ID","New Signature","Name","Address",
-    "APLUS","Active","Position","Department","Location (KSA)",
+    "New Employeer","Employee ID","New Signature","EMAIL",
+    "Active","Position","Department","Location (KSA)",
     "Project","Microsoft Teams","Mobile Number"
 ]
 
 # Accept common synonym/typo headers and normalize to canon (employees)
 HEADER_SYNONYMS = {
     "new employee": "New Employeer",
-    "new employeer": "New Employeer",
     "employeeid": "Employee ID",
     "newsignature": "New Signature",
     "locationksa": "Location (KSA)",
@@ -75,7 +74,6 @@ INVENTORY_HEADER_SYNONYMS = {
     "currentuser": "Current user",
     "previoususer": "Previous User",
     "to": "TO",
-    "department1": None,  # drop this header entirely if present
 }
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
