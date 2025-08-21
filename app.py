@@ -867,10 +867,6 @@
 #         else:
 #             st.error("❌ Invalid username or password.")
 
-
-
-
-
 # pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth google-api-python-client
 import os
 import re
@@ -882,6 +878,7 @@ import hashlib
 import time
 import io
 from datetime import datetime, timedelta
+
 import streamlit as st
 import pandas as pd
 import gspread
@@ -901,12 +898,12 @@ DATE_FMT  = "%Y-%m-%d %H:%M:%S"
 SESSION_TTL_DAYS = 30
 SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60
 COOKIE_NAME = "ac_auth"
-COOKIE_PATH = "/"
+COOKIE_PATH = "/"  # not used by CookieManager, left here for clarity
 
 # If you embed the app (or see logout-on-refresh), keep SameSite=None + Secure=True (HTTPS required).
 # You can override via secrets: [auth] cookie_secure=true/false, cookie_samesite="None"/"Lax"/"Strict"
 COOKIE_SECURE   = st.secrets.get("auth", {}).get("cookie_secure", True)
-COOKIE_SAMESITE = st.secrets.get("auth", {}).get("cookie_samesite", "None")
+COOKIE_SAMESITE = st.secrets.get("auth", {}).get("cookie_samesite", "Lax")  # use "None" only when embedded
 
 SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
@@ -976,8 +973,6 @@ COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 # =============================================================================
 # AUTH (users + cookie)
 # =============================================================================
-# ---- Users (from secrets) ----
-# In .streamlit/secrets.toml:
 
 def _load_users_from_secrets():
     users_cfg = st.secrets.get("auth", {}).get("users", [])
@@ -997,9 +992,9 @@ def _verify_password(raw: str, stored: str) -> bool:
 
 def do_logout():
     try:
-        COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
-        # Belt & suspenders for old browsers:
-        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1), path=COOKIE_PATH)
+        COOKIE_MGR.delete(COOKIE_NAME)  # CookieManager has no 'path' parameter
+        # belt & suspenders for older browsers
+        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1))
     except Exception:
         pass
     for k in ["authenticated", "role", "username", "name"]:
@@ -1009,12 +1004,11 @@ def do_logout():
 
 if "cookie_bootstrapped" not in st.session_state:
     st.session_state.cookie_bootstrapped = True
-    _ = COOKIE_MGR.get_all()
+    _ = COOKIE_MGR.get_all()  # ensure JS-side cookie store is loaded
     st.rerun()
 
 def _cookie_key() -> str:
     # MUST be stable across app restarts; set in secrets
-    
     return st.secrets.get("auth", {}).get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
 
 def _sign(raw: bytes) -> str:
@@ -1027,15 +1021,14 @@ def _issue_session_cookie(username: str, role: str):
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
 
-    # NOTE: CookieManager.set(...) has no "path" argument
+    # Persistent cookie (survives refresh & restarts)
     COOKIE_MGR.set(
         COOKIE_NAME,
         token,
         expires_at=(datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS)) if SESSION_TTL_SECONDS > 0 else None,
         secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,   # use "None" only if embedding in an iframe
+        samesite=COOKIE_SAMESITE
     )
-
 
 def _read_cookie():
     token = COOKIE_MGR.get(COOKIE_NAME)
@@ -1045,20 +1038,18 @@ def _read_cookie():
         data_b64, sig = token.split(".", 1)
         raw = base64.urlsafe_b64decode(data_b64.encode())
         if not hmac.compare_digest(sig, _sign(raw)):
-            COOKIE_MGR.delete(COOKIE_NAME)     # ← no path kwarg
+            COOKIE_MGR.delete(COOKIE_NAME)
             return None
         payload = json.loads(raw.decode())
         exp = int(payload.get("exp", 0))
         now = int(time.time())
         if exp and now > exp:
-            COOKIE_MGR.delete(COOKIE_NAME)     # ← no path kwarg
+            COOKIE_MGR.delete(COOKIE_NAME)
             return None
         return payload
     except Exception:
-        COOKIE_MGR.delete(COOKIE_NAME)         # ← no path kwarg
+        COOKIE_MGR.delete(COOKIE_NAME)
         return None
-
-
 
 def do_login(username: str, role: str):
     st.session_state.authenticated = True
@@ -1068,26 +1059,6 @@ def do_login(username: str, role: str):
     st.session_state.just_logged_out = False
     _issue_session_cookie(username, role)
     st.rerun()
-
-def do_logout():
-    try:
-        COOKIE_MGR.delete(COOKIE_NAME)  # ← no path kwarg
-        # belt & suspenders for old browsers
-        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1))
-    except Exception:
-        pass
-    for k in ["authenticated", "role", "username", "name"]:
-        st.session_state.pop(k, None)
-    st.session_state.just_logged_out = True
-    st.rerun()
-
-
-if "cookie_bootstrapped" not in st.session_state:
-    st.session_state.cookie_bootstrapped = True
-    _ = COOKIE_MGR.get_all()
-    st.rerun()
-
-
 
 # =============================================================================
 # STYLE
@@ -1471,8 +1442,6 @@ def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
         prev = cur
     return prev[-1]
 
-# Small data helpers for dropdowns
-
 def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
     if df.empty or col not in df.columns:
         return []
@@ -1535,7 +1504,7 @@ def register_device_tab():
             if assigned_choice == "Type a new name…":
                 assigned_to = st.text_input("Assignee name")
             elif assigned_choice == UNASSIGNED_LABEL:
-                assigned_to = UNASSIGNED_LABEL  # store explicit label for clarity in the sheet
+                assigned_to = UNASSIGNED_LABEL
             else:
                 assigned_to = assigned_choice
         with r1c3:
@@ -1636,14 +1605,12 @@ def register_device_tab():
             "Registered by": actor,
         }
 
-        # Admins can write directly; staff submit to approvals with required PDF
         is_admin = st.session_state.get("role") == "Admin"
         if not is_admin and pdf_file is None:
             st.error("Approval PDF is required for submission.")
             return
 
         if is_admin and pdf_file is None:
-            # proceed direct write (legacy behavior)
             inv_fresh = read_worksheet(INVENTORY_WS)
             inv_out = pd.concat([
                 inv_fresh if not inv_fresh.empty else pd.DataFrame(columns=INVENTORY_COLS),
@@ -1653,7 +1620,6 @@ def register_device_tab():
             write_worksheet(INVENTORY_WS, inv_out)
             st.success("✅ Device registered and added to Inventory.")
         else:
-            # Upload PDF and push to pending sheet
             link, fid = upload_pdf_and_link(pdf_file, prefix=f"device_{s_norm}")
             pending = {**row,
                 "Approval Status": "Pending",
@@ -1685,7 +1651,6 @@ def transfer_tab():
     else:
         new_owner = new_owner_choice if new_owner_choice != "— Select —" else ""
 
-    # New: approval PDF upload for transfers (required for non-admin)
     pdf_file = st.file_uploader("Approval PDF (required for non-admin)", type=["pdf"], key="transfer_pdf")
 
     is_admin = st.session_state.get("role") == "Admin"
@@ -1707,7 +1672,6 @@ def transfer_tab():
             return
 
         if is_admin and pdf_file is None:
-            # Direct commit (legacy behavior)
             inventory_df.loc[idx, "Previous User"] = prev_user
             inventory_df.loc[idx, "Current user"]  = new_owner.strip()
             inventory_df.loc[idx, "TO"]            = new_owner.strip()
@@ -1728,7 +1692,6 @@ def transfer_tab():
             append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
             st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
         else:
-            # Queue for approval with PDF
             link, fid = upload_pdf_and_link(pdf_file, prefix=f"transfer_{normalize_serial(chosen_serial)}")
             pend = {
                 "Device Type": inventory_df.loc[idx, "Device Type"],
@@ -1785,18 +1748,17 @@ def employee_register_tab():
     with st.form("register_employee", clear_on_submit=True):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
-            # single name input; consolidate Name into New Employeer
             emp_name = st.text_input("New Employeer *")
         with r1c2:
             emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
         with r1c3:
-            new_sig = st.selectbox("New Signature", ["— Select —", "Yes", "No", "Requested"])  # standardize
+            new_sig = st.selectbox("New Signature", ["— Select —", "Yes", "No", "Requested"])
 
         r2c1, r2c2 = st.columns(2)
         with r2c1:
             Email = st.text_input("Email")
         with r2c2:
-            active = st.selectbox("Active", ["Active", "Inactive", "Onboarding", "Resigned"])  # status
+            active = st.selectbox("Active", ["Active", "Inactive", "Onboarding", "Resigned"])
 
         r3c1, r3c2, r3c3 = st.columns(3)
         with r3c1:
@@ -1810,7 +1772,7 @@ def employee_register_tab():
         with r4c1:
             project = select_with_other("Project", ["Head Office", "Site"], proj_existing)
         with r4c2:
-            teams = st.selectbox("Microsoft Teams", ["— Select —", "Yes", "No", "Requested"])  # standardize
+            teams = st.selectbox("Microsoft Teams", ["— Select —", "Yes", "No", "Requested"])
         with r4c3:
             mobile = st.text_input("Mobile Number")
 
@@ -1826,7 +1788,7 @@ def employee_register_tab():
 
         row = {
             "New Employeer": emp_name.strip(),
-            "Name": emp_name.strip(),  # keep both columns filled
+            "Name": emp_name.strip(),
             "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
             "New Signature": new_sig if new_sig != "— Select —" else "",
             "Email": Email.strip(),
@@ -1900,7 +1862,6 @@ def approvals_tab():
                         _reject_row(PENDING_TRANSFER_WS, i, row)
 
 def _approve_device_row(row: pd.Series):
-    # Append to inventory, then mark approved in pending sheet
     inv = read_worksheet(INVENTORY_WS)
     now_str = datetime.now().strftime(DATE_FMT)
     approver = st.session_state.get("username", "")
@@ -1915,7 +1876,6 @@ def _approve_device_row(row: pd.Series):
     ], ignore_index=True)
     write_worksheet(INVENTORY_WS, inv_out)
 
-    # Update pending row status
     _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
     st.success("✅ Device approved and added to Inventory.")
 
@@ -1952,13 +1912,11 @@ def _approve_transfer_row(row: pd.Series):
 
 def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
     df = read_worksheet(ws_title)
-    # Try to locate exact row via a composite key (Serial + Submitted at + Submitted by)
     key_cols = [c for c in ["Serial Number", "Submitted at", "Submitted by", "To owner"] if c in df.columns]
     mask = pd.Series([True] * len(df))
     for c in key_cols:
         mask &= df[c].astype(str) == str(row.get(c, ""))
     if not mask.any():
-        # fallback to first pending row match by Serial Number
         if "Serial Number" in df.columns:
             mask = df["Serial Number"].astype(str) == str(row.get("Serial Number", ""))
     idxs = df[mask].index.tolist()
@@ -1975,7 +1933,7 @@ def _reject_row(ws_title: str, i: int, row: pd.Series):
     st.info("❌ Request rejected.")
 
 # =============================================================================
-# Export (unchanged)
+# Export
 # =============================================================================
 
 def export_tab():
@@ -2051,7 +2009,7 @@ def run_app():
         with tabs[7]: export_tab()
     else:
         tabs = st.tabs(["📝 Register Device", "🔁 Transfer Device", "📋 View Inventory", "📜 Transfer Log"])
-        with tabs[0]: register_device_tab()   # staff can submit with PDF for approval
+        with tabs[0]: register_device_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: inventory_tab()
         with tabs[3]: history_tab()
