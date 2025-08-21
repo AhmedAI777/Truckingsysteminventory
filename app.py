@@ -39,7 +39,7 @@ INVENTORY_WS    = "truckinventory"
 TRANSFERLOG_WS  = "transfer_log"
 EMPLOYEE_WS     = "mainlists"
 
-# Canonical inventory columns (uses "Current user"; removed Department.1)
+# Canonical inventory columns (UPDATED: uses "Current user"; removed Department.1)
 INVENTORY_COLS = [
     "Serial Number","Device Type","Brand","Model","CPU",
     "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
@@ -49,18 +49,17 @@ INVENTORY_COLS = [
 ]
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 
-# Employees sheet columns (canonical names) — REMOVED "New Employeer", ADDED "Email"
+# Employees sheet columns (canonical names)
 EMPLOYEE_CANON_COLS = [
-    "Employee ID","New Signature","Name","Address","Email",
+    "New Employeer","Employee ID","New Signature","Name","Address",
     "APLUS","Active","Position","Department","Location (KSA)",
     "Project","Microsoft Teams","Mobile Number"
 ]
 
 # Accept common synonym/typo headers and normalize to canon (employees)
 HEADER_SYNONYMS = {
-    # employees
-    "new employee": None,  # drop legacy column if present
-    "new employeer": None,
+    "new employee": "New Employeer",
+    "new employeer": "New Employeer",
     "employeeid": "Employee ID",
     "newsignature": "New Signature",
     "locationksa": "Location (KSA)",
@@ -68,8 +67,6 @@ HEADER_SYNONYMS = {
     "microsoftteam": "Microsoft Teams",
     "mobile": "Mobile Number",
     "mobilenumber": "Mobile Number",
-    "emailaddress": "Email",
-    "email": "Email",
 }
 
 # Map old inventory headers → new canonical names
@@ -87,7 +84,7 @@ st.set_page_config(page_title=APP_TITLE, layout="wide")
 COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 
 # =============================================================================
-# SMALL HELPERS
+# HELPERS (serial normalization + near-duplicate)
 # =============================================================================
 
 def normalize_serial(s: str) -> str:
@@ -102,6 +99,7 @@ def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
     la, lb = len(a), len(b)
     if abs(la - lb) > max_dist:
         return max_dist + 1
+    # ensure a is shorter
     if la > lb:
         a, b = b, a
         la, lb = lb, la
@@ -119,35 +117,14 @@ def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
         prev = cur
     return prev[-1]
 
-# Normalizers for employee duplicate checks
-_name_ws = re.compile(r"\s+")
-_email_rx = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-
-def norm_name(x: str) -> str:
-    return _name_ws.sub(" ", (x or "").strip().lower())
-
-def norm_phone(x: str) -> str:
-    return re.sub(r"\D+", "", (x or ""))
-
-def norm_email(x: str) -> str:
-    return (x or "").strip().lower()
-
-# Hybrid dropdown/text helper
-_DEF_SELECT = "— Select —"
-_TYPE_NEW   = "Type a new value…"
-
-def type_or_select(label: str, options: list[str], key: str, help: str | None = None) -> str:
-    opts = sorted({o.strip() for o in options if isinstance(o, str) and o.strip()})
-    choice = st.selectbox(label, [_DEF_SELECT] + opts + [_TYPE_NEW], key=key, help=help)
-    if choice == _TYPE_NEW:
-        return st.text_input(f"Enter {label}", key=f"{key}_free")
-    return "" if choice == _DEF_SELECT else choice
-
 # =============================================================================
 # AUTH (SESSION COOKIE)
 # =============================================================================
 
 def _cookie_key() -> str:
+    # Put a strong random in secrets:
+    # [auth]
+    # cookie_key = "your-very-long-random-secret"
     return st.secrets.get("auth", {}).get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
 
 
@@ -162,9 +139,22 @@ def _issue_session_cookie(username: str, role: str):
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
     if SESSION_TTL_SECONDS > 0:
-        COOKIE_MGR.set(COOKIE_NAME, token, max_age=SESSION_TTL_SECONDS, path=COOKIE_PATH, secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE)
+        COOKIE_MGR.set(
+            COOKIE_NAME,
+            token,
+            max_age=SESSION_TTL_SECONDS,
+            path=COOKIE_PATH,
+            secure=COOKIE_SECURE,
+            same_site=COOKIE_SAMESITE,
+        )
     else:
-        COOKIE_MGR.set(COOKIE_NAME, token, path=COOKIE_PATH, secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE)
+        COOKIE_MGR.set(
+            COOKIE_NAME,
+            token,
+            path=COOKIE_PATH,
+            secure=COOKIE_SECURE,
+            same_site=COOKIE_SAMESITE,
+        )
 
 
 def _read_cookie():
@@ -178,7 +168,9 @@ def _read_cookie():
             COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
             return None
         payload = json.loads(raw.decode())
-        if int(payload.get("exp", 0)) and int(time.time()) > int(payload.get("exp", 0)):
+        exp = int(payload.get("exp", 0))
+        now = int(time.time())
+        if exp and now > exp:
             COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
             return None
         return payload
@@ -219,6 +211,7 @@ if "cookie_bootstrapped" not in st.session_state:
 # =============================================================================
 
 def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
+    """Embed a local TTF/OTF and apply as the default UI font."""
     if not os.path.exists(font_path):
         return
     ext = os.path.splitext(font_path)[1].lower()
@@ -235,13 +228,17 @@ def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
           @font-face {{
             font-family: '{family}';
             src: url(data:{mime};base64,{b64}) format('{fmt}');
-            font-weight: normal; font-style: normal; font-display: swap;
+            font-weight: normal;
+            font-style: normal;
+            font-display: swap;
           }}
           html, body, [class*="css"] {{
             font-family: '{family}', -apple-system, BlinkMacSystemFont, "Segoe UI",
                          Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif !important;
           }}
-          h1,h2,h3,h4,h5,h6, .stTabs [role="tab"] {{ font-family: '{family}', sans-serif !important; }}
+          h1,h2,h3,h4,h5,h6, .stTabs [role="tab"] {{
+            font-family: '{family}', sans-serif !important;
+          }}
           section.main > div {{ padding-top: 0.6rem; }}
         </style>
         """,
@@ -250,16 +247,20 @@ def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
 
 
 def _font_candidates():
+    """Return likely font file paths in priority order."""
     cands = []
+    # Allow override via secrets: [branding] font_file="path/to/font.ttf"; font_family="YourFontName"
     secrets_font = st.secrets.get("branding", {}).get("font_file")
     if secrets_font:
         cands.append(secrets_font)
+    # Common filenames in project root
     cands += [
         "company_font.ttf", "company_font.otf",
         "ACBrandFont.ttf", "ACBrandFont.otf",
         "FounderGroteskCondensed-Regular.otf",
         "Cairo-Regular.ttf",
     ]
+    # Scan fonts/ folder automatically
     try:
         cands += sorted(glob.glob("fonts/*.ttf")) + sorted(glob.glob("fonts/*.otf"))
     except Exception:
@@ -273,6 +274,7 @@ def _apply_brand_font():
         if os.path.exists(p):
             _inject_font_css(p, family=fam)
             return
+    # If no custom font found, silently keep Streamlit defaults
 
 
 def render_header():
@@ -346,28 +348,28 @@ def get_sh():
         except gspread.exceptions.APIError as e:
             last_exc = e
             time.sleep(0.6 * (attempt + 1))
-    st.error("Google Sheets API error while opening the spreadsheet. Please confirm access and try again.")
+    st.error("Google Sheets API error while opening the spreadsheet. "
+             "Please confirm the service account has access and try again.")
     raise last_exc
 
 
-def _norm_title(t: str) -> str: return (t or "").strip().lower()
+def _norm_title(t: str) -> str:
+    return (t or "").strip().lower()
 
-def _norm_header(h: str) -> str: return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
+
+def _norm_header(h: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
 
 
-def _canon_employee_headers(cols: list[str]) -> list[str]:
-    out = []
-    for h in cols:
-        key = _norm_header(h)
-        mapped = HEADER_SYNONYMS.get(key, h.strip())
-        if mapped is None:
-            continue
-        out.append(mapped)
-    return out
+def _canon_header(h: str) -> str:
+    key = _norm_header(h)
+    return HEADER_SYNONYMS.get(key, h.strip())
 
 
 def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
-    rename, drop_cols = {}, []
+    """Normalize inventory headers (e.g., USER → Current user) and drop deprecated ones."""
+    rename = {}
+    drop_cols = []
     for c in df.columns:
         key = _norm_header(c)
         if key in INVENTORY_HEADER_SYNONYMS:
@@ -375,7 +377,7 @@ def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
             if new:
                 rename[c] = new
             else:
-                drop_cols.append(c)
+                drop_cols.append(c)  # Department.1 → drop
     if rename:
         df = df.rename(columns=rename)
     if drop_cols:
@@ -402,14 +404,14 @@ def _score_header(values: list[list[str]], expected_canon: set[str]) -> tuple[in
     rows_to_scan = min(len(values), 10)
     for i in range(rows_to_scan):
         row = values[i]
-        canon = {c for c in row if str(c).strip()}
+        canon = {_canon_header(c) for c in row if str(c).strip()}
         overlap = len(canon & expected_canon)
         if overlap > best_count:
             best_idx, best_count = i, overlap
     return best_idx, best_count
 
 
-def _read_ws_as_dataframe(ws: gspread.Worksheet, expected_cols: list[str], employees: bool=False) -> tuple[pd.DataFrame, int, int]:
+def _read_ws_as_dataframe(ws: gspread.Worksheet, expected_cols: list[str]) -> tuple[pd.DataFrame, int, int]:
     values = ws.get_all_values() or []
     if not values:
         return pd.DataFrame(columns=expected_cols), 0, 0
@@ -417,7 +419,7 @@ def _read_ws_as_dataframe(ws: gspread.Worksheet, expected_cols: list[str], emplo
     expected_canon = set(expected_cols)
     header_idx, score = _score_header(values, expected_canon)
     headers_raw = values[header_idx]
-    preferred = _canon_employee_headers(headers_raw) if employees else [HEADER_SYNONYMS.get(_norm_header(h), h) for h in headers_raw]
+    preferred = [HEADER_SYNONYMS.get(_norm_header(h), h) for h in headers_raw]
 
     data_rows = values[header_idx + 1 :]
     df = pd.DataFrame(data_rows, columns=preferred).replace({None: ""})
@@ -448,7 +450,7 @@ def get_employee_ws() -> gspread.Worksheet:
     best_ws, best_score = None, -1
     for ws in cands:
         try:
-            _, _, score = _read_ws_as_dataframe(ws, EMPLOYEE_CANON_COLS, employees=True)
+            _, _, score = _read_ws_as_dataframe(ws, EMPLOYEE_CANON_COLS)
             if score > best_score:
                 best_ws, best_score = ws, score
         except Exception:
@@ -471,8 +473,11 @@ def get_or_create_ws(title, rows=500, cols=80):
 def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
     if ws_title == EMPLOYEE_WS:
         ws = get_employee_ws()
-        df, header_idx, overlap = _read_ws_as_dataframe(ws, EMPLOYEE_CANON_COLS, employees=True)
-        st.session_state.emp_debug = {"title": ws.title, "gid": ws.id, "header_row": header_idx + 1, "overlap": overlap, "rows": len(df)}
+        df, header_idx, overlap = _read_ws_as_dataframe(ws, EMPLOYEE_CANON_COLS)
+        st.session_state.emp_debug = {
+            "title": ws.title, "gid": ws.id,
+            "header_row": header_idx + 1, "overlap": overlap, "rows": len(df),
+        }
         return df
     ws = get_or_create_ws(ws_title)
     data = ws.get_all_records()
@@ -531,6 +536,7 @@ def load_users():
         users[user] = {"password": pw, "role": "Staff", "name": user}
     return users
 
+
 USERS = load_users()
 
 
@@ -550,7 +556,19 @@ def show_login():
 # =============================================================================
 
 def admin_override_widget(s_norm: str, similar_serials: list[str]) -> bool:
-    st.warning("Near-duplicate serial detected: " + ", ".join(similar_serials) + ". Admin confirmation required to proceed.")
+    """Inline admin confirmation gate. Returns True if a valid admin override PIN was provided.
+    Configure pins in secrets:
+
+    [auth]
+    # admins = { alice = "...", bob = "..." }
+    [auth.override_pins]
+    alice = "123456"
+    bob   = "654321"
+    """
+    st.warning(
+        "Near-duplicate serial detected: " + ", ".join(similar_serials) +
+        ". Admin confirmation required to proceed."
+    )
     admins = [u for u in st.secrets.get("auth", {}).get("admins", {}).keys() if u != "type"]
     with st.form(f"override_form_{s_norm}", clear_on_submit=False):
         admin_user = st.selectbox("Admin username", ["— Select —"] + admins, index=0)
@@ -574,7 +592,7 @@ def admin_override_widget(s_norm: str, similar_serials: list[str]) -> bool:
 # =============================================================================
 
 def employees_view_tab():
-    st.subheader("📇 Main Employees (mainlists)")
+    st.subheader("📇 Employees (mainlists)")
     df = read_worksheet(EMPLOYEE_WS)
     if df.empty:
         st.info("No employees found in 'mainlists'.")
@@ -583,7 +601,7 @@ def employees_view_tab():
 
 
 def inventory_tab():
-    st.subheader("📋 Main Inventory")
+    st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
     if df.empty:
         st.warning("Inventory is empty.")
@@ -658,6 +676,8 @@ def register_device_tab():
         inv = read_worksheet(INVENTORY_WS)
         if not inv.empty:
             inv["__snorm"] = inv["Serial Number"].astype(str).map(normalize_serial)
+
+            # 1) Exact (normalized) duplicate -> BLOCK
             if s_norm in set(inv["__snorm"]):
                 existing = inv[inv["__snorm"] == s_norm].iloc[0]
                 st.error(
@@ -665,13 +685,17 @@ def register_device_tab():
                     f"({existing.get('Device Type','')} {existing.get('Brand','')}/{existing.get('Model','')})."
                 )
                 return
+
+            # 2) Near-duplicate (≤1 edit away) -> REQUIRE ADMIN CONFIRMATION
             near_mask = inv["__snorm"].apply(lambda x: levenshtein(s_norm, x, max_dist=1) <= 1)
             near = inv[near_mask]
             if not near.empty:
                 similar_list = near["Serial Number"].astype(str).unique().tolist()
                 if not admin_override_widget(s_norm, similar_list):
-                    st.stop()
+                    st.stop()  # wait for admin override form
+                # else: proceed after a valid override
 
+        # Build the new record (keep user's original serial formatting for display)
         row = {
             "Serial Number": serial.strip(),
             "Device Type": device.strip(),
@@ -683,9 +707,12 @@ def register_device_tab():
             "Memory": mem.strip(),
             "GPU": gpu.strip(),
             "Screen Size": screen.strip(),
+
+            # ownership fields (UPDATED)
             "Current user": current_user.strip(),
             "Previous User": "",
             "TO": current_user.strip(),
+
             "Department": dept.strip(),
             "Email Address": email.strip(),
             "Contact Number": contact.strip(),
@@ -696,6 +723,7 @@ def register_device_tab():
             "Registered by": st.session_state.get("username", ""),
         }
 
+        # Race-condition guard: re-check on a fresh read just before write
         inv_fresh = read_worksheet(INVENTORY_WS)
         if not inv_fresh.empty:
             inv_fresh["__snorm"] = inv_fresh["Serial Number"].astype(str).map(normalize_serial)
@@ -706,7 +734,8 @@ def register_device_tab():
             if not near_fresh.empty:
                 similar_list = near_fresh["Serial Number"].astype(str).unique().tolist()
                 if not admin_override_widget(s_norm, similar_list):
-                    st.stop()
+                    st.stop()  # still need admin override on final check as well
+                # proceed after override
 
         inv_out = pd.concat([
             inv_fresh if not inv_fresh.empty else pd.DataFrame(columns=INVENTORY_COLS),
@@ -728,7 +757,9 @@ def transfer_tab():
     serial = st.selectbox("Serial Number", ["— Select —"] + serial_list)
     chosen_serial = None if serial == "— Select —" else serial
 
-    existing_users = sorted([u for u in inventory_df["Current user"].dropna().astype(str).tolist() if u.strip()])
+    existing_users = sorted([
+        u for u in inventory_df["Current user"].dropna().astype(str).tolist() if u.strip()
+    ])
     new_owner_choice = st.selectbox("New Owner", ["— Select —"] + existing_users + ["Type a new name…"])
     if new_owner_choice == "Type a new name…":
         new_owner = st.text_input("Enter new owner name")
@@ -771,7 +802,7 @@ def transfer_tab():
 
 
 def history_tab():
-    st.subheader("📜 History Transfer")
+    st.subheader("📜 Transfer Log")
     df = read_worksheet(TRANSFERLOG_WS)
     if df.empty:
         st.info("No transfer history found.")
@@ -782,17 +813,6 @@ def history_tab():
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
     emp_df = read_worksheet(EMPLOYEE_WS)
-
-    # build suggestion lists from existing data (avoid blanks)
-    def _opts(col):
-        return sorted({str(x).strip() for x in emp_df.get(col, pd.Series(dtype=str)).dropna().astype(str) if str(x).strip()})
-
-    dept_opts    = _opts("Department")
-    pos_opts     = _opts("Position")
-    loc_opts     = _opts("Location (KSA)")
-    proj_opts    = _opts("Project")
-    teams_opts   = _opts("Microsoft Teams")
-
     try:
         ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
         next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
@@ -802,35 +822,35 @@ def employee_register_tab():
     with st.form("register_employee", clear_on_submit=True):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
-            emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
+            new_emp_status = st.text_input("New Employeer")
         with r1c2:
-            new_sig = st.text_input("New Signature")
+            emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
         with r1c3:
-            name = st.text_input("Name *")
+            new_sig = st.text_input("New Signature")
 
         r2c1, r2c2, r2c3 = st.columns(3)
         with r2c1:
-            address = st.text_input("Address")
+            name = st.text_input("Name *")
         with r2c2:
-            email   = st.text_input("Email")
+            address = st.text_input("Address")
         with r2c3:
-            aplus   = st.text_input("APLUS")
+            aplus = st.text_input("APLUS")
 
         r3c1, r3c2, r3c3 = st.columns(3)
         with r3c1:
-            active    = st.text_input("Active")
+            active = st.text_input("Active")
         with r3c2:
-            position  = type_or_select("Position", pos_opts, key="pos")
+            position = st.text_input("Position")
         with r3c3:
-            department = type_or_select("Department", dept_opts, key="dept")
+            department = st.text_input("Department")
 
         r4c1, r4c2, r4c3 = st.columns(3)
         with r4c1:
-            location_ksa = type_or_select("Location (KSA)", loc_opts, key="loc")
+            location_ksa = st.text_input("Location (KSA)")
         with r4c2:
-            project      = type_or_select("Project", proj_opts, key="proj")
+            project = st.text_input("Project")
         with r4c3:
-            teams        = type_or_select("Microsoft Teams", teams_opts, key="teams")
+            teams = st.text_input("Microsoft Teams")
 
         mobile = st.text_input("Mobile Number")
 
@@ -840,41 +860,16 @@ def employee_register_tab():
         if not name.strip():
             st.error("Name is required.")
             return
-
-        # Duplicate checks with normalization
-        if not emp_df.empty:
-            emp_df["__id"]    = emp_df["Employee ID"].astype(str).str.strip().str.lower()
-            emp_df["__name"]  = emp_df["Name"].astype(str).map(norm_name)
-            emp_df["__phone"] = emp_df["Mobile Number"].astype(str).map(norm_phone)
-            emp_df["__email"] = emp_df["Email"].astype(str).map(norm_email) if "Email" in emp_df.columns else ""
-
-            id_norm = emp_id.strip().lower() if emp_id.strip() else None
-            name_norm = norm_name(name)
-            phone_norm = norm_phone(mobile)
-            email_norm = norm_email(email)
-
-            if id_norm and id_norm in set(emp_df["__id"]):
-                st.error(f"Employee ID '{emp_id}' already exists.")
-                return
-            if name_norm and name_norm in set(emp_df["__name"]):
-                st.error(f"An employee with the same name already exists.")
-                return
-            if phone_norm and phone_norm and phone_norm in set(emp_df["__phone"]):
-                st.error("Mobile Number is already used by another employee.")
-                return
-            if email and not _email_rx.match(email.strip()):
-                st.error("Invalid email format.")
-                return
-            if email_norm and "__email" in emp_df and email_norm in set(emp_df["__email"]):
-                st.error("Email is already used by another employee.")
-                return
+        if emp_id.strip() and not emp_df.empty and emp_id.strip() in emp_df["Employee ID"].astype(str).values:
+            st.error(f"Employee ID '{emp_id}' already exists.")
+            return
 
         row = {
+            "New Employeer": new_emp_status.strip(),
             "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
             "New Signature": new_sig.strip(),
             "Name": name.strip(),
             "Address": address.strip(),
-            "Email": email.strip(),
             "APLUS": aplus.strip(),
             "Active": active.strip(),
             "Position": position.strip(),
@@ -898,11 +893,14 @@ def export_tab():
     st.caption(f"Last fetched: {datetime.now().strftime(DATE_FMT)}")
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"), "inventory.csv", "text/csv")
+        st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"),
+                           "inventory.csv", "text/csv")
     with c2:
-        st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"), "transfer_log.csv", "text/csv")
+        st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"),
+                           "transfer_log.csv", "text/csv")
     with c3:
-        st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"), "employees.csv", "text/csv")
+        st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"),
+                           "employees.csv", "text/csv")
 
 # =============================================================================
 # MAIN
@@ -915,11 +913,11 @@ def run_app():
     if st.session_state.role == "Admin":
         tabs = st.tabs([
             "🧑‍💼 Employee Register",
-            "🧾 Main Employees",
+            "📇 View Employees",
             "📝 Register Device",
-            "📋 Main Inventory",
+            "📋 View Inventory",
             "🔁 Transfer Device",
-            "📜 History Transfer",
+            "📜 Transfer Log",
             "⬇️ Export"
         ])
         with tabs[0]: employee_register_tab()
@@ -930,7 +928,7 @@ def run_app():
         with tabs[5]: history_tab()
         with tabs[6]: export_tab()
     else:
-        tabs = st.tabs(["📋 Main Inventory", "🔁 Transfer Device", "📜 History Transfer"])
+        tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log"])
         with tabs[0]: inventory_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: history_tab()
@@ -941,6 +939,9 @@ def run_app():
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
+# Refresh behavior:
+# - If you're logged in, cookie keeps you in (persisting for SESSION_TTL_DAYS).
+# - If you just logged out, skip cookie read once to prevent flash re-login.
 if not st.session_state.authenticated and not st.session_state.get("just_logged_out"):
     payload = _read_cookie()
     if payload:
