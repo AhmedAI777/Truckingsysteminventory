@@ -869,11 +869,6 @@
 
 
 
-
-
-
-
-
 # pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth google-api-python-client
 import os
 import re
@@ -947,6 +942,9 @@ APPROVAL_META_COLS = [
 ]
 PENDING_DEVICE_COLS   = INVENTORY_COLS + APPROVAL_META_COLS
 PENDING_TRANSFER_COLS = LOG_COLS + APPROVAL_META_COLS
+
+# Label used when a device is not assigned yet
+UNASSIGNED_LABEL = "Unassigned (Stock)"
 
 HEADER_SYNONYMS = {
     "new employee": "New Employeer",
@@ -1492,12 +1490,30 @@ def inventory_tab():
 
 def register_device_tab():
     st.subheader("📝 Register New Device")
+
+    # Pull employee names for quick assignment options
+    emp_df = read_worksheet(EMPLOYEE_WS)
+    emp_names = sorted({
+        *unique_nonempty(emp_df, "New Employeer"),
+        *unique_nonempty(emp_df, "Name"),
+    })
+
     with st.form("register_device", clear_on_submit=True):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
             serial = st.text_input("Serial Number *")
         with r1c2:
-            current_user = st.text_input("Current user")
+            assigned_choice = st.selectbox(
+                "Assigned to",
+                [UNASSIGNED_LABEL] + emp_names + ["Type a new name…"],
+                help="Choose 'Unassigned (Stock)' if the device has no owner yet."
+            )
+            if assigned_choice == "Type a new name…":
+                assigned_to = st.text_input("Assignee name")
+            elif assigned_choice == UNASSIGNED_LABEL:
+                assigned_to = UNASSIGNED_LABEL  # store explicit label for clarity in the sheet
+            else:
+                assigned_to = assigned_choice
         with r1c3:
             device = st.text_input("Device Type *")
 
@@ -1539,7 +1555,7 @@ def register_device_tab():
         with r6c2:
             notes  = st.text_area("Notes", height=60)
 
-        # New: Require approval PDF for non-admin submissions
+        # Require approval PDF for non-admin submissions
         pdf_file = st.file_uploader("Approval PDF (required for non-admin)", type=["pdf"])
 
         submitted = st.form_submit_button("Save Device", type="primary")
@@ -1583,9 +1599,9 @@ def register_device_tab():
             "Memory": mem.strip(),
             "GPU": gpu.strip(),
             "Screen Size": screen.strip(),
-            "Current user": current_user.strip(),
+            "Current user": assigned_to.strip(),
             "Previous User": "",
-            "TO": current_user.strip(),
+            "TO": assigned_to.strip() if assigned_to.strip() and assigned_to.strip() != UNASSIGNED_LABEL else "",
             "Department": dept.strip(),
             "Email Address": email.strip(),
             "Contact Number": contact.strip(),
@@ -1952,6 +1968,7 @@ def export_tab():
     inv = read_worksheet(INVENTORY_WS)
     log = read_worksheet(TRANSFERLOG_WS)
     emp = read_worksheet(EMPLOYEE_WS)
+
     st.caption(f"Last fetched: {datetime.now().strftime(DATE_FMT)}")
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -1960,6 +1977,35 @@ def export_tab():
         st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"), "transfer_log.csv", "text/csv")
     with c3:
         st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"), "employees.csv", "text/csv")
+
+    st.markdown("---")
+    st.markdown("**Approvals (Accepted)**")
+    approved_dev = read_worksheet(PENDING_DEVICE_WS)
+    approved_tr  = read_worksheet(PENDING_TRANSFER_WS)
+    approved_dev = approved_dev[approved_dev.get("Approval Status", "").astype(str) == "Approved"] if not approved_dev.empty else approved_dev
+    approved_tr  = approved_tr[approved_tr.get("Approval Status", "").astype(str) == "Approved"] if not approved_tr.empty else approved_tr
+
+    c4, c5 = st.columns(2)
+    with c4:
+        if not approved_dev.empty:
+            st.download_button(
+                "Approved Device Submissions CSV",
+                approved_dev.to_csv(index=False).encode("utf-8"),
+                "approved_device_submissions.csv",
+                "text/csv",
+            )
+        else:
+            st.caption("No approved device submissions yet.")
+    with c5:
+        if not approved_tr.empty:
+            st.download_button(
+                "Approved Transfer Submissions CSV",
+                approved_tr.to_csv(index=False).encode("utf-8"),
+                "approved_transfer_submissions.csv",
+                "text/csv",
+            )
+        else:
+            st.caption("No approved transfer submissions yet.")
 
 # =============================================================================
 # MAIN
@@ -2021,4 +2067,3 @@ else:
             do_login(username, user["role"])  # sets cookie + rerun
         else:
             st.error("❌ Invalid username or password.")
-
