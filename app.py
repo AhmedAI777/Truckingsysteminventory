@@ -53,17 +53,16 @@ INVENTORY_COLS = [
 ]
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 
-# 1) === SCHEMA: drop APLUS ================================================
+# Employees sheet columns (canonical). Keep both name columns, remove APLUS from schema.
 EMPLOYEE_CANON_COLS = [
     "New Employeer","Employee ID","New Signature","Name","Address",
     "Active","Position","Department","Location (KSA)",
     "Project","Microsoft Teams","Mobile Number"
 ]
 
-
-
 HEADER_SYNONYMS = {
     "new employee": "New Employeer",
+    "new employeer": "New Employeer",
     "employeeid": "Employee ID",
     "newsignature": "New Signature",
     "locationksa": "Location (KSA)",
@@ -374,13 +373,12 @@ def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# 2) === STRICT REORDER util (keeps only desired cols) ======================
-def reorder_columns_strict(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
-    """Keep only desired columns (drop extras like APLUS); create missing if needed."""
+def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     for c in desired:
         if c not in df.columns:
             df[c] = ""
-    return df[desired]
+    tail = [c for c in df.columns if c not in desired]
+    return df[desired + tail]
 
 
 def _find_ws_candidates(title: str):
@@ -490,18 +488,15 @@ def read_worksheet(ws_title):
         if ws_title == EMPLOYEE_WS:    return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
         return pd.DataFrame()
 
-# 3) === WRITE: make employees strict on write ==============================
+
 def write_worksheet(ws_title, df):
     if ws_title == INVENTORY_WS:
         df = canon_inventory_columns(df)
         df = reorder_columns(df, INVENTORY_COLS)
-    if ws_title == EMPLOYEE_WS:
-        df = reorder_columns_strict(df, EMPLOYEE_CANON_COLS)  # <- drop APLUS etc.
     ws = get_employee_ws() if ws_title == EMPLOYEE_WS else get_or_create_ws(ws_title)
     ws.clear()
     set_with_dataframe(ws, df)
     st.cache_data.clear()
-
 
 
 def append_to_worksheet(ws_title, new_data):
@@ -518,34 +513,13 @@ def append_to_worksheet(ws_title, new_data):
 # VIEWS
 # =============================================================================
 
-# def employees_view_tab():
-#     st.subheader("📇 Employees (mainlists)")
-#     df = read_worksheet(EMPLOYEE_WS)
-#     if df.empty:
-#         st.info("No employees found in 'mainlists'.")
-#     else:
-#         st.dataframe(df, use_container_width=True, hide_index=True)
-
-def migrate_employees_schema():
-    """Rewrite the employees sheet with strict schema to drop obsolete cols like APLUS."""
-    df = read_worksheet(EMPLOYEE_WS)
-    if df.empty:
-        return
-    df_strict = reorder_columns_strict(df.copy(), EMPLOYEE_CANON_COLS)
-    if set(df_strict.columns) != set(df.columns) or list(df_strict.columns) != list(df.columns):
-        write_worksheet(EMPLOYEE_WS, df_strict)
-
-
-# 5) === Employees view: hide Name column ===================================
 def employees_view_tab():
     st.subheader("📇 Employees (mainlists)")
     df = read_worksheet(EMPLOYEE_WS)
     if df.empty:
         st.info("No employees found in 'mainlists'.")
     else:
-        view_df = df.drop(columns=["Name"], errors="ignore")  # hide duplicate 'Name'
-        st.dataframe(view_df, use_container_width=True, hide_index=True)
-
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 def inventory_tab():
@@ -736,114 +710,89 @@ def history_tab():
 # =============================================================================
 # Employee Register (updated)
 # =============================================================================
-# 4) === Helpers for dropdowns =============================================
-def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
-    if df.empty or col not in df.columns:
-        return []
-    vals = [str(x).strip() for x in df[col].dropna().astype(str)]
-    return sorted({v for v in vals if v})
 
-def select_with_other(label: str, base_options: list[str], existing_values: list[str]) -> str:
-    # merge base + existing, dedupe, add Other…
-    seen, opts = set(), []
-    for v in base_options + existing_values:
-        if v and v not in seen:
-            seen.add(v); opts.append(v)
-    choice = st.selectbox(label, ["— Select —"] + opts + ["Other…"])
-    if choice == "Other…":
-        return st.text_input(f"{label} (Other)")
-    return "" if choice == "— Select —" else choice
-
-    
-# 6) === Employee Register tab: remove Name & APLUS; use New Employeer ======
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
     emp_df = read_worksheet(EMPLOYEE_WS)
 
-    # Suggest next numeric ID
+    # Suggested numeric ID
     try:
         ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
         next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
     except Exception:
         next_id_suggestion = str(len(emp_df) + 1)
 
-    # Sources for dropdowns (also include existing sheet values)
+    # Dropdown sources from existing data
     dept_existing = unique_nonempty(emp_df, "Department")
     pos_existing  = unique_nonempty(emp_df, "Position")
     proj_existing = unique_nonempty(emp_df, "Project")
     loc_existing  = unique_nonempty(emp_df, "Location (KSA)")
-    ksa_cities    = ["Riyadh","Jeddah","Dammam","Khobar","Dhahran","Jubail","Mecca","Medina","Abha","Tabuk","Hail","Buraidah"]
+
+    ksa_cities = [
+        "Riyadh", "Jeddah", "Dammam", "Khobar", "Dhahran", "Jubail",
+        "Mecca", "Medina", "Abha", "Tabuk", "Hail", "Buraidah"
+    ]
 
     with st.form("register_employee", clear_on_submit=True):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
-            # single required name field (replaces the old 'Name *' input)
-            name_val = st.text_input("New Employeer *")
+            # single name input; why: consolidate Name into New Employeer
+            emp_name = st.text_input("New Employeer *")
         with r1c2:
             emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
         with r1c3:
-            new_sig = st.selectbox("New Signature", ["— Select —","Yes","No","Requested"])
+            new_sig = st.selectbox("New Signature", ["— Select —", "Yes", "No", "Requested"])  # standardize
 
         r2c1, r2c2 = st.columns(2)
         with r2c1:
             address = st.text_input("Address")
         with r2c2:
-            active = st.selectbox("Active", ["Active","Inactive","Onboarding","Resigned"])
+            active = st.selectbox("Active", ["Active", "Inactive", "Onboarding", "Resigned"])  # status
 
         r3c1, r3c2, r3c3 = st.columns(3)
         with r3c1:
-            position = select_with_other("Position",
-                                         ["Engineer","Technician","Manager","Coordinator"],
-                                         pos_existing)
+            position = select_with_other("Position", ["Engineer", "Technician", "Manager", "Coordinator"], pos_existing)
         with r3c2:
-            department = select_with_other("Department",
-                                           ["IT","HR","Finance","Operations","Procurement"],
-                                           dept_existing)
+            department = select_with_other("Department", ["IT", "HR", "Finance", "Operations", "Procurement"], dept_existing)
         with r3c3:
             location_ksa = select_with_other("Location (KSA)", ksa_cities, loc_existing)
 
         r4c1, r4c2, r4c3 = st.columns(3)
         with r4c1:
-            project = select_with_other("Project", ["Head Office","Site"], proj_existing)
+            project = select_with_other("Project", ["Head Office", "Site"], proj_existing)
         with r4c2:
-            teams = st.selectbox("Microsoft Teams", ["— Select —","Yes","No","Requested"])
+            teams = st.selectbox("Microsoft Teams", ["— Select —", "Yes", "No", "Requested"])  # standardize
         with r4c3:
             mobile = st.text_input("Mobile Number")
 
         submitted = st.form_submit_button("Save Employee", type="primary")
 
     if submitted:
-        if not name_val.strip():
+        if not emp_name.strip():
             st.error("New Employeer is required.")
             return
         if emp_id.strip() and not emp_df.empty and emp_id.strip() in emp_df["Employee ID"].astype(str).values:
             st.error(f"Employee ID '{emp_id}' already exists.")
             return
 
-        # Write single name into both columns for compatibility with existing views
         row = {
-            "New Employeer": name_val.strip(),
-            "Name": name_val.strip(),
+            "New Employeer": emp_name.strip(),
+            "Name": emp_name.strip(),  # keep both columns filled
             "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
-            "New Signature": "" if new_sig == "— Select —" else new_sig,
+            "New Signature": new_sig if new_sig != "— Select —" else "",
             "Address": address.strip(),
             "Active": active.strip(),
             "Position": position.strip(),
             "Department": department.strip(),
             "Location (KSA)": location_ksa.strip(),
             "Project": project.strip(),
-            "Microsoft Teams": "" if teams == "— Select —" else teams,
+            "Microsoft Teams": teams if teams != "— Select —" else "",
             "Mobile Number": mobile.strip(),
         }
-
-        new_df = (
-            pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True)
-            if not emp_df.empty else pd.DataFrame([row])
-        )
-        new_df = reorder_columns_strict(new_df, EMPLOYEE_CANON_COLS)
+        new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True) if not emp_df.empty else pd.DataFrame([row])
+        new_df = reorder_columns(new_df, EMPLOYEE_CANON_COLS)
         write_worksheet(EMPLOYEE_WS, new_df)
         st.success("✅ Employee saved to 'mainlists'.")
-
 
 
 def export_tab():
