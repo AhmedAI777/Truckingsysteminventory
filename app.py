@@ -1,3 +1,9 @@
+# # path: app/streamlit_app_inventory.py
+# NOTE: This version removes the standalone "Name" field in the Employee form,
+# relabels "New Employeer" as the required name field, and writes both
+# "New Employeer" and "Name" columns with the same value for compatibility.
+# It also adds helpful dropdowns (with "Other…" fallbacks) for common fields.
+
 # pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth
 import os
 import re
@@ -50,15 +56,18 @@ INVENTORY_COLS = [
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 
 # Employees sheet columns (canonical names)
+# Keeping both columns in the sheet for compatibility. The form only asks once
+# and the same value is written to both columns.
 EMPLOYEE_CANON_COLS = [
-    "New Employeer","Employee ID","New Signature","EMAIL",
-    "Active","Position","Department","Location (KSA)",
+    "New Employeer","Employee ID","New Signature","Name","Address",
+    "APLUS","Active","Position","Department","Location (KSA)",
     "Project","Microsoft Teams","Mobile Number"
 ]
 
 # Accept common synonym/typo headers and normalize to canon (employees)
 HEADER_SYNONYMS = {
     "new employee": "New Employeer",
+    "new employeer": "New Employeer",
     "employeeid": "Employee ID",
     "newsignature": "New Signature",
     "locationksa": "Location (KSA)",
@@ -74,6 +83,7 @@ INVENTORY_HEADER_SYNONYMS = {
     "currentuser": "Current user",
     "previoususer": "Previous User",
     "to": "TO",
+    "department1": None,  # drop this header entirely if present
 }
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
@@ -247,18 +257,15 @@ def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
 def _font_candidates():
     """Return likely font file paths in priority order."""
     cands = []
-    # Allow override via secrets: [branding] font_file="path/to/font.ttf"; font_family="YourFontName"
     secrets_font = st.secrets.get("branding", {}).get("font_file")
     if secrets_font:
         cands.append(secrets_font)
-    # Common filenames in project root
     cands += [
         "company_font.ttf", "company_font.otf",
         "ACBrandFont.ttf", "ACBrandFont.otf",
         "FounderGroteskCondensed-Regular.otf",
         "Cairo-Regular.ttf",
     ]
-    # Scan fonts/ folder automatically
     try:
         cands += sorted(glob.glob("fonts/*.ttf")) + sorted(glob.glob("fonts/*.otf"))
     except Exception:
@@ -272,7 +279,6 @@ def _apply_brand_font():
         if os.path.exists(p):
             _inject_font_css(p, family=fam)
             return
-    # If no custom font found, silently keep Streamlit defaults
 
 
 def render_header():
@@ -744,61 +750,6 @@ def register_device_tab():
         st.success("✅ Device registered and added to Inventory.")
 
 
-def transfer_tab():
-    st.subheader("🔁 Transfer Device")
-    inventory_df = read_worksheet(INVENTORY_WS)
-    if inventory_df.empty:
-        st.warning("Inventory is empty.")
-        return
-
-    serial_list = sorted(inventory_df["Serial Number"].dropna().astype(str).unique().tolist())
-    serial = st.selectbox("Serial Number", ["— Select —"] + serial_list)
-    chosen_serial = None if serial == "— Select —" else serial
-
-    existing_users = sorted([
-        u for u in inventory_df["Current user"].dropna().astype(str).tolist() if u.strip()
-    ])
-    new_owner_choice = st.selectbox("New Owner", ["— Select —"] + existing_users + ["Type a new name…"])
-    if new_owner_choice == "Type a new name…":
-        new_owner = st.text_input("Enter new owner name")
-    else:
-        new_owner = new_owner_choice if new_owner_choice != "— Select —" else ""
-
-    do_transfer = st.button("Transfer Now", type="primary", disabled=not (chosen_serial and new_owner.strip()))
-
-    if do_transfer:
-        match = inventory_df[inventory_df["Serial Number"].astype(str) == chosen_serial]
-        if match.empty:
-            st.warning("Serial number not found.")
-            return
-
-        idx = match.index[0]
-        prev_user = str(inventory_df.loc[idx, "Current user"] or "")
-        now_str   = datetime.now().strftime(DATE_FMT)
-        actor     = st.session_state.get("username", "")
-
-        inventory_df.loc[idx, "Previous User"] = prev_user
-        inventory_df.loc[idx, "Current user"]  = new_owner.strip()
-        inventory_df.loc[idx, "TO"]            = new_owner.strip()
-        inventory_df.loc[idx, "Date issued"]   = now_str
-        inventory_df.loc[idx, "Registered by"] = actor
-
-        inventory_df = reorder_columns(inventory_df, INVENTORY_COLS)
-        write_worksheet(INVENTORY_WS, inventory_df)
-
-        log_row = {
-            "Device Type": inventory_df.loc[idx, "Device Type"],
-            "Serial Number": chosen_serial,
-            "From owner": prev_user,
-            "To owner": new_owner.strip(),
-            "Date issued": now_str,
-            "Registered by": actor,
-        }
-        append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
-
-        st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
-
-
 def history_tab():
     st.subheader("📜 Transfer Log")
     df = read_worksheet(TRANSFERLOG_WS)
@@ -808,54 +759,90 @@ def history_tab():
         st.dataframe(df, use_container_width=True, hide_index=True)
 
 
+# -----------------------------
+# Employee form utilities
+# -----------------------------
+
+def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
+    if df.empty or col not in df.columns:
+        return []
+    vals = [str(x).strip() for x in df[col].dropna().astype(str).tolist()]
+    return sorted({v for v in vals if v})
+
+
+def select_with_other(label: str, base_options: list[str], existing_values: list[str]) -> str:
+    """Select box that merges base options + existing values + Other… fallback."""
+    de_duped = [o for o in base_options if o]
+    for v in existing_values:
+        if v and v not in de_duped:
+            de_duped.append(v)
+    choices = ["— Select —"] + de_duped + ["Other…"]
+    sel = st.selectbox(label, choices)
+    if sel == "Other…":
+        return st.text_input(f"{label} (Other)")
+    return "" if sel == "— Select —" else sel
+
+
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
     emp_df = read_worksheet(EMPLOYEE_WS)
+
+    # Suggested numeric ID
     try:
         ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
         next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
     except Exception:
         next_id_suggestion = str(len(emp_df) + 1)
 
+    # Precompute dropdown sources
+    dept_existing = unique_nonempty(emp_df, "Department")
+    pos_existing  = unique_nonempty(emp_df, "Position")
+    proj_existing = unique_nonempty(emp_df, "Project")
+    loc_existing  = unique_nonempty(emp_df, "Location (KSA)")
+
+    ksa_cities = [
+        "Riyadh", "Jeddah", "Dammam", "Khobar", "Dhahran", "Jubail",
+        "Mecca", "Medina", "Abha", "Tabuk", "Hail", "Buraidah"
+    ]
+
     with st.form("register_employee", clear_on_submit=True):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
-            new_emp_status = st.text_input("New Employeer")
+            # Relabeled: this is the *only* name input now.
+            emp_name = st.text_input("Name *")  # writes to both New Employeer and Name
         with r1c2:
             emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
         with r1c3:
-            new_sig = st.text_input("New Signature")
+            new_sig = st.selectbox("New Signature", ["— Select —", "Yes", "No", "Requested"])  # why: standardize
 
         r2c1, r2c2, r2c3 = st.columns(3)
         with r2c1:
-            name = st.text_input("Name *")
-        with r2c2:
             address = st.text_input("Address")
+        with r2c2:
+            aplus = st.selectbox("APLUS", ["— Select —", "Yes", "No", "Requested"])  # why: boolean-ish
         with r2c3:
-            aplus = st.text_input("APLUS")
+            active = st.selectbox("Active", ["Active", "Inactive", "Onboarding", "Resigned"])  # why: status consistency
 
         r3c1, r3c2, r3c3 = st.columns(3)
         with r3c1:
-            active = st.text_input("Active")
+            position = select_with_other("Position", ["Engineer", "Technician", "Manager", "Coordinator"], pos_existing)
         with r3c2:
-            position = st.text_input("Position")
+            department = select_with_other("Department", ["IT", "HR", "Finance", "Operations", "Procurement"], dept_existing)
         with r3c3:
-            department = st.text_input("Department")
+            location_ksa = select_with_other("Location (KSA)", ksa_cities, loc_existing)
 
         r4c1, r4c2, r4c3 = st.columns(3)
         with r4c1:
-            location_ksa = st.text_input("Location (KSA)")
+            project = select_with_other("Project", ["Head Office", "Site"], proj_existing)
         with r4c2:
-            project = st.text_input("Project")
+            teams = st.selectbox("Microsoft Teams", ["— Select —", "Yes", "No", "Requested"])  # why: standardize
         with r4c3:
-            teams = st.text_input("Microsoft Teams")
-
-        mobile = st.text_input("Mobile Number")
+            mobile = st.text_input("Mobile Number")
 
         submitted = st.form_submit_button("Save Employee", type="primary")
 
     if submitted:
-        if not name.strip():
+        if not emp_name.strip():
             st.error("Name is required.")
             return
         if emp_id.strip() and not emp_df.empty and emp_id.strip() in emp_df["Employee ID"].astype(str).values:
@@ -863,16 +850,19 @@ def employee_register_tab():
             return
 
         row = {
-            "New Employeer": new_emp_status.strip(),
+            # Store name under both columns for compatibility with downstream views/reports
+            "New Employeer": emp_name.strip(),
+            "Name": emp_name.strip(),
             "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
-            "New Signature": new_sig.strip(),
+            "New Signature": new_sig if new_sig != "— Select —" else "",
             "Address": address.strip(),
+            "APLUS": aplus if aplus != "— Select —" else "",
             "Active": active.strip(),
             "Position": position.strip(),
             "Department": department.strip(),
             "Location (KSA)": location_ksa.strip(),
             "Project": project.strip(),
-            "Microsoft Teams": teams.strip(),
+            "Microsoft Teams": teams if teams != "— Select —" else "",
             "Mobile Number": mobile.strip(),
         }
         new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True) if not emp_df.empty else pd.DataFrame([row])
