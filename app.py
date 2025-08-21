@@ -327,10 +327,7 @@ def _get_creds():
         st.secrets["gcp_service_account"], scopes=SCOPES
     )
 
-@st.cache_resource(show_spinner=False)
-def _get_drive():
-    creds = _get_creds()
-    return build("drive", "v3", credentials=creds)
+
 
 @st.cache_resource(show_spinner=False)
 def _get_sheet_url():
@@ -351,6 +348,37 @@ def get_sh():
 
 # ---- Drive upload helpers ----
 
+def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
+    if uploaded_file is None:
+        return "", ""
+
+    gauth_settings = json.loads(st.secrets["google_drive_credentials"])
+    gauth = GoogleAuth(settings=gauth_settings)
+    drive = GoogleDrive(gauth)
+
+    data = uploaded_file.getvalue()
+    fname = f"{prefix}_{int(time.time())}.pdf"
+    folder_id = st.secrets.get("drive", {}).get("uploadid")  # <-- updated here
+
+    file_metadata = {'title': fname}
+    if folder_id:
+        file_metadata['parents'] = [{'id': folder_id}]
+
+    file_drive = drive.CreateFile(file_metadata)
+
+    # Write binary PDF data
+    with open(f"/tmp/{fname}", "wb") as f:
+        f.write(data)
+    file_drive.SetContentFile(f"/tmp/{fname}")
+    file_drive.Upload()
+
+    file_id = file_drive['id']
+    link = f"https://drive.google.com/file/d/{file_id}/view"
+    return link, file_id
+
+
+
+
 def _drive_make_public(file_id: str):
     try:
         drive = _get_drive()
@@ -362,24 +390,6 @@ def _drive_make_public(file_id: str):
     except Exception:
         pass  # best-effort; if it fails, admins with Drive access can still view
 
-def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
-    """Return (webViewLink, file_id)."""
-    if uploaded_file is None:
-        return "", ""
-    data = uploaded_file.getvalue()
-    fname = f"{prefix}_{int(time.time())}.pdf"
-    metadata = {"name": fname}
-    folder_id = st.secrets.get("drive", {}).get("approvals_folder_id")
-    if folder_id:
-        metadata["parents"] = [folder_id]
-    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
-    drive = _get_drive()
-    file = drive.files().create(body=metadata, media_body=media, fields="id, webViewLink").execute()
-    file_id = file.get("id", "")
-    link = file.get("webViewLink", "")
-    if st.secrets.get("drive", {}).get("public", True):
-        _drive_make_public(file_id)
-    return link, file_id
 
 # ---- Sheet helpers ----
 
