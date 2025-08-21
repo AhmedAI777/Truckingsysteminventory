@@ -879,7 +879,8 @@ import hashlib
 import time
 import io
 from datetime import datetime, timedelta
-
+from streamlit_cookies_controller import CookieController
+COOKIE = CookieController()
 import streamlit as st
 import pandas as pd
 import gspread
@@ -1012,38 +1013,33 @@ def _issue_session_cookie(username: str, role: str):
     payload = {"u": username, "r": role, "iat": iat, "exp": exp, "v": 1}
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
-    if SESSION_TTL_SECONDS > 0:
-        COOKIE_MGR.set(
-            COOKIE_NAME, token,
-            max_age=SESSION_TTL_SECONDS, path=COOKIE_PATH,
-            secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE
-        )
-    else:
-        COOKIE_MGR.set(
-            COOKIE_NAME, token,
-            path=COOKIE_PATH, secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE
-        )
+
+    # streamlit-cookies-controller
+    # (Session cookie by default; persists across refreshes.)
+    COOKIE.set(COOKIE_NAME, token)
+
 
 
 def _read_cookie():
-    token = COOKIE_MGR.get(COOKIE_NAME)
+    token = COOKIE.get(COOKIE_NAME)
     if not token:
         return None
     try:
         data_b64, sig = token.split(".", 1)
         raw = base64.urlsafe_b64decode(data_b64.encode())
         if not hmac.compare_digest(sig, _sign(raw)):
-            COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
+            # bad signature → delete
+            COOKIE.remove(COOKIE_NAME)
             return None
         payload = json.loads(raw.decode())
         exp = int(payload.get("exp", 0))
         now = int(time.time())
         if exp and now > exp:
-            COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
+            COOKIE.remove(COOKIE_NAME)
             return None
         return payload
     except Exception:
-        COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
+        COOKIE.remove(COOKIE_NAME)
         return None
 
 
@@ -1056,12 +1052,6 @@ def do_login(username: str, role: str):
     _issue_session_cookie(username, role)
     st.rerun()
 
-
-# Bootstrap CookieManager once so cookies are available before rendering auth UI
-if "cookie_bootstrapped" not in st.session_state:
-    st.session_state.cookie_bootstrapped = True
-    _ = COOKIE_MGR.get_all()
-    st.rerun()
 
 # =============================================================================
 # STYLE
