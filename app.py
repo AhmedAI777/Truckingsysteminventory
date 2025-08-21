@@ -407,10 +407,9 @@ def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.rename(columns=rename)
     if drop_cols:
         df = df.drop(columns=drop_cols)
-    
-    # 🔧 Fix: Ensure 'Screen Size' is treated as string for Arrow compatibility
+        
     if "Screen Size" in df.columns:
-        df["Screen Size"] = df["Screen Size"].astype(str)
+        df["Screen Size"] = df["Screen Size"].astype(int)
 
     return df
 
