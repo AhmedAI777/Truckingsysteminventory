@@ -1,5 +1,18 @@
-# Requirements (requirements.txt)
-# streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth google-api-python-client
+# Tracking Inventory Management System — fixed Google Sheets connection
+# -------------------------------------------------------------------
+# What changed (high level):
+# 1) Robust Google Sheets open logic (supports either full URL or just ID)
+# 2) **Do NOT auto-create worksheets when reading** — avoids silently
+#    creating empty tabs that make your tables look empty.
+# 3) Safer worksheet title matching (case/space-insensitive) and a
+#    debug panel (Admin) that lists found worksheet titles.
+# 4) Minor hardening around header rows and caching.
+# 5) Added notes for disabling Streamlit file watcher noise.
+#
+# Optional: create .streamlit/config.toml with:
+#   [server]\nfileWatcherType = "none"
+# to silence inotify warnings on some hosts.
+# -------------------------------------------------------------------
 
 import os
 import re
@@ -50,7 +63,7 @@ INVENTORY_WS           = "truckinventory"
 TRANSFERLOG_WS         = "transfer_log"
 EMPLOYEE_WS            = "mainlists"
 PENDING_DEVICES_WS     = "pending_devices"   # device registrations awaiting admin approval (kept)
-PENDING_TRANSFERS_WS   = "pending_transfers" # NEW: staff-submitted transfers awaiting admin approval
+PENDING_TRANSFERS_WS   = "pending_transfers" # staff-submitted transfers awaiting admin approval
 
 # Debug flag (optional): set [debug].show = true in secrets to expose diagnostics
 DEBUG_SHOW = bool(st.secrets.get("debug", {}).get("show", False))
@@ -305,46 +318,75 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
+
+def _extract_sheet_id(url_or_id: str) -> str:
+    if not url_or_id:
+        return ""
+    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", url_or_id)
+    return m.group(1) if m else url_or_id
+
+
 @st.cache_resource(show_spinner=False)
 def _get_gc():
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
+    creds = Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]), scopes=SCOPES)
     return gspread.authorize(creds)
 
+
 @st.cache_resource(show_spinner=False)
-def _get_sheet_url():
-    return st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
+def _get_sheet_key() -> str:
+    # Prefer explicit id in secrets; fallback to URL (default or secrets)
+    sheet_id = st.secrets.get("sheets", {}).get("id")
+    if sheet_id:
+        return sheet_id
+    url = st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
+    return _extract_sheet_id(url)
 
 
-def get_sh():
+def get_sh() -> gspread.Spreadsheet:
     gc = _get_gc()
-    url = _get_sheet_url()
-    return gc.open_by_url(url)
+    key = _get_sheet_key()
+    if not key:
+        raise RuntimeError("Missing sheet id/url in secrets and default is blank.")
+    try:
+        return gc.open_by_key(key)
+    except gspread.SpreadsheetNotFound:
+        raise RuntimeError("Service account cannot open the spreadsheet.\n"
+                           "• Verify the sheet ID/URL\n"
+                           "• Share the sheet with your service account email as Editor.")
 
 
-def _find_or_add_ws(sh, title, rows=500, cols=80):
+# IMPORTANT: When **reading**, never auto-create missing worksheets.
+# This avoids creating empty tabs that make the UI look empty.
+
+def _find_ws_existing(sh: gspread.Spreadsheet, title: str) -> gspread.Worksheet:
     t_norm = _norm_ws_title(title)
     for ws in sh.worksheets():
-        if _norm_ws_title(ws.title) == t_norm:
+        if ws.title == title or _norm_ws_title(ws.title) == t_norm:
             return ws
+    raise gspread.exceptions.WorksheetNotFound(title)
+
+
+def _get_or_create_ws(sh: gspread.Spreadsheet, title: str, rows=500, cols=80, create_if_missing: bool = True) -> gspread.Worksheet:
     try:
-        return sh.worksheet(title)
+        return _find_ws_existing(sh, title)
     except gspread.exceptions.WorksheetNotFound:
-        return sh.add_worksheet(title=title, rows=rows, cols=cols)
+        if create_if_missing:
+            return sh.add_worksheet(title=title, rows=rows, cols=cols)
+        raise
 
 
-def get_or_create_ws(title, rows=500, cols=80):
-    return _find_or_add_ws(get_sh(), title, rows, cols)
-
+# Convenience wrappers
 
 def get_employee_ws() -> gspread.Worksheet:
     sh = get_sh()
     preferred = [EMPLOYEE_WS, "Employees", "Employee List", "Main Lists", "Mainlists"]
     for cand in preferred:
-        t_norm = _norm_ws_title(cand)
-        for ws in sh.worksheets():
-            if _norm_ws_title(ws.title) == t_norm:
-                return ws
-    return sh.add_worksheet(title=EMPLOYEE_WS, rows=500, cols=50)
+        try:
+            return _find_ws_existing(sh, cand)
+        except gspread.exceptions.WorksheetNotFound:
+            continue
+    # For employees we can create if missing
+    return _get_or_create_ws(sh, EMPLOYEE_WS, create_if_missing=True)
 
 # =============================================================================
 # DATAFRAME CLEANING & IO
@@ -447,12 +489,24 @@ def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     tail = [c for c in df.columns if c not in desired]
     return df[desired + tail]
 
+
 @st.cache_data(ttl=30, show_spinner=False)
 def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
-    if ws_title == EMPLOYEE_WS:
-        return _read_employee_df(get_employee_ws())
+    sh = get_sh()
 
-    ws = get_or_create_ws(ws_title)
+    # Employees: special handling
+    if ws_title == EMPLOYEE_WS:
+        ws = get_employee_ws()
+        return _read_employee_df(ws)
+
+    # For all other reads, **do not create** if missing
+    try:
+        ws = _find_ws_existing(sh, ws_title)
+    except gspread.exceptions.WorksheetNotFound as e:
+        # Surface a helpful error with available tabs — prevents silent empty tables
+        available = [w.title for w in sh.worksheets()]
+        raise RuntimeError(f"Worksheet '{ws_title}' not found. Available tabs: {available}") from e
+
     data = ws.get_all_records()
     df = pd.DataFrame(data)
     if ws_title == INVENTORY_WS:
@@ -486,9 +540,10 @@ def read_worksheet(ws_title: str) -> pd.DataFrame:
 
 
 def write_worksheet(ws_title: str, df: pd.DataFrame):
+    sh = get_sh()
     if ws_title == EMPLOYEE_WS:
         df = _clean_employee_df(df)
-        ws = get_employee_ws()
+        ws = get_employee_ws()  # may create
     else:
         if ws_title == INVENTORY_WS:
             df = canon_inventory_columns(df)
@@ -499,14 +554,15 @@ def write_worksheet(ws_title: str, df: pd.DataFrame):
             df = reorder_columns(df, PENDING_DEVICE_COLS)
         if ws_title == PENDING_TRANSFERS_WS:
             df = reorder_columns(df, PENDING_TRANSFER_COLS)
-        ws = get_or_create_ws(ws_title)
+        ws = _get_or_create_ws(sh, ws_title, create_if_missing=True)
     ws.clear()
     set_with_dataframe(ws, df)
     st.cache_data.clear()
 
 
 def append_to_worksheet(ws_title: str, new_data: pd.DataFrame):
-    ws = get_or_create_ws(ws_title)
+    sh = get_sh()
+    ws = _get_or_create_ws(sh, ws_title, create_if_missing=True)
     df_existing = pd.DataFrame(ws.get_all_records())
     df_combined = pd.concat([df_existing, new_data], ignore_index=True)
     if ws_title == INVENTORY_WS:
@@ -528,7 +584,7 @@ def append_to_worksheet(ws_title: str, new_data: pd.DataFrame):
 def _get_drive_service():
     if not HAS_DRIVE:
         raise RuntimeError("google-api-python-client not installed")
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=[
+    creds = Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]), scopes=[
         "https://www.googleapis.com/auth/drive",
         "https://www.googleapis.com/auth/drive.file",
     ])
@@ -595,12 +651,18 @@ def _refresh_button(key: str):
 def employees_view_tab():
     st.subheader("📇 Main Employees (mainlists)")
     _refresh_button("employees")
-    if DEBUG_SHOW:
-        with st.expander("🔍 Debug: worksheet list"):
+    if DEBUG_SHOW and st.session_state.get("role") == "Admin":
+        with st.expander("🔍 Debug: worksheet list & shapes"):
             try:
                 sh = get_sh()
-                st.write([ws.title for ws in sh.worksheets()])
-                st.write("Sheet URL:", _get_sheet_url())
+                st.write("Sheet ID:", _get_sheet_key())
+                titles = [ws.title for ws in sh.worksheets()]
+                st.write("Worksheets:", titles)
+                try:
+                    inv = _find_ws_existing(sh, INVENTORY_WS)
+                    st.write(f"'{INVENTORY_WS}' rows x cols:", inv.row_count, inv.col_count)
+                except Exception as e:
+                    st.write("Inventory tab missing:", e)
             except Exception as e:
                 st.error(str(e))
     df = read_worksheet(EMPLOYEE_WS)
@@ -608,8 +670,6 @@ def employees_view_tab():
         st.info("No employees found in 'mainlists'.")
     else:
         st.dataframe(df[EMPLOYEE_CANON_COLS], use_container_width=True, hide_index=True)
-
-# (keep your employee_register_tab from previous version if needed)
 
 # =============================================================================
 # TABS – INVENTORY
@@ -620,7 +680,7 @@ def inventory_tab():
     _refresh_button("inventory")
     df = read_worksheet(INVENTORY_WS)
     if df.empty:
-        st.warning("Inventory is empty.")
+        st.warning("Inventory is empty or worksheet not found (see debug panel).")
     else:
         st.dataframe(df, use_container_width=True)
 
@@ -717,7 +777,7 @@ def transfer_tab():
         st.markdown("#### Admin – Pending Transfer Approvals")
         _refresh_button("transfer_admin")
         pend = read_worksheet(PENDING_TRANSFERS_WS)
-        if pend.empty or not (pend["Status"] == "Pending").any():
+        if pend.empty or not (pend.get("Status", pd.Series()).eq("Pending")).any():
             st.info("No pending transfers.")
         else:
             for ridx, row in pend[pend["Status"] == "Pending"].reset_index().iterrows():
@@ -931,7 +991,7 @@ if st.session_state.authenticated:
 else:
     if DEBUG_SHOW:
         with st.expander("🔧 Debug – secrets checks"):
-            st.write("Sheet URL:", _get_sheet_url())
+            st.write("Sheet ID:", _get_sheet_key())
             try:
                 st.write("Service account:", st.secrets["gcp_service_account"].get("client_email"))
             except Exception:
