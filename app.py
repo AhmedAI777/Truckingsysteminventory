@@ -411,9 +411,7 @@ def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
     if "Screen Size" in df.columns:
         df["Screen Size"] = df["Screen Size"].astype(str)
 
-        st.dataframe(df, use_container_width=True)
-
-
+    
     return df
 
 
