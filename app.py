@@ -745,7 +745,7 @@ def employee_register_tab():
 
         r2c1, r2c2 = st.columns(2)
         with r2c1:
-            address = st.text_input("Address")
+            Email = st.text_input("Email")
         with r2c2:
             active = st.selectbox("Active", ["Active", "Inactive", "Onboarding", "Resigned"])  # status
 
@@ -780,7 +780,7 @@ def employee_register_tab():
             "Name": emp_name.strip(),  # keep both columns filled
             "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
             "New Signature": new_sig if new_sig != "— Select —" else "",
-            "Address": address.strip(),
+            "Email": Email.strip(),
             "Active": active.strip(),
             "Position": position.strip(),
             "Department": department.strip(),
