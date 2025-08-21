@@ -48,10 +48,13 @@ SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo
 # Worksheet titles (created if missing)
 INVENTORY_WS     = "truckinventory"
 TRANSFERLOG_WS   = "transfer_log"
-EMPLOYEE_WS      = "mainlists"  # can be overridden by [sheets].employees_ws in secrets
+EMPLOYEE_WS      = "mainlists"
 PENDING_WS       = "pending_devices"   # staff submissions awaiting admin approval
 
-# Inventory columns (uses "Current user"; no Department.1)
+# Debug toggle (set `[debug].show = true` in secrets to reveal diagnostics)
+DEBUG_SHOW = bool(st.secrets.get("debug", {}).get("show", False))
+
+# Inventory columns (uses "Current user"; synonym mapping covers 'USER')
 INVENTORY_COLS = [
     "Serial Number","Device Type","Brand","Model","CPU",
     "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
@@ -66,7 +69,7 @@ LOG_COLS = [
     "Date issued","Registered by","Form URL"
 ]
 
-# Employees sheet columns (NO APLUS and NO Email)
+# Employees sheet columns (no Email/APLUS)
 EMPLOYEE_CANON_COLS = [
     "Employee ID","New Signature","Name","Address",
     "Active","Position","Department","Location (KSA)",
@@ -119,44 +122,21 @@ COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 def _norm_header(h: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
 
+def _norm_ws_title(t: str) -> str:
+    return re.sub(r"\s+", "", (t or "").strip().lower())
+
 def normalize_serial(s: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
-
-def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
-    if a == b:
-        return 0
-    la, lb = len(a), len(b)
-    if abs(la - lb) > max_dist:
-        return max_dist + 1
-    if la > lb:
-        a, b = b, a
-        la, lb = lb, la
-    prev = list(range(lb + 1))
-    for i in range(1, la + 1):
-        cur = [i] + [0] * lb
-        row_min = cur[0]
-        ai = a[i - 1]
-        for j in range(1, lb + 1):
-            cost = 0 if ai == b[j - 1] else 1
-            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
-            row_min = min(row_min, cur[j])
-        if row_min > max_dist:
-            return max_dist + 1
-        prev = cur
-    return prev[-1]
 
 _ws = re.compile(r"\s+")
 
 def norm_name(x: str) -> str:
     return _ws.sub(" ", (x or "").strip().lower())
 
-def norm_phone(x: str) -> str:
-    return re.sub(r"\D+", "", (x or ""))
-
-_DEF_SELECT = "— Select —"
-_TYPE_NEW = "Type a new value…"
 
 def type_or_select(label: str, options: list[str], key: str, help: str | None = None) -> str:
+    _DEF_SELECT = "— Select —"
+    _TYPE_NEW = "Type a new value…"
     opts = sorted({o.strip() for o in options if isinstance(o, str) and o.strip()})
     choice = st.selectbox(label, [_DEF_SELECT] + opts + [_TYPE_NEW], key=key, help=help)
     if choice == _TYPE_NEW:
@@ -170,8 +150,10 @@ def type_or_select(label: str, options: list[str], key: str, help: str | None = 
 def _cookie_key() -> str:
     return st.secrets.get("auth", {}).get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
 
+
 def _sign(raw: bytes) -> str:
     return hmac.new(_cookie_key().encode(), raw, hashlib.sha256).hexdigest()
+
 
 def _issue_session_cookie(username: str, role: str):
     iat = int(time.time())
@@ -183,6 +165,7 @@ def _issue_session_cookie(username: str, role: str):
         COOKIE_MGR.set(COOKIE_NAME, token, max_age=SESSION_TTL_SECONDS, path=COOKIE_PATH, secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE)
     else:
         COOKIE_MGR.set(COOKIE_NAME, token, path=COOKIE_PATH, secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE)
+
 
 def _read_cookie():
     token = COOKIE_MGR.get(COOKIE_NAME)
@@ -203,6 +186,7 @@ def _read_cookie():
         COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
         return None
 
+
 def do_login(username: str, role: str):
     st.session_state.authenticated = True
     st.session_state.username = username
@@ -211,6 +195,7 @@ def do_login(username: str, role: str):
     st.session_state.just_logged_out = False
     _issue_session_cookie(username, role)
     st.rerun()
+
 
 def do_logout():
     try:
@@ -222,6 +207,7 @@ def do_logout():
         st.session_state.pop(k, None)
     st.session_state.just_logged_out = True
     st.rerun()
+
 
 if "cookie_bootstrapped" not in st.session_state:
     st.session_state.cookie_bootstrapped = True
@@ -259,6 +245,7 @@ def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
         unsafe_allow_html=True,
     )
 
+
 def _font_candidates():
     cands = []
     secrets_font = st.secrets.get("branding", {}).get("font_file")
@@ -274,12 +261,14 @@ def _font_candidates():
         pass
     return cands
 
+
 def _apply_brand_font():
     fam = st.secrets.get("branding", {}).get("font_family", "ACBrandFont")
     for p in _font_candidates():
         if os.path.exists(p):
             _inject_font_css(p, family=fam)
             return
+
 
 def render_header():
     _apply_brand_font()
@@ -298,18 +287,14 @@ def render_header():
         username = st.session_state.get("username", "")
         role = st.session_state.get("role", "")
         st.markdown(
-            f"""<div style=\"display:flex; align-items:center; justify-content:flex-end; gap:1rem;\">
-                   <div>
-                     <div style=\"font-weight:600;\">Welcome, {username or '—'}</div>
-                     <div>Role: <b>{role or '—'}</b></div>
-                   </div>
-                 </div>""",
+            f"""<div style=\"display:flex; align-items:center; justify-content:flex-end; gap:1rem;\">\n                   <div>\n                     <div style=\"font-weight:600;\">Welcome, {username or '—'}</div>\n                     <div>Role: <b>{role or '—'}</b></div>\n                   </div>\n                 </div>""",
             unsafe_allow_html=True,
         )
         if st.session_state.get("authenticated") and st.button("Logout", key="logout_btn"):
             do_logout()
 
     st.markdown("<hr style='margin-top:0.8rem;'>", unsafe_allow_html=True)
+
 
 def hide_table_toolbar_for_non_admin():
     if st.session_state.get("role") != "Admin":
@@ -337,9 +322,11 @@ def _get_gc():
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
     return gspread.authorize(creds)
 
+
 @st.cache_resource(show_spinner=False)
 def _get_sheet_url():
     return st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
+
 
 def get_sh():
     gc = _get_gc()
@@ -354,32 +341,37 @@ def get_sh():
     st.error("Google Sheets API error while opening the spreadsheet. Please confirm access and try again.")
     raise last_exc
 
-# Safer: try to find an existing Employees-like worksheet before creating a new one
-
-def get_employee_ws() -> gspread.Worksheet:
-    sh = get_sh()
-    wanted = st.secrets.get("sheets", {}).get("employees_ws", EMPLOYEE_WS)
-    try:
-        return sh.worksheet(wanted)
-    except gspread.exceptions.WorksheetNotFound:
-        titles = [ws.title for ws in sh.worksheets()]
-        def norm(s: str) -> str:
-            return re.sub(r"[^a-z0-9]+", "", s.lower())
-        wn = norm(wanted)
-        # try exact-normalized, contains, or known synonyms like mainlist(s)
-        for t in titles:
-            tn = norm(t)
-            if tn == wn or wn in tn or "mainlist" in tn:
-                return sh.worksheet(t)
-        # nothing matched: create with the requested name
-        return sh.add_worksheet(title=wanted, rows=500, cols=80)
 
 def get_or_create_ws(title, rows=500, cols=80):
     sh = get_sh()
+    # try exact and loose match first to avoid silently creating duplicates
+    t_norm = _norm_ws_title(title)
+    for ws in sh.worksheets():
+        if _norm_ws_title(ws.title) == t_norm:
+            return ws
     try:
         return sh.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
+
+
+def get_employee_ws() -> gspread.Worksheet:
+    """Return the employees worksheet using robust matching, preferring existing tabs.
+    Avoids creating a new empty sheet when a near-identical one exists."""
+    sh = get_sh()
+    preferred = [EMPLOYEE_WS, "Mainlists", "Main Lists", "Employees", "Employee List", "Employees (mainlists)"]
+    titles = [ws.title for ws in sh.worksheets()]
+    # exact/normalized lookup
+    target_norm = _norm_ws_title(EMPLOYEE_WS)
+    for ws in sh.worksheets():
+        if _norm_ws_title(ws.title) == target_norm:
+            return ws
+    for name in preferred:
+        for ws in sh.worksheets():
+            if _norm_ws_title(ws.title) == _norm_ws_title(name):
+                return ws
+    # fallback create
+    return sh.add_worksheet(title=EMPLOYEE_WS, rows=500, cols=50)
 
 # ---------- EMPLOYEE DF CLEANING ----------
 
@@ -393,6 +385,7 @@ def _coalesce_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
             df = df.drop(columns=cols).assign(**{name: combined})
     return df
 
+
 def _clean_employee_df(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
@@ -404,6 +397,7 @@ def _clean_employee_df(df: pd.DataFrame) -> pd.DataFrame:
         if c not in df.columns:
             df[c] = ""
     return df[EMPLOYEE_CANON_COLS]
+
 
 def _guess_employee_header_row(values: list[list[str]]) -> int:
     max_scan = min(len(values), 25)
@@ -424,7 +418,13 @@ def _guess_employee_header_row(values: list[list[str]]) -> int:
         score = len(set(mapped) & set(EMPLOYEE_CANON_COLS))
         if score > best_score:
             best_i, best_score = i, score
+    # if no overlap at all but the first row is non-empty, still use first row as header
+    if best_score <= 0:
+        for i in range(max_scan):
+            if any(x.strip() for x in values[i]):
+                return i
     return best_i
+
 
 def _read_employee_df(ws: gspread.Worksheet) -> pd.DataFrame:
     values = ws.get_all_values() or []
@@ -466,6 +466,7 @@ def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.drop(columns=drops)
     return df
 
+
 def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     for c in desired:
         if c not in df.columns:
@@ -492,6 +493,7 @@ def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
     if ws_title == PENDING_WS:
         return reorder_columns(df, PENDING_COLS)
     return df
+
 
 def read_worksheet(ws_title: str) -> pd.DataFrame:
     try:
@@ -527,6 +529,7 @@ def write_worksheet(ws_title: str, df: pd.DataFrame):
     set_with_dataframe(ws, df)
     st.cache_data.clear()
 
+
 def append_to_worksheet(ws_title: str, new_data: pd.DataFrame):
     ws = get_or_create_ws(ws_title)
     df_existing = pd.DataFrame(ws.get_all_records())
@@ -553,6 +556,7 @@ def _get_drive_service():
         "https://www.googleapis.com/auth/drive.file",
     ])
     return build('drive','v3', credentials=creds, cache_discovery=False)
+
 
 def upload_pdf_to_drive(filename: str, content: bytes) -> str:
     folder_id = st.secrets.get("drive", {}).get("folder_id")
@@ -582,7 +586,9 @@ def load_users():
         users[user] = {"password": pw, "role": "Staff", "name": user}
     return users
 
+
 USERS = load_users()
+
 
 def show_login():
     st.subheader("🔐 Sign In")
@@ -635,11 +641,22 @@ def _refresh_button(key: str):
 def employees_view_tab():
     st.subheader("📇 Main Employees (mainlists)")
     _refresh_button("employees")
+    if DEBUG_SHOW:
+        with st.expander("🔍 Debug (worksheets)"):
+            try:
+                sh = get_sh()
+                st.write([ws.title for ws in sh.worksheets()])
+                ws_emp = get_employee_ws()
+                st.write("Employees worksheet read:", ws_emp.title)
+                st.write("Employee rows (raw):", len(ws_emp.get_all_values()))
+            except Exception as e:
+                st.error(str(e))
     df = read_worksheet(EMPLOYEE_WS)
     if df.empty:
         st.info("No employees found in 'mainlists'.")
     else:
         st.dataframe(df[EMPLOYEE_CANON_COLS], use_container_width=True, hide_index=True)
+
 
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
@@ -655,7 +672,7 @@ def employee_register_tab():
     teams_opts= _opts("Microsoft Teams")
 
     try:
-        ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
+        ids = pd.to_numeric(emp_df.get("Employee ID", pd.Series(dtype=str)), errors="coerce").dropna().astype(int)
         next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
     except Exception:
         next_id_suggestion = str(len(emp_df) + 1)
@@ -694,13 +711,13 @@ def employee_register_tab():
         submitted = st.form_submit_button("Save Employee", type="primary")
 
     if submitted:
-        if not name.strip():
+        if not (name or "").strip():
             st.error("Name is required.")
             return
 
-        id_set    = set(emp_df["Employee ID"].astype(str).str.strip().str.lower()) if "Employee ID" in emp_df.columns else set()
-        name_set  = set(emp_df["Name"].astype(str).str.lower().str.replace(r"\s+", " ", regex=True)) if "Name" in emp_df.columns else set()
-        phone_set = set(emp_df["Mobile Number"].astype(str).str.replace(r"\D+", "", regex=True)) if "Mobile Number" in emp_df.columns else set()
+        id_set    = set(emp_df.get("Employee ID", pd.Series(dtype=str)).astype(str).str.strip().str.lower())
+        name_set  = set(emp_df.get("Name", pd.Series(dtype=str)).astype(str).str.lower().str.replace(r"\s+", " ", regex=True))
+        phone_set = set(emp_df.get("Mobile Number", pd.Series(dtype=str)).astype(str).str.replace(r"\D+", "", regex=True))
 
         id_norm    = (emp_id or "").strip().lower()
         name_norm  = re.sub(r"\s+", " ", (name or "").strip().lower())
@@ -883,10 +900,7 @@ def inventory_tab():
     if df.empty:
         st.warning("Inventory is empty.")
     else:
-        if st.session_state.role == "Admin":
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, use_container_width=True)
 
 # ---------- Transfer with PDF required + Approvals (moved here) ----------
 
@@ -1022,7 +1036,7 @@ def transfer_tab():
                             inv_out = reorder_columns(inv_out, INVENTORY_COLS)
                             write_worksheet(INVENTORY_WS, inv_out)
                             pend.at[row_index, "Status"] = "Approved"
-                            pend.at[row_index, "Approver"] = st.session_state.get("username","")
+                            pend.at[row_index, "Approver"] = st.session_state.get("username", "")
                             pend.at[row_index, "Approved at"] = datetime.now().strftime(DATE_FMT)
                             pend.at[row_index, "Decision Note"] = note
                             write_worksheet(PENDING_WS, pend)
@@ -1031,7 +1045,7 @@ def transfer_tab():
                     with c2:
                         if st.button("❌ Reject", key=f"apx_reject_{row['Serial Number']}_{ridx}"):
                             pend.at[row_index, "Status"] = "Rejected"
-                            pend.at[row_index, "Approver"] = st.session_state.get("username","")
+                            pend.at[row_index, "Approver"] = st.session_state.get("username", "")
                             pend.at[row_index, "Approved at"] = datetime.now().strftime(DATE_FMT)
                             pend.at[row_index, "Decision Note"] = note
                             write_worksheet(PENDING_WS, pend)
@@ -1092,7 +1106,6 @@ def export_tab():
         st.info("No signed forms uploaded yet.")
         return
 
-    # Filters + buttons
     df_forms = log.dropna(subset=["Form URL"]).copy()
     df_forms["__ts"] = pd.to_datetime(df_forms["Date issued"], errors="coerce")
     df_forms = df_forms.sort_values("__ts", ascending=False)
@@ -1108,7 +1121,6 @@ def export_tab():
 
     for i, r in df_forms.iterrows():
         label = f"{r['Serial Number']} – {r.get('From owner','')} → {r.get('To owner','')} ({r.get('Date issued','')})"
-        # Use link buttons to open the file in Drive
         st.link_button(f"Open PDF: {label}", r["Form URL"], key=f"open_form_{i}")
 
 # =============================================================================
@@ -1144,19 +1156,6 @@ def run_app():
         with tabs[2]: transfer_tab()
         with tabs[3]: history_tab()
 
-# Optional DEBUG panel (enable with [debug] show=true in secrets)
-if st.secrets.get("debug", {}).get("show", False):
-    with st.expander("🔍 Debug: Google Sheets", expanded=False):
-        st.write("Sheet URL:", _get_sheet_url())
-        try:
-            sh = get_sh()
-            st.write("Worksheets:", [ws.title for ws in sh.worksheets()])
-            ws = get_employee_ws()
-            st.write("Employees worksheet used:", ws.title)
-            st.write("Employees row count:", len(ws.get_all_values()))
-        except Exception as e:
-            st.error(f"GS read error: {e}")
-
 # =============================================================================
 # ENTRY
 # =============================================================================
@@ -1174,4 +1173,12 @@ if not st.session_state.authenticated and not st.session_state.get("just_logged_
 if st.session_state.authenticated:
     run_app()
 else:
+    # Quick onboarding note if creds/secrets missing
+    if DEBUG_SHOW:
+        with st.expander("🔧 Debug – secrets checks"):
+            st.write("Sheet URL:", _get_sheet_url())
+            try:
+                st.write("Service account:", st.secrets["gcp_service_account"].get("client_email"))
+            except Exception as e:
+                st.error("Missing gcp_service_account in secrets")
     show_login()
