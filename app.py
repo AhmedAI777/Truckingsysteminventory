@@ -902,6 +902,7 @@ SESSION_TTL_DAYS = 30
 SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60
 COOKIE_NAME = "ac_auth"
 COOKIE_PATH = "/"
+cookie_key="esrssrersersersewaewaeas333"
 
 # If you embed the app (or see logout-on-refresh), keep SameSite=None + Secure=True (HTTPS required).
 # You can override via secrets: [auth] cookie_secure=true/false, cookie_samesite="None"/"Lax"/"Strict"
@@ -1014,6 +1015,7 @@ if "cookie_bootstrapped" not in st.session_state:
 
 def _cookie_key() -> str:
     # MUST be stable across app restarts; set in secrets
+    
     return st.secrets.get("auth", {}).get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
 
 def _sign(raw: bytes) -> str:
