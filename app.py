@@ -407,12 +407,12 @@ def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.rename(columns=rename)
     if drop_cols:
         df = df.drop(columns=drop_cols)
-        
-    if "Screen Size" in df.columns:
-        df["Screen Size"] = df["Screen Size"].astype(str)
-
     
+    # 🔧 Cast ALL columns to string to avoid Arrow serialization issues
+    df = df.astype(str)
+
     return df
+
 
 
 def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
