@@ -880,7 +880,6 @@ import time
 import io
 from datetime import datetime, timedelta
 from streamlit_cookies_controller import CookieController
-COOKIE = CookieController()
 import streamlit as st
 import pandas as pd
 import gspread
@@ -975,7 +974,7 @@ COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 # =============================================================================
 # AUTH (users + cookie)
 # =============================================================================
-
+COOKIE = CookieController()
 # ---- Users (from secrets) ----
 # In .streamlit/secrets.toml:
 
