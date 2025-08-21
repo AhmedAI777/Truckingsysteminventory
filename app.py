@@ -882,7 +882,6 @@ import hashlib
 import time
 import io
 from datetime import datetime, timedelta
-
 import streamlit as st
 import pandas as pd
 import gspread
@@ -1027,6 +1026,16 @@ def _issue_session_cookie(username: str, role: str):
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
 
+    COOKIE_MGR.set(
+        COOKIE_NAME,
+        token,
+        expires_at=(datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS)) if SESSION_TTL_SECONDS > 0 else None,
+        path=COOKIE_PATH,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+    )
+
+
     # Persistent cookie (survives refresh & restarts)
     COOKIE_MGR.set(
         COOKIE_NAME,
@@ -1058,6 +1067,7 @@ def _read_cookie():
         COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
         return None
 
+
 def do_login(username: str, role: str):
     st.session_state.authenticated = True
     st.session_state.username = username
@@ -1066,6 +1076,24 @@ def do_login(username: str, role: str):
     st.session_state.just_logged_out = False
     _issue_session_cookie(username, role)
     st.rerun()
+
+def do_logout():
+    try:
+        COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
+        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1), path=COOKIE_PATH)
+    except Exception:
+        pass
+    for k in ["authenticated", "role", "username", "name"]:
+        st.session_state.pop(k, None)
+    st.session_state.just_logged_out = True
+    st.rerun()
+
+if "cookie_bootstrapped" not in st.session_state:
+    st.session_state.cookie_bootstrapped = True
+    _ = COOKIE_MGR.get_all()
+    st.rerun()
+
+
 
 # =============================================================================
 # STYLE
