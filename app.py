@@ -977,20 +977,7 @@ COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 
 # ---- Users (from secrets) ----
 # In .streamlit/secrets.toml:
-# [auth]
-# cookie_key = "replace_with_a_long_random_string_at_least_32_bytes"
-# cookie_secure = true
-# cookie_samesite = "None"
-#
-# [[auth.users]]
-# username = "admin"
-# password = "admin123"
-# role     = "Admin"
-#
-# [[auth.users]]
-# username = "staff1"
-# password = "staff123"
-# role     = "Staff"
+
 
 def _load_users_from_secrets():
     users_cfg = st.secrets.get("auth", {}).get("users", [])
@@ -1007,6 +994,7 @@ USERS = _load_users_from_secrets()
 def _verify_password(raw: str, stored: str) -> bool:
     # Simple constant-time comparison; replace with bcrypt if you store hashed passwords
     return hmac.compare_digest(str(stored), str(raw))
+
 
 
 def _cookie_key() -> str:
