@@ -868,7 +868,6 @@
 #             st.error("❌ Invalid username or password.")
 
 
-
 # pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth google-api-python-client
 import os
 import re
@@ -901,8 +900,11 @@ SESSION_TTL_DAYS = 30
 SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60
 COOKIE_NAME = "ac_auth"
 COOKIE_PATH = "/"
-COOKIE_SECURE = False
-COOKIE_SAMESITE = "Lax"
+
+# If you embed the app (or see logout-on-refresh), keep SameSite=None + Secure=True (HTTPS required).
+# You can override via secrets: [auth] cookie_secure=true/false, cookie_samesite="None"/"Lax"/"Strict"
+COOKIE_SECURE   = st.secrets.get("auth", {}).get("cookie_secure", True)
+COOKIE_SAMESITE = st.secrets.get("auth", {}).get("cookie_samesite", "None")
 
 SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
@@ -970,60 +972,45 @@ st.set_page_config(page_title=APP_TITLE, layout="wide")
 COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 
 # =============================================================================
-# HELPERS
+# AUTH (users + cookie)
 # =============================================================================
 
-def normalize_serial(s: str) -> str:
-    return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
+# ---- Users (from secrets) ----
+# In .streamlit/secrets.toml:
+# [auth]
+# cookie_key = "replace_with_a_long_random_string_at_least_32_bytes"
+# cookie_secure = true
+# cookie_samesite = "None"
+#
+# [[auth.users]]
+# username = "admin"
+# password = "admin123"
+# role     = "Admin"
+#
+# [[auth.users]]
+# username = "staff1"
+# password = "staff123"
+# role     = "Staff"
 
+def _load_users_from_secrets():
+    users_cfg = st.secrets.get("auth", {}).get("users", [])
+    users = {}
+    for u in users_cfg:
+        users[u["username"]] = {
+            "password": u.get("password", ""),
+            "role": u.get("role", "Staff"),
+        }
+    return users
 
-def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
-    if a == b:
-        return 0
-    la, lb = len(a), len(b)
-    if abs(la - lb) > max_dist:
-        return max_dist + 1
-    if la > lb:
-        a, b = b, a
-        la, lb = lb, la
-    prev = list(range(lb + 1))
-    for i in range(1, la + 1):
-        cur = [i] + [0] * lb
-        row_min = cur[0]
-        ai = a[i - 1]
-        for j in range(1, lb + 1):
-            cost = 0 if ai == b[j - 1] else 1
-            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
-            row_min = min(row_min, cur[j])
-        if row_min > max_dist:
-            return max_dist + 1
-        prev = cur
-    return prev[-1]
+USERS = _load_users_from_secrets()
 
-# Small data helpers for dropdowns
+def _verify_password(raw: str, stored: str) -> bool:
+    # Simple constant-time comparison; replace with bcrypt if you store hashed passwords
+    return hmac.compare_digest(str(stored), str(raw))
 
-def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
-    if df.empty or col not in df.columns:
-        return []
-    vals = [str(x).strip() for x in df[col].dropna().astype(str).tolist()]
-    return sorted({v for v in vals if v})
-
-
-def select_with_other(label: str, base_options: list[str], existing_values: list[str]) -> str:
-    merged = [o for o in base_options if o]
-    for v in existing_values:
-        if v and v not in merged:
-            merged.append(v)
-    sel = st.selectbox(label, ["— Select —"] + merged + ["Other…"])
-    if sel == "Other…":
-        return st.text_input(f"{label} (Other)")
-    return "" if sel == "— Select —" else sel
-
-# =============================================================================
-# AUTH (cookie)
-# =============================================================================
 
 def _cookie_key() -> str:
+    # MUST be stable across app restarts; set in secrets
     return st.secrets.get("auth", {}).get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
 
 
@@ -1038,9 +1025,16 @@ def _issue_session_cookie(username: str, role: str):
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
     if SESSION_TTL_SECONDS > 0:
-        COOKIE_MGR.set(COOKIE_NAME, token, max_age=SESSION_TTL_SECONDS, path=COOKIE_PATH, secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE)
+        COOKIE_MGR.set(
+            COOKIE_NAME, token,
+            max_age=SESSION_TTL_SECONDS, path=COOKIE_PATH,
+            secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE
+        )
     else:
-        COOKIE_MGR.set(COOKIE_NAME, token, path=COOKIE_PATH, secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE)
+        COOKIE_MGR.set(
+            COOKIE_NAME, token,
+            path=COOKIE_PATH, secure=COOKIE_SECURE, same_site=COOKIE_SAMESITE
+        )
 
 
 def _read_cookie():
@@ -1065,31 +1059,28 @@ def _read_cookie():
         return None
 
 
-# def do_login(username: str, role: str):
-#     st.session_state.authenticated = True
-#     st.session_state.username = username
-#     st.session_state.name = username
-#     st.session_state.role = role
-#     st.session_state.just_logged_out = False
-#     _issue_session_cookie(username, role)
-#     st.rerun()
-# ---- Simple user store (from secrets) ----
+def do_login(username: str, role: str):
+    st.session_state.authenticated = True
+    st.session_state.username = username
+    st.session_state.name = username
+    st.session_state.role = role
+    st.session_state.just_logged_out = False
+    _issue_session_cookie(username, role)
+    st.rerun()
 
 
-def _load_users_from_secrets():
-    users_cfg = st.secrets.get("auth", {}).get("users", [])
-    users = {}
-    for u in users_cfg:
-        users[u["username"]] = {"password": u["password"], "role": u.get("role", "Staff")}
-    return users
+def do_logout():
+    try:
+        COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
+        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1), path=COOKIE_PATH)
+    except Exception:
+        pass
+    for k in ["authenticated", "role", "username", "name"]:
+        st.session_state.pop(k, None)
+    st.session_state.just_logged_out = True
+    st.rerun()
 
-USERS = _load_users_from_secrets()
-
-def _verify_password(raw: str, stored: str) -> bool:
-    # plaintext compare for now (keep it simple)
-    return hmac.compare_digest(str(stored), str(raw))
-
-
+# Bootstrap CookieManager once so cookies are available before rendering auth UI
 if "cookie_bootstrapped" not in st.session_state:
     st.session_state.cookie_bootstrapped = True
     _ = COOKIE_MGR.get_all()
@@ -1174,7 +1165,12 @@ def render_header():
         username = st.session_state.get("username", "")
         role = st.session_state.get("role", "")
         st.markdown(
-            f"""<div style=\"display:flex; align-items:center; justify-content:flex-end; gap:1rem;\">\n                   <div>\n                     <div style=\"font-weight:600;\">Welcome, {username or '—'}</div>\n                     <div>Role: <b>{role or '—'}</b></div>\n                   </div>\n                 </div>""",
+            f"""<div style=\"display:flex; align-items:center; justify-content:flex-end; gap:1rem;\">
+                   <div>
+                     <div style=\"font-weight:600;\">Welcome, {username or '—'}</div>
+                     <div>Role: <b>{role or '—'}</b></div>
+                   </div>
+                 </div>""",
             unsafe_allow_html=True,
         )
         if st.session_state.get("authenticated") and st.button("Logout"):
@@ -1188,9 +1184,9 @@ def hide_table_toolbar_for_non_admin():
         st.markdown(
             """
             <style>
-              div[data-testid=\"stDataFrame\"] div[data-testid=\"stElementToolbar\"] { display:none !important; }
-              div[data-testid=\"stDataEditor\"]  div[data-testid=\"stElementToolbar\"] { display:none !important; }
-              div[data-testid=\"stElementToolbar\"] { display:none !important; }
+              div[data-testid="stDataFrame"] div[data-testid="stElementToolbar"] { display:none !important; }
+              div[data-testid="stDataEditor"]  div[data-testid="stElementToolbar"] { display:none !important; }
+              div[data-testid="stElementToolbar"] { display:none !important; }
             </style>
             """,
             unsafe_allow_html=True
@@ -1466,6 +1462,56 @@ def append_to_worksheet(ws_title, new_data):
     df_combined = pd.concat([df_existing, new_data], ignore_index=True)
     set_with_dataframe(ws, df_combined)
     st.cache_data.clear()
+
+# =============================================================================
+# HELPERS
+# =============================================================================
+
+def normalize_serial(s: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
+
+
+def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
+    if a == b:
+        return 0
+    la, lb = len(a), len(b)
+    if abs(la - lb) > max_dist:
+        return max_dist + 1
+    if la > lb:
+        a, b = b, a
+        la, lb = lb, la
+    prev = list(range(lb + 1))
+    for i in range(1, la + 1):
+        cur = [i] + [0] * lb
+        row_min = cur[0]
+        ai = a[i - 1]
+        for j in range(1, lb + 1):
+            cost = 0 if ai == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            row_min = min(row_min, cur[j])
+        if row_min > max_dist:
+            return max_dist + 1
+        prev = cur
+    return prev[-1]
+
+# Small data helpers for dropdowns
+
+def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
+    if df.empty or col not in df.columns:
+        return []
+    vals = [str(x).strip() for x in df[col].dropna().astype(str).tolist()]
+    return sorted({v for v in vals if v})
+
+
+def select_with_other(label: str, base_options: list[str], existing_values: list[str]) -> str:
+    merged = [o for o in base_options if o]
+    for v in existing_values:
+        if v and v not in merged:
+            merged.append(v)
+    sel = st.selectbox(label, ["— Select —"] + merged + ["Other…"])
+    if sel == "Other…":
+        return st.text_input(f"{label} (Other)")
+    return "" if sel == "— Select —" else sel
 
 # =============================================================================
 # VIEWS
@@ -1768,7 +1814,7 @@ def employee_register_tab():
     with st.form("register_employee", clear_on_submit=True):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
-            # single name input; why: consolidate Name into New Employeer
+            # single name input; consolidate Name into New Employeer
             emp_name = st.text_input("New Employeer *")
         with r1c2:
             emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
@@ -2050,7 +2096,10 @@ def run_app():
 # =============================================================================
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
+if "just_logged_out" not in st.session_state:
+    st.session_state.just_logged_out = False
 
+# Try to restore session from cookie when not logged in and not just logged out
 if not st.session_state.authenticated and not st.session_state.get("just_logged_out"):
     payload = _read_cookie()
     if payload:
@@ -2066,8 +2115,9 @@ else:
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
     if st.button("Login", type="primary"):
-        user = USERS.get(username) if 'USERS' in globals() else None
-        if user and user["password"] == password:
-            do_login(username, user["role"])  # sets cookie + rerun
+        user = USERS.get(username)
+        if user and _verify_password(password, user["password"]):
+            do_login(username, user.get("role", "Staff"))  # sets cookie + rerun
         else:
             st.error("❌ Invalid username or password.")
+
