@@ -1028,25 +1028,15 @@ def _issue_session_cookie(username: str, role: str):
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
 
+    # NOTE: CookieManager.set(...) has no "path" argument
     COOKIE_MGR.set(
         COOKIE_NAME,
         token,
         expires_at=(datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS)) if SESSION_TTL_SECONDS > 0 else None,
-        path=COOKIE_PATH,
         secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
+        samesite=COOKIE_SAMESITE,   # use "None" only if embedding in an iframe
     )
 
-
-    # Persistent cookie (survives refresh & restarts)
-    COOKIE_MGR.set(
-        COOKIE_NAME,
-        token,
-        expires_at=(datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS)) if SESSION_TTL_SECONDS > 0 else None,
-        path=COOKIE_PATH,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE
-    )
 
 def _read_cookie():
     token = COOKIE_MGR.get(COOKIE_NAME)
@@ -1056,18 +1046,19 @@ def _read_cookie():
         data_b64, sig = token.split(".", 1)
         raw = base64.urlsafe_b64decode(data_b64.encode())
         if not hmac.compare_digest(sig, _sign(raw)):
-            COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
+            COOKIE_MGR.delete(COOKIE_NAME)     # ← no path kwarg
             return None
         payload = json.loads(raw.decode())
         exp = int(payload.get("exp", 0))
         now = int(time.time())
         if exp and now > exp:
-            COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
+            COOKIE_MGR.delete(COOKIE_NAME)     # ← no path kwarg
             return None
         return payload
     except Exception:
-        COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
+        COOKIE_MGR.delete(COOKIE_NAME)         # ← no path kwarg
         return None
+
 
 
 def do_login(username: str, role: str):
@@ -1081,14 +1072,16 @@ def do_login(username: str, role: str):
 
 def do_logout():
     try:
-        COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
-        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1), path=COOKIE_PATH)
+        COOKIE_MGR.delete(COOKIE_NAME)  # ← no path kwarg
+        # belt & suspenders for old browsers
+        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1))
     except Exception:
         pass
     for k in ["authenticated", "role", "username", "name"]:
         st.session_state.pop(k, None)
     st.session_state.just_logged_out = True
     st.rerun()
+
 
 if "cookie_bootstrapped" not in st.session_state:
     st.session_state.cookie_bootstrapped = True
