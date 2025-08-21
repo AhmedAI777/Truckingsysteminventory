@@ -879,7 +879,6 @@ import hashlib
 import time
 import io
 from datetime import datetime, timedelta
-from streamlit_cookies_controller import CookieController
 import streamlit as st
 import pandas as pd
 import gspread
@@ -974,7 +973,7 @@ COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 # =============================================================================
 # AUTH (users + cookie)
 # =============================================================================
-COOKIE = CookieController()
+
 # ---- Users (from secrets) ----
 # In .streamlit/secrets.toml:
 
@@ -1029,33 +1028,39 @@ def _issue_session_cookie(username: str, role: str):
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
 
-    # streamlit-cookies-controller
-    # (Session cookie by default; persists across refreshes.)
-    COOKIE.set(COOKIE_NAME, token)
+    # Persistent cookie (survives refresh & browser restarts)
+    COOKIE_MGR.set(
+        COOKIE_NAME,
+        token,
+        expires_at=datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS) if SESSION_TTL_SECONDS > 0 else None,
+        path=COOKIE_PATH,
+        secure=COOKIE_SECURE,          # from secrets or default True
+        samesite=COOKIE_SAMESITE       # "None" if you embed, else "Lax"
+    )
 
 
 
 def _read_cookie():
-    token = COOKIE.get(COOKIE_NAME)
+    token = COOKIE_MGR.get(COOKIE_NAME)
     if not token:
         return None
     try:
         data_b64, sig = token.split(".", 1)
         raw = base64.urlsafe_b64decode(data_b64.encode())
         if not hmac.compare_digest(sig, _sign(raw)):
-            # bad signature → delete
-            COOKIE.remove(COOKIE_NAME)
+            COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
             return None
         payload = json.loads(raw.decode())
         exp = int(payload.get("exp", 0))
         now = int(time.time())
         if exp and now > exp:
-            COOKIE.remove(COOKIE_NAME)
+            COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
             return None
         return payload
     except Exception:
-        COOKIE.remove(COOKIE_NAME)
+        COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
         return None
+
 
 
 def do_login(username: str, role: str):
@@ -1066,6 +1071,24 @@ def do_login(username: str, role: str):
     st.session_state.just_logged_out = False
     _issue_session_cookie(username, role)
     st.rerun()
+
+def do_logout():
+    try:
+        COOKIE_MGR.delete(COOKIE_NAME, path=COOKIE_PATH)
+        # belt & suspenders for older browsers
+        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1), path=COOKIE_PATH)
+    except Exception:
+        pass
+    for k in ["authenticated", "role", "username", "name"]:
+        st.session_state.pop(k, None)
+    st.session_state.just_logged_out = True
+    st.rerun()
+    
+    if "cookie_bootstrapped" not in st.session_state:
+    st.session_state.cookie_bootstrapped = True
+    _ = COOKIE_MGR.get_all()
+    st.rerun()
+
 
 
 # =============================================================================
