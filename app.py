@@ -1,4 +1,4 @@
-# # path: app/streamlit_app_inventory.py
+# path: app/streamlit_app_inventory.py
 # NOTE: This version removes the standalone "Name" field in the Employee form,
 # relabels "New Employeer" as the required name field, and writes both
 # "New Employeer" and "Name" columns with the same value for compatibility.
@@ -60,7 +60,7 @@ LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued",
 # and the same value is written to both columns.
 EMPLOYEE_CANON_COLS = [
     "New Employeer","Employee ID","New Signature","Name","Address",
-    "APLUS","Active","Position","Department","Location (KSA)",
+    "Active","Position","Department","Location (KSA)",
     "Project","Microsoft Teams","Mobile Number"
 ]
 
@@ -397,6 +397,14 @@ def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     return df[desired + tail]
 
 
+def reorder_columns_strict(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
+    """Return only desired columns (create missing), drop all extras. Why: keep employees schema clean."""
+    for c in desired:
+        if c not in df.columns:
+            df[c] = ""
+    return df[desired]
+
+
 def _find_ws_candidates(title: str):
     sh = get_sh()
     target = _norm_title(title)
@@ -428,7 +436,7 @@ def _read_ws_as_dataframe(ws: gspread.Worksheet, expected_cols: list[str]) -> tu
     data_rows = values[header_idx + 1 :]
     df = pd.DataFrame(data_rows, columns=preferred).replace({None: ""})
     df = df.dropna(how="all").reset_index(drop=True)
-    df = reorder_columns(df, expected_cols)
+    df = reorder_columns_strict(df, expected_cols)
     return df, header_idx, score
 
 
@@ -627,200 +635,10 @@ def register_device_tab():
         with r1c3:
             device = st.text_input("Device Type *")
 
-        r2c1, r2c2, r2c3 = st.columns(3)
-        with r2c1:
-            brand  = st.text_input("Brand")
-        with r2c2:
-            model  = st.text_input("Model")
-        with r2c3:
-            cpu    = st.text_input("CPU")
-
-        r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1:
-            mem    = st.text_input("Memory")
-        with r3c2:
-            hdd1   = st.text_input("Hard Drive 1")
-        with r3c3:
-            hdd2   = st.text_input("Hard Drive 2")
-
-        r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1:
-            gpu    = st.text_input("GPU")
-        with r4c2:
-            screen = st.text_input("Screen Size")
-        with r4c3:
-            email  = st.text_input("Email Address")
-
-        r5c1, r5c2, r5c3 = st.columns(3)
-        with r5c1:
-            contact = st.text_input("Contact Number")
-        with r5c2:
-            dept   = st.text_input("Department")
-        with r5c3:
-            location = st.text_input("Location")
-
-        r6c1, r6c2 = st.columns([1, 2])
-        with r6c1:
-            office = st.text_input("Office")
-        with r6c2:
-            notes  = st.text_area("Notes", height=60)
-
-        submitted = st.form_submit_button("Save Device", type="primary")
-
-    if submitted:
-        if not serial.strip() or not device.strip():
-            st.error("Serial Number and Device Type are required.")
-            return
-
-        s_norm = normalize_serial(serial)
-        if not s_norm:
-            st.error("Serial Number cannot be blank after normalization.")
-            return
-
-        inv = read_worksheet(INVENTORY_WS)
-        if not inv.empty:
-            inv["__snorm"] = inv["Serial Number"].astype(str).map(normalize_serial)
-
-            # 1) Exact (normalized) duplicate -> BLOCK
-            if s_norm in set(inv["__snorm"]):
-                existing = inv[inv["__snorm"] == s_norm].iloc[0]
-                st.error(
-                    f"Duplicate serial. Already exists as '{existing['Serial Number']}' "
-                    f"({existing.get('Device Type','')} {existing.get('Brand','')}/{existing.get('Model','')})."
-                )
-                return
-
-            # 2) Near-duplicate (≤1 edit away) -> REQUIRE ADMIN CONFIRMATION
-            near_mask = inv["__snorm"].apply(lambda x: levenshtein(s_norm, x, max_dist=1) <= 1)
-            near = inv[near_mask]
-            if not near.empty:
-                similar_list = near["Serial Number"].astype(str).unique().tolist()
-                if not admin_override_widget(s_norm, similar_list):
-                    st.stop()  # wait for admin override form
-                # else: proceed after a valid override
-
-        # Build the new record (keep user's original serial formatting for display)
-        row = {
-            "Serial Number": serial.strip(),
-            "Device Type": device.strip(),
-            "Brand": brand.strip(),
-            "Model": model.strip(),
-            "CPU": cpu.strip(),
-            "Hard Drive 1": hdd1.strip(),
-            "Hard Drive 2": hdd2.strip(),
-            "Memory": mem.strip(),
-            "GPU": gpu.strip(),
-            "Screen Size": screen.strip(),
-
-            # ownership fields (UPDATED)
-            "Current user": current_user.strip(),
-            "Previous User": "",
-            "TO": current_user.strip(),
-
-            "Department": dept.strip(),
-            "Email Address": email.strip(),
-            "Contact Number": contact.strip(),
-            "Location": location.strip(),
-            "Office": office.strip(),
-            "Notes": notes.strip(),
-            "Date issued": datetime.now().strftime(DATE_FMT),
-            "Registered by": st.session_state.get("username", ""),
-        }
-
-        # Race-condition guard: re-check on a fresh read just before write
-        inv_fresh = read_worksheet(INVENTORY_WS)
-        if not inv_fresh.empty:
-            inv_fresh["__snorm"] = inv_fresh["Serial Number"].astype(str).map(normalize_serial)
-            if s_norm in set(inv_fresh["__snorm"]):
-                st.error("Serial was added by someone else just now. Please refresh.")
-                return
-            near_fresh = inv_fresh[inv_fresh["__snorm"].apply(lambda x: levenshtein(s_norm, x, max_dist=1) <= 1)]
-            if not near_fresh.empty:
-                similar_list = near_fresh["Serial Number"].astype(str).unique().tolist()
-                if not admin_override_widget(s_norm, similar_list):
-                    st.stop()  # still need admin override on final check as well
-                # proceed after override
-
-        inv_out = pd.concat([
-            inv_fresh if not inv_fresh.empty else pd.DataFrame(columns=INVENTORY_COLS),
-            pd.DataFrame([row])
-        ], ignore_index=True)
-        inv_out = reorder_columns(inv_out, INVENTORY_COLS)
-        write_worksheet(INVENTORY_WS, inv_out)
-        st.success("✅ Device registered and added to Inventory.")
-
-
-def history_tab():
-    st.subheader("📜 Transfer Log")
-    df = read_worksheet(TRANSFERLOG_WS)
-    if df.empty:
-        st.info("No transfer history found.")
-    else:
-        st.dataframe(df, use_container_width=True, hide_index=True)
-
-
-# -----------------------------
-# Employee form utilities
-# -----------------------------
-
-def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
-    if df.empty or col not in df.columns:
-        return []
-    vals = [str(x).strip() for x in df[col].dropna().astype(str).tolist()]
-    return sorted({v for v in vals if v})
-
-
-def select_with_other(label: str, base_options: list[str], existing_values: list[str]) -> str:
-    """Select box that merges base options + existing values + Other… fallback."""
-    de_duped = [o for o in base_options if o]
-    for v in existing_values:
-        if v and v not in de_duped:
-            de_duped.append(v)
-    choices = ["— Select —"] + de_duped + ["Other…"]
-    sel = st.selectbox(label, choices)
-    if sel == "Other…":
-        return st.text_input(f"{label} (Other)")
-    return "" if sel == "— Select —" else sel
-
-
-def employee_register_tab():
-    st.subheader("🧑‍💼 Register New Employee (mainlists)")
-    emp_df = read_worksheet(EMPLOYEE_WS)
-
-    # Suggested numeric ID
-    try:
-        ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
-        next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
-    except Exception:
-        next_id_suggestion = str(len(emp_df) + 1)
-
-    # Precompute dropdown sources
-    dept_existing = unique_nonempty(emp_df, "Department")
-    pos_existing  = unique_nonempty(emp_df, "Position")
-    proj_existing = unique_nonempty(emp_df, "Project")
-    loc_existing  = unique_nonempty(emp_df, "Location (KSA)")
-
-    ksa_cities = [
-        "Riyadh", "Jeddah", "Dammam", "Khobar", "Dhahran", "Jubail",
-        "Mecca", "Medina", "Abha", "Tabuk", "Hail", "Buraidah"
-    ]
-
-    with st.form("register_employee", clear_on_submit=True):
-        r1c1, r1c2, r1c3 = st.columns(3)
-        with r1c1:
-            # Relabeled: this is the *only* name input now.
-            emp_name = st.text_input("Name *")  # writes to both New Employeer and Name
-        with r1c2:
-            emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
-        with r1c3:
-            new_sig = st.selectbox("New Signature", ["— Select —", "Yes", "No", "Requested"])  # why: standardize
-
-        r2c1, r2c2, r2c3 = st.columns(3)
+        r2c1, r2c2 = st.columns(2)
         with r2c1:
             address = st.text_input("Address")
         with r2c2:
-            aplus = st.selectbox("APLUS", ["— Select —", "Yes", "No", "Requested"])  # why: boolean-ish
-        with r2c3:
             active = st.selectbox("Active", ["Active", "Inactive", "Onboarding", "Resigned"])  # why: status consistency
 
         r3c1, r3c2, r3c3 = st.columns(3)
@@ -856,87 +674,3 @@ def employee_register_tab():
             "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
             "New Signature": new_sig if new_sig != "— Select —" else "",
             "Address": address.strip(),
-            "APLUS": aplus if aplus != "— Select —" else "",
-            "Active": active.strip(),
-            "Position": position.strip(),
-            "Department": department.strip(),
-            "Location (KSA)": location_ksa.strip(),
-            "Project": project.strip(),
-            "Microsoft Teams": teams if teams != "— Select —" else "",
-            "Mobile Number": mobile.strip(),
-        }
-        new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True) if not emp_df.empty else pd.DataFrame([row])
-        new_df = reorder_columns(new_df, EMPLOYEE_CANON_COLS)
-        write_worksheet(EMPLOYEE_WS, new_df)
-        st.success("✅ Employee saved to 'mainlists'.")
-
-
-def export_tab():
-    st.subheader("⬇️ Export (always fresh)")
-    inv = read_worksheet(INVENTORY_WS)
-    log = read_worksheet(TRANSFERLOG_WS)
-    emp = read_worksheet(EMPLOYEE_WS)
-    st.caption(f"Last fetched: {datetime.now().strftime(DATE_FMT)}")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"),
-                           "inventory.csv", "text/csv")
-    with c2:
-        st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"),
-                           "transfer_log.csv", "text/csv")
-    with c3:
-        st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"),
-                           "employees.csv", "text/csv")
-
-# =============================================================================
-# MAIN
-# =============================================================================
-
-def run_app():
-    render_header()
-    hide_table_toolbar_for_non_admin()
-
-    if st.session_state.role == "Admin":
-        tabs = st.tabs([
-            "🧑‍💼 Employee Register",
-            "📇 View Employees",
-            "📝 Register Device",
-            "📋 View Inventory",
-            "🔁 Transfer Device",
-            "📜 Transfer Log",
-            "⬇️ Export"
-        ])
-        with tabs[0]: employee_register_tab()
-        with tabs[1]: employees_view_tab()
-        with tabs[2]: register_device_tab()
-        with tabs[3]: inventory_tab()
-        with tabs[4]: transfer_tab()
-        with tabs[5]: history_tab()
-        with tabs[6]: export_tab()
-    else:
-        tabs = st.tabs(["📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log"])
-        with tabs[0]: inventory_tab()
-        with tabs[1]: transfer_tab()
-        with tabs[2]: history_tab()
-
-# =============================================================================
-# ENTRY
-# =============================================================================
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-# Refresh behavior:
-# - If you're logged in, cookie keeps you in (persisting for SESSION_TTL_DAYS).
-# - If you just logged out, skip cookie read once to prevent flash re-login.
-if not st.session_state.authenticated and not st.session_state.get("just_logged_out"):
-    payload = _read_cookie()
-    if payload:
-        st.session_state.authenticated = True
-        st.session_state.username = payload["u"]
-        st.session_state.name = payload["u"]
-        st.session_state.role = payload.get("r", "")
-
-if st.session_state.authenticated:
-    run_app()
-else:
-    show_login()
