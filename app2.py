@@ -1,77 +1,29 @@
-from unittest.mock import mock_open, patch
-
-import pandas as pd
-import pytest
 import streamlit as st
-from pandas.testing import assert_frame_equal
+from pydrive2.auth import GoogleAuth
+from pydrive2.drive import GoogleDrive
+import json
 
-from st_gsheets_connection import GSheetsConnection
+# Load credentials from secrets.toml
+try:
+    gauth_settings = json.loads(st.secrets["google_drive_credentials"])
+except KeyError:
+    st.error("Google Drive credentials not found in secrets.toml.")
+    st.stop()
 
+# Authenticate with Google Drive
+gauth = GoogleAuth(settings=gauth_settings)
+drive = GoogleDrive(gauth)
 
-@pytest.fixture()
-def expected_df() -> pd.DataFrame:
-    return pd.DataFrame(
-        {
-            "date": ["1/1/1975", "2/1/1975", "3/1/1975", "4/1/1975", "5/1/1975"],
-            "births": [265775, 241045, 268849, 247455, 254545],
-        }
-    )
+# Example: List files in a specific folder (replace with your folder ID)
+folder_id = 'YOUR_GOOGLE_DRIVE_FOLDER_ID'
+file_list = drive.ListFile({'q': f"'{folder_id}' in parents and trashed=false"}).GetList()
 
+st.write("Files in Google Drive folder:")
+for file in file_list:
+    st.write(f"- {file['title']} (ID: {file['id']})")
 
-def test_read_public_sheet(expected_df: pd.DataFrame):
-    url = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit?gid=405007082#gid=405007082"
-
-    conn = st.connection("connection_name", type=GSheetsConnection)
-
-    df = conn.read(spreadsheet=url, usecols=[0, 1])
-
-    assert_frame_equal(df.head(), expected_df)
-
-
-def test_query_public_sheet():
-    url = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit?gid=405007082#gid=405007082"
-
-    conn = st.connection("connection_name", type=GSheetsConnection)
-
-    df = conn.query("select date from my_table where births = 265775", spreadsheet=url)
-
-    assert len(df) == 1
-    assert df["date"].values[0] == "1/1/1975"
-
-
-def test_query_worksheet_public_sheet():
-    url = "https://docs.google.com/spreadsheets/d/1JDy9md2VZPz4JbYtRPJLs81_3jUK47nx6GYQjgU8qNY/edit"
-    worksheet = 405007082  # Example 2, note that this is the gid, not the worksheet name
-
-    conn = st.connection("connection_name", type=GSheetsConnection)
-
-    df = conn.query(
-        "select date from my_table where births = 1000000",
-        spreadsheet=url,
-        worksheet=worksheet,
-    )
-
-    assert len(df) == 1
-    assert df["date"].values[0] == "1/1/1975"
-
-
-secrets_contents = """
-[connections.test_connection_name]
-spreadsheet = "https://docs.google.com/spreadsheets/d/1JDy9md2VZPz4JbYtRPJLs81_3jUK47nx6GYQjgU8qNY/edit"
-"""
-
-
-@patch("builtins.open", mock_open(read_data=secrets_contents))
-def test_secrets_contents(expected_df):
-    conn = st.connection("test_connection_name", type=GSheetsConnection)
-
-    df = conn.read()
-
-    assert_frame_equal(df.head(), expected_df)
-
-
-def test_no_secrets_contents():
-    conn = st.connection("other_connection_name", type=GSheetsConnection)
-
-    with pytest.raises(ValueError, match="Spreadsheet must be specified"):
-        conn.read()
+# Example: Download a specific file
+# file_id = 'YOUR_FILE_ID'
+# file = drive.CreateFile({'id': file_id})
+# file.GetContentFile('downloaded_file.txt')
+# st.write("File downloaded successfully!")
