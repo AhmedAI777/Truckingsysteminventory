@@ -1,5 +1,5 @@
-# app.py
 import os
+import re
 import base64
 from datetime import datetime
 import streamlit as st
@@ -21,9 +21,9 @@ SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo
 # Worksheet titles (created if missing)
 INVENTORY_WS    = "truckinventory"
 TRANSFERLOG_WS  = "transfer_log"
-EMPLOYEE_WS     = "mainlists"          # <-- you were using this but hadn't defined it
+EMPLOYEE_WS     = "mainlists"  # Employees worksheet (there may be duplicates)
 
-# Canonical inventory columns (includes your new fields)
+# Canonical inventory columns
 INVENTORY_COLS = [
     "Serial Number","Device Type","Brand","Model","CPU",
     "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
@@ -33,12 +33,25 @@ INVENTORY_COLS = [
 ]
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 
-# Employees sheet columns (exact names from your screenshot)
-EMPLOYEE_COLS = [
+# Employees sheet columns (canonical names)
+EMPLOYEE_CANON_COLS = [
     "New Employeer","Employee ID","New Signature","Name","Address",
     "APLUS","Active","Position","Department","Location (KSA)",
     "Project","Microsoft Teams","Mobile Number"
 ]
+
+# Accept common synonym/typo headers and normalize to canon
+HEADER_SYNONYMS = {
+    "new employee": "New Employeer",      # typo vs intended
+    "new employeer": "New Employeer",
+    "employeeid": "Employee ID",
+    "newsignature": "New Signature",
+    "locationksa": "Location (KSA)",
+    "microsoftteams": "Microsoft Teams",
+    "microsoftteam": "Microsoft Teams",
+    "mobile": "Mobile Number",
+    "mobilenumber": "Mobile Number",
+}
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
 
@@ -73,6 +86,7 @@ def _inject_font_css(font_path: str, family: str = "FounderGroteskCondensed"):
         unsafe_allow_html=True,
     )
 
+
 def render_header():
     _inject_font_css("FounderGroteskCondensed-Regular.otf")
 
@@ -80,7 +94,6 @@ def render_header():
 
     with c_logo:
         if os.path.exists("company_logo.jpeg"):
-            # compatibility across Streamlit versions
             try:
                 st.image("company_logo.jpeg", use_container_width=True)
             except TypeError:
@@ -109,6 +122,7 @@ def render_header():
 
     st.markdown("<hr style='margin-top:0.8rem;'>", unsafe_allow_html=True)
 
+
 def hide_table_toolbar_for_non_admin():
     if st.session_state.get("role") != "Admin":
         st.markdown(
@@ -123,19 +137,31 @@ def hide_table_toolbar_for_non_admin():
         )
 
 # =============================================================================
-# GOOGLE SHEETS (gspread)
+# GOOGLE SHEETS (gspread) helpers
 # =============================================================================
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
 creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
 gc = gspread.authorize(creds)
 SHEET_URL = st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
 sh = gc.open_by_url(SHEET_URL)
 
-def get_or_create_ws(title, rows=500, cols=80):
-    try:
-        return sh.worksheet(title)
-    except gspread.exceptions.WorksheetNotFound:
-        return sh.add_worksheet(title=title, rows=rows, cols=cols)
+
+def _norm_title(t: str) -> str:
+    return (t or "").strip().lower()
+
+
+def _norm_header(h: str) -> str:
+    s = re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
+    return s
+
+
+def _canon_header(h: str) -> str:
+    key = _norm_header(h)
+    return HEADER_SYNONYMS.get(key, h.strip())
+
 
 def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     for c in desired:
@@ -143,9 +169,112 @@ def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
             df[c] = ""
     return df[desired + [c for c in df.columns if c not in desired]]
 
-def read_worksheet(ws_title):
-    """Read a worksheet and ensure its expected columns exist (per sheet)."""
+
+# --- Worksheet discovery that tolerates duplicates named the same ---
+
+def _find_ws_candidates(title: str):
+    target = _norm_title(title)
+    return [ws for ws in sh.worksheets() if _norm_title(ws.title) == target]
+
+
+def _score_header(values: list[list[str]], expected_canon: set[str]) -> tuple[int, int]:
+    """Return (best_row_index, best_overlap_count). Scan first 10 rows."""
+    best_idx, best_count = 0, 0
+    rows_to_scan = min(len(values), 10)
+    for i in range(rows_to_scan):
+        row = values[i]
+        canon = {_canon_header(c) for c in row if str(c).strip()}
+        overlap = len(canon & expected_canon)
+        if overlap > best_count:
+            best_idx, best_count = i, overlap
+    return best_idx, best_count
+
+
+def _read_ws_as_dataframe(ws: gspread.Worksheet, expected_cols: list[str]) -> tuple[pd.DataFrame, int, int]:
+    """Return (DataFrame, header_row_idx, overlap_score)."""
+    values = ws.get_all_values() or []
+    if not values:
+        return pd.DataFrame(columns=expected_cols), 0, 0
+
+    expected_canon = set(expected_cols)
+    header_idx, score = _score_header(values, expected_canon)
+
+    headers_raw = values[header_idx]
+    headers_canon = [_canon_header(h) for h in headers_raw]
+    # Map canon back to preferred labels (keep original if not mapped to a known canonical)
+    preferred = []
+    for h, canon in zip(headers_raw, headers_canon):
+        preferred.append(HEADER_SYNONYMS.get(_norm_header(h), h))
+
+    data_rows = values[header_idx + 1 :]
+    df = pd.DataFrame(data_rows, columns=preferred).replace({None: ""})
+
+    # Drop fully empty rows
+    df = df.dropna(how="all").reset_index(drop=True)
+
+    # Ensure expected columns exist and in order
+    df = reorder_columns(df, expected_cols)
+    return df, header_idx, score
+
+
+def get_employee_ws() -> gspread.Worksheet:
+    """Robustly pick the correct 'mainlists' worksheet when duplicates exist."""
+    # If we've already chosen a worksheet id, reuse it
+    ws_id = st.session_state.get("emp_ws_id")
+    if ws_id:
+        ws = sh.get_worksheet_by_id(ws_id)
+        if ws is not None:
+            return ws
+
+    cands = _find_ws_candidates(EMPLOYEE_WS)
+    if not cands:  # create if missing
+        ws = sh.add_worksheet(title=EMPLOYEE_WS, rows=500, cols=80)
+        st.session_state.emp_ws_id = ws.id
+        return ws
+
+    if len(cands) == 1:
+        ws = cands[0]
+        st.session_state.emp_ws_id = ws.id
+        return ws
+
+    # More than one: choose the one with best header overlap with expected columns
+    best_ws, best_score = None, -1
+    for ws in cands:
+        try:
+            _, _, score = _read_ws_as_dataframe(ws, EMPLOYEE_CANON_COLS)
+            if score > best_score:
+                best_ws, best_score = ws, score
+        except Exception:
+            continue
+
+    ws = best_ws or cands[0]
+    st.session_state.emp_ws_id = ws.id
+    return ws
+
+
+# Basic (non-employee) helpers
+
+def get_or_create_ws(title, rows=500, cols=80):
     try:
+        return sh.worksheet(title)
+    except gspread.exceptions.WorksheetNotFound:
+        return sh.add_worksheet(title=title, rows=rows, cols=cols)
+
+
+def read_worksheet(ws_title):
+    try:
+        if ws_title == EMPLOYEE_WS:
+            ws = get_employee_ws()
+            df, header_idx, overlap = _read_ws_as_dataframe(ws, EMPLOYEE_CANON_COLS)
+            st.session_state.emp_debug = {
+                "title": ws.title,
+                "gid": ws.id,
+                "header_row": header_idx + 1,
+                "overlap": overlap,
+                "rows": len(df),
+            }
+            return df
+
         ws = get_or_create_ws(ws_title)
         data = ws.get_all_records()
         df = pd.DataFrame(data)
@@ -153,23 +282,29 @@ def read_worksheet(ws_title):
             return reorder_columns(df, INVENTORY_COLS)
         if ws_title == TRANSFERLOG_WS:
             return reorder_columns(df, LOG_COLS)
-        if ws_title == EMPLOYEE_WS:
-            return reorder_columns(df, EMPLOYEE_COLS)
         return df
     except Exception as e:
         st.error(f"Error reading sheet '{ws_title}': {e}")
         if ws_title == INVENTORY_WS:   return pd.DataFrame(columns=INVENTORY_COLS)
         if ws_title == TRANSFERLOG_WS: return pd.DataFrame(columns=LOG_COLS)
-        if ws_title == EMPLOYEE_WS:    return pd.DataFrame(columns=EMPLOYEE_COLS)
+        if ws_title == EMPLOYEE_WS:    return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
         return pd.DataFrame()
 
+
 def write_worksheet(ws_title, df):
-    ws = get_or_create_ws(ws_title)
+    if ws_title == EMPLOYEE_WS:
+        ws = get_employee_ws()
+    else:
+        ws = get_or_create_ws(ws_title)
     ws.clear()
     set_with_dataframe(ws, df)
 
+
 def append_to_worksheet(ws_title, new_data):
-    ws = get_or_create_ws(ws_title)
+    if ws_title == EMPLOYEE_WS:
+        ws = get_employee_ws()
+    else:
+        ws = get_or_create_ws(ws_title)
     df_existing = pd.DataFrame(ws.get_all_records())
     df_combined = pd.concat([df_existing, new_data], ignore_index=True)
     set_with_dataframe(ws, df_combined)
@@ -177,6 +312,7 @@ def append_to_worksheet(ws_title, new_data):
 # =============================================================================
 # AUTH (simple, from secrets)
 # =============================================================================
+
 def load_users():
     admins = st.secrets["auth"]["admins"]
     staff  = st.secrets["auth"]["staff"]
@@ -188,7 +324,9 @@ def load_users():
         users[user] = {"password": pw, "role": "Staff", "name": user}
     return users
 
+
 USERS = load_users()
+
 
 def show_login():
     st.subheader("🔐 Sign In")
@@ -208,6 +346,7 @@ def show_login():
 # =============================================================================
 # TABS
 # =============================================================================
+
 def employees_view_tab():
     st.subheader("📇 Employees (mainlists)")
     df = read_worksheet(EMPLOYEE_WS)
@@ -215,6 +354,7 @@ def employees_view_tab():
         st.info("No employees found in 'mainlists'.")
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
+
 
 def inventory_tab():
     st.subheader("📋 Inventory")
@@ -227,11 +367,11 @@ def inventory_tab():
         else:
             st.dataframe(df, use_container_width=True, hide_index=True)
 
-def register_device_tab():  # <-- renamed to match run_app()
+
+def register_device_tab():
     st.subheader("📝 Register New Device")
 
     with st.form("register_device", clear_on_submit=True):
-        # Row 1
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
             serial = st.text_input("Serial Number *")
@@ -240,7 +380,6 @@ def register_device_tab():  # <-- renamed to match run_app()
         with r1c3:
             brand  = st.text_input("Brand")
 
-        # Row 2
         r2c1, r2c2, r2c3 = st.columns(3)
         with r2c1:
             model  = st.text_input("Model")
@@ -249,7 +388,6 @@ def register_device_tab():  # <-- renamed to match run_app()
         with r2c3:
             mem    = st.text_input("Memory")
 
-        # Row 3
         r3c1, r3c2, r3c3 = st.columns(3)
         with r3c1:
             hdd1   = st.text_input("Hard Drive 1")
@@ -258,7 +396,6 @@ def register_device_tab():  # <-- renamed to match run_app()
         with r3c3:
             gpu    = st.text_input("GPU")
 
-        # Row 4
         r4c1, r4c2, r4c3 = st.columns(3)
         with r4c1:
             screen = st.text_input("Screen Size")
@@ -267,7 +404,6 @@ def register_device_tab():  # <-- renamed to match run_app()
         with r4c3:
             contact = st.text_input("Contact Number")
 
-        # Row 5
         r5c1, r5c2, r5c3 = st.columns(3)
         with r5c1:
             dept   = st.text_input("Department")
@@ -276,7 +412,6 @@ def register_device_tab():  # <-- renamed to match run_app()
         with r5c3:
             location = st.text_input("Location")
 
-        # Row 6
         r6c1, r6c2 = st.columns([1, 2])
         with r6c1:
             office = st.text_input("Office")
@@ -318,10 +453,11 @@ def register_device_tab():  # <-- renamed to match run_app()
             "Registered by": st.session_state.get("username", ""),
         }
 
-        new_df = pd.concat([inv, pd.DataFrame([row])], ignore_index=True) if not inv.empty else pd.DataFrame([row])
-        new_df = reorder_columns(new_df, INVENTORY_COLS)
-        write_worksheet(INVENTORY_WS, new_df)
+        inv = pd.concat([inv, pd.DataFrame([row])], ignore_index=True) if not inv.empty else pd.DataFrame([row])
+        inv = reorder_columns(inv, INVENTORY_COLS)
+        write_worksheet(INVENTORY_WS, inv)
         st.success("✅ Device registered and added to Inventory.")
+
 
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
@@ -375,6 +511,7 @@ def transfer_tab():
 
         st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
 
+
 def history_tab():
     st.subheader("📜 Transfer Log")
     df = read_worksheet(TRANSFERLOG_WS)
@@ -383,12 +520,11 @@ def history_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
+
 def employee_register_tab():
-    """Admin-only: register employees into 'mainlists' (separate system)."""
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
 
     emp_df = read_worksheet(EMPLOYEE_WS)
-    # light suggestion for next ID
     try:
         ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
         next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
@@ -456,9 +592,10 @@ def employee_register_tab():
             "Mobile Number": mobile.strip(),
         }
         new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True) if not emp_df.empty else pd.DataFrame([row])
-        new_df = reorder_columns(new_df, EMPLOYEE_COLS)
+        new_df = reorder_columns(new_df, EMPLOYEE_CANON_COLS)
         write_worksheet(EMPLOYEE_WS, new_df)
         st.success("✅ Employee saved to 'mainlists'.")
+
 
 def export_tab():
     st.subheader("⬇️ Export (always fresh)")
@@ -482,6 +619,7 @@ def export_tab():
 # =============================================================================
 # MAIN
 # =============================================================================
+
 def run_app():
     render_header()
     hide_table_toolbar_for_non_admin()
@@ -496,11 +634,11 @@ def run_app():
             "📇 View Employees",
             "⬇️ Export"
         ])
-        with tabs[0]: register_device_tab()     # <-- existed mismatch fixed
+        with tabs[0]: register_device_tab()
         with tabs[1]: inventory_tab()
         with tabs[2]: transfer_tab()
         with tabs[3]: history_tab()
-        with tabs[4]: employee_register_tab()   # <-- now defined
+        with tabs[4]: employee_register_tab()
         with tabs[5]: employees_view_tab()
         with tabs[6]: export_tab()
     else:
