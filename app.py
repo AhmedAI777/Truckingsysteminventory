@@ -1,4 +1,4 @@
-# Requirements (add to requirements.txt):
+# Requirements (requirements.txt)
 # streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth google-api-python-client
 
 import os
@@ -19,7 +19,7 @@ from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
 import extra_streamlit_components as stx
 
-# Drive API (optional but recommended for PDF storage)
+# Google Drive API for PDF storage (optional but recommended)
 try:
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaIoBaseUpload
@@ -28,7 +28,7 @@ except Exception:
     HAS_DRIVE = False
 
 # =============================================================================
-# CONFIG
+# CONFIG / CONSTANTS
 # =============================================================================
 APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE = "Advanced Construction"
@@ -42,19 +42,20 @@ COOKIE_PATH = "/"
 COOKIE_SECURE = False
 COOKIE_SAMESITE = "Lax"
 
-# Default to your sheet URL; can be overridden in secrets
+# Your spreadsheet URL (can be overridden in secrets)
 SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
-# Worksheet titles (created if missing)
-INVENTORY_WS     = "truckinventory"
-TRANSFERLOG_WS   = "transfer_log"
-EMPLOYEE_WS      = "mainlists"
-PENDING_WS       = "pending_devices"   # staff submissions awaiting admin approval
+# Worksheet titles
+INVENTORY_WS           = "truckinventory"
+TRANSFERLOG_WS         = "transfer_log"
+EMPLOYEE_WS            = "mainlists"
+PENDING_DEVICES_WS     = "pending_devices"   # device registrations awaiting admin approval (kept)
+PENDING_TRANSFERS_WS   = "pending_transfers" # NEW: staff-submitted transfers awaiting admin approval
 
-# Debug toggle (set `[debug].show = true` in secrets to reveal diagnostics)
+# Debug flag (optional): set [debug].show = true in secrets to expose diagnostics
 DEBUG_SHOW = bool(st.secrets.get("debug", {}).get("show", False))
 
-# Inventory columns (uses "Current user"; synonym mapping covers 'USER')
+# Inventory columns (map legacy 'USER' to 'Current user')
 INVENTORY_COLS = [
     "Serial Number","Device Type","Brand","Model","CPU",
     "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
@@ -63,37 +64,40 @@ INVENTORY_COLS = [
     "Notes","Date issued","Registered by"
 ]
 
-# Transfer log columns (include Form URL)
+# Transfer log columns (with form URL)
 LOG_COLS = [
     "Device Type","Serial Number","From owner","To owner",
     "Date issued","Registered by","Form URL"
 ]
 
-# Employees sheet columns (no Email/APLUS)
+# Employees columns
 EMPLOYEE_CANON_COLS = [
     "Employee ID","New Signature","Name","Address",
     "Active","Position","Department","Location (KSA)",
     "Project","Microsoft Teams","Mobile Number"
 ]
 
-# Pending devices columns (same as inventory + audit/status)
-PENDING_COLS = INVENTORY_COLS + [
+# Pending device registration columns
+PENDING_DEVICE_COLS = INVENTORY_COLS + [
     "Submitted by","Submitted at","Status","Approver","Approved at","Decision Note"
 ]
 
-# -----------------------------------------------------------------------------
-# Header normalization
-# -----------------------------------------------------------------------------
-# Map (normalized header) -> canonical name or None to DROP
+# Pending transfer columns (NEW)
+PENDING_TRANSFER_COLS = [
+    "Serial Number","Device Type","From owner","To owner",
+    "Submitted by","Submitted at","PDF URL",
+    "Status","Approver","Approved at","Decision Note"
+]
+
+# Header normalization maps
 HEADER_SYNONYMS = {
-    # Drop legacy/undesired headers
+    # drop
     "newemployee": None,
     "newemployeer": None,
     "email": None,
     "emailaddress": None,
     "aplus": None,
-
-    # Normalize variants
+    # normalize
     "employeeid": "Employee ID",
     "newsignature": "New Signature",
     "locationksa": "Location (KSA)",
@@ -103,13 +107,12 @@ HEADER_SYNONYMS = {
     "mobilenumber": "Mobile Number",
 }
 
-# Map old inventory headers -> canonical
 INVENTORY_HEADER_SYNONYMS = {
     "user": "Current user",
     "currentuser": "Current user",
     "previoususer": "Previous User",
     "to": "TO",
-    "department1": None,  # drop
+    "department1": None,
 }
 
 st.set_page_config(page_title=APP_TITLE, layout="wide")
@@ -127,21 +130,6 @@ def _norm_ws_title(t: str) -> str:
 
 def normalize_serial(s: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
-
-_ws = re.compile(r"\s+")
-
-def norm_name(x: str) -> str:
-    return _ws.sub(" ", (x or "").strip().lower())
-
-
-def type_or_select(label: str, options: list[str], key: str, help: str | None = None) -> str:
-    _DEF_SELECT = "— Select —"
-    _TYPE_NEW = "Type a new value…"
-    opts = sorted({o.strip() for o in options if isinstance(o, str) and o.strip()})
-    choice = st.selectbox(label, [_DEF_SELECT] + opts + [_TYPE_NEW], key=key, help=help)
-    if choice == _TYPE_NEW:
-        return st.text_input(f"Enter {label}", key=f"{key}_free")
-    return "" if choice == _DEF_SELECT else choice
 
 # =============================================================================
 # AUTH (SESSION COOKIE)
@@ -215,7 +203,7 @@ if "cookie_bootstrapped" not in st.session_state:
     st.rerun()
 
 # =============================================================================
-# STYLE (Custom Font Loader)
+# BRANDING CSS (optional)
 # =============================================================================
 
 def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
@@ -310,7 +298,7 @@ def hide_table_toolbar_for_non_admin():
         )
 
 # =============================================================================
-# GOOGLE SHEETS — CLIENT / UTILITIES
+# GOOGLE SHEETS CLIENT
 # =============================================================================
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
@@ -322,7 +310,6 @@ def _get_gc():
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
     return gspread.authorize(creds)
 
-
 @st.cache_resource(show_spinner=False)
 def _get_sheet_url():
     return st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
@@ -331,20 +318,10 @@ def _get_sheet_url():
 def get_sh():
     gc = _get_gc()
     url = _get_sheet_url()
-    last_exc = None
-    for attempt in range(3):
-        try:
-            return gc.open_by_url(url)
-        except gspread.exceptions.APIError as e:
-            last_exc = e
-            time.sleep(0.6 * (attempt + 1))
-    st.error("Google Sheets API error while opening the spreadsheet. Please confirm access and try again.")
-    raise last_exc
+    return gc.open_by_url(url)
 
 
-def get_or_create_ws(title, rows=500, cols=80):
-    sh = get_sh()
-    # try exact and loose match first to avoid silently creating duplicates
+def _find_or_add_ws(sh, title, rows=500, cols=80):
     t_norm = _norm_ws_title(title)
     for ws in sh.worksheets():
         if _norm_ws_title(ws.title) == t_norm:
@@ -355,25 +332,23 @@ def get_or_create_ws(title, rows=500, cols=80):
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
 
+def get_or_create_ws(title, rows=500, cols=80):
+    return _find_or_add_ws(get_sh(), title, rows, cols)
+
+
 def get_employee_ws() -> gspread.Worksheet:
-    """Return the employees worksheet using robust matching, preferring existing tabs.
-    Avoids creating a new empty sheet when a near-identical one exists."""
     sh = get_sh()
-    preferred = [EMPLOYEE_WS, "Mainlists", "Main Lists", "Employees", "Employee List", "Employees (mainlists)"]
-    titles = [ws.title for ws in sh.worksheets()]
-    # exact/normalized lookup
-    target_norm = _norm_ws_title(EMPLOYEE_WS)
-    for ws in sh.worksheets():
-        if _norm_ws_title(ws.title) == target_norm:
-            return ws
-    for name in preferred:
+    preferred = [EMPLOYEE_WS, "Employees", "Employee List", "Main Lists", "Mainlists"]
+    for cand in preferred:
+        t_norm = _norm_ws_title(cand)
         for ws in sh.worksheets():
-            if _norm_ws_title(ws.title) == _norm_ws_title(name):
+            if _norm_ws_title(ws.title) == t_norm:
                 return ws
-    # fallback create
     return sh.add_worksheet(title=EMPLOYEE_WS, rows=500, cols=50)
 
-# ---------- EMPLOYEE DF CLEANING ----------
+# =============================================================================
+# DATAFRAME CLEANING & IO
+# =============================================================================
 
 def _coalesce_duplicate_columns(df: pd.DataFrame) -> pd.DataFrame:
     from collections import Counter
@@ -418,7 +393,6 @@ def _guess_employee_header_row(values: list[list[str]]) -> int:
         score = len(set(mapped) & set(EMPLOYEE_CANON_COLS))
         if score > best_score:
             best_i, best_score = i, score
-    # if no overlap at all but the first row is non-empty, still use first row as header
     if best_score <= 0:
         for i in range(max_scan):
             if any(x.strip() for x in values[i]):
@@ -448,7 +422,6 @@ def _read_employee_df(ws: gspread.Worksheet) -> pd.DataFrame:
     df = _clean_employee_df(df)
     return df
 
-# ---------- INVENTORY HEADER NORMALIZATION ----------
 
 def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -474,13 +447,10 @@ def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     tail = [c for c in df.columns if c not in desired]
     return df[desired + tail]
 
-# ---------- READ/CACHE LAYERS ----------
-
 @st.cache_data(ttl=30, show_spinner=False)
 def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
     if ws_title == EMPLOYEE_WS:
-        ws = get_employee_ws()
-        return _read_employee_df(ws)
+        return _read_employee_df(get_employee_ws())
 
     ws = get_or_create_ws(ws_title)
     data = ws.get_all_records()
@@ -490,8 +460,10 @@ def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
         return reorder_columns(df, INVENTORY_COLS)
     if ws_title == TRANSFERLOG_WS:
         return reorder_columns(df, LOG_COLS)
-    if ws_title == PENDING_WS:
-        return reorder_columns(df, PENDING_COLS)
+    if ws_title == PENDING_DEVICES_WS:
+        return reorder_columns(df, PENDING_DEVICE_COLS)
+    if ws_title == PENDING_TRANSFERS_WS:
+        return reorder_columns(df, PENDING_TRANSFER_COLS)
     return df
 
 
@@ -506,11 +478,12 @@ def read_worksheet(ws_title: str) -> pd.DataFrame:
             return pd.DataFrame(columns=LOG_COLS)
         if ws_title == EMPLOYEE_WS:
             return pd.DataFrame(columns=EMPLOYEE_CANON_COLS)
-        if ws_title == PENDING_WS:
-            return pd.DataFrame(columns=PENDING_COLS)
+        if ws_title == PENDING_DEVICES_WS:
+            return pd.DataFrame(columns=PENDING_DEVICE_COLS)
+        if ws_title == PENDING_TRANSFERS_WS:
+            return pd.DataFrame(columns=PENDING_TRANSFER_COLS)
         return pd.DataFrame()
 
-# ---------- WRITE HELPERS ----------
 
 def write_worksheet(ws_title: str, df: pd.DataFrame):
     if ws_title == EMPLOYEE_WS:
@@ -522,8 +495,10 @@ def write_worksheet(ws_title: str, df: pd.DataFrame):
             df = reorder_columns(df, INVENTORY_COLS)
         if ws_title == TRANSFERLOG_WS:
             df = reorder_columns(df, LOG_COLS)
-        if ws_title == PENDING_WS:
-            df = reorder_columns(df, PENDING_COLS)
+        if ws_title == PENDING_DEVICES_WS:
+            df = reorder_columns(df, PENDING_DEVICE_COLS)
+        if ws_title == PENDING_TRANSFERS_WS:
+            df = reorder_columns(df, PENDING_TRANSFER_COLS)
         ws = get_or_create_ws(ws_title)
     ws.clear()
     set_with_dataframe(ws, df)
@@ -539,8 +514,10 @@ def append_to_worksheet(ws_title: str, new_data: pd.DataFrame):
         df_combined = reorder_columns(df_combined, INVENTORY_COLS)
     if ws_title == TRANSFERLOG_WS:
         df_combined = reorder_columns(df_combined, LOG_COLS)
-    if ws_title == PENDING_WS:
-        df_combined = reorder_columns(df_combined, PENDING_COLS)
+    if ws_title == PENDING_DEVICES_WS:
+        df_combined = reorder_columns(df_combined, PENDING_DEVICE_COLS)
+    if ws_title == PENDING_TRANSFERS_WS:
+        df_combined = reorder_columns(df_combined, PENDING_TRANSFER_COLS)
     set_with_dataframe(ws, df_combined)
     st.cache_data.clear()
 
@@ -586,7 +563,6 @@ def load_users():
         users[user] = {"password": pw, "role": "Staff", "name": user}
     return users
 
-
 USERS = load_users()
 
 
@@ -602,31 +578,7 @@ def show_login():
             st.error("❌ Invalid username or password.")
 
 # =============================================================================
-# ADMIN OVERRIDE (PIN)
-# =============================================================================
-
-def admin_confirm_widget(key_prefix: str, title: str = "Admin confirmation") -> bool:
-    st.info(title)
-    admins = [u for u in st.secrets.get("auth", {}).get("admins", {}).keys() if u != "type"]
-    with st.form(f"admin_confirm_{key_prefix}", clear_on_submit=False):
-        admin_user = st.selectbox("Admin username", ["— Select —"] + admins, key=f"admin_user_{key_prefix}")
-        pin        = st.text_input("Admin PIN", type="password", key=f"admin_pin_{key_prefix}")
-        ok = st.form_submit_button("Confirm", type="primary")
-    if ok:
-        if admin_user == "— Select —":
-            st.error("Select an admin username.")
-            st.stop()
-        pins = st.secrets.get("auth", {}).get("override_pins", {})
-        valid = str(pins.get(admin_user, "")) == str(pin).strip()
-        if not valid:
-            st.error("Invalid admin override.")
-            st.stop()
-        st.session_state[f"admin_ok_{key_prefix}"] = True
-        st.session_state[f"admin_user_{key_prefix}"] = admin_user
-    return st.session_state.get(f"admin_ok_{key_prefix}", False)
-
-# =============================================================================
-# TABS
+# UI UTIL
 # =============================================================================
 
 def _refresh_button(key: str):
@@ -636,19 +588,19 @@ def _refresh_button(key: str):
             st.cache_data.clear()
             st.rerun()
 
-# ---------- Employees ----------
+# =============================================================================
+# TABS – EMPLOYEES
+# =============================================================================
 
 def employees_view_tab():
     st.subheader("📇 Main Employees (mainlists)")
     _refresh_button("employees")
     if DEBUG_SHOW:
-        with st.expander("🔍 Debug (worksheets)"):
+        with st.expander("🔍 Debug: worksheet list"):
             try:
                 sh = get_sh()
                 st.write([ws.title for ws in sh.worksheets()])
-                ws_emp = get_employee_ws()
-                st.write("Employees worksheet read:", ws_emp.title)
-                st.write("Employee rows (raw):", len(ws_emp.get_all_values()))
+                st.write("Sheet URL:", _get_sheet_url())
             except Exception as e:
                 st.error(str(e))
     df = read_worksheet(EMPLOYEE_WS)
@@ -657,241 +609,11 @@ def employees_view_tab():
     else:
         st.dataframe(df[EMPLOYEE_CANON_COLS], use_container_width=True, hide_index=True)
 
+# (keep your employee_register_tab from previous version if needed)
 
-def employee_register_tab():
-    st.subheader("🧑‍💼 Register New Employee (mainlists)")
-    emp_df = read_worksheet(EMPLOYEE_WS)
-
-    def _opts(col):
-        return sorted({str(x).strip() for x in emp_df.get(col, pd.Series(dtype=str)).dropna().astype(str) if str(x).strip()})
-
-    dept_opts = _opts("Department")
-    pos_opts  = _opts("Position")
-    loc_opts  = _opts("Location (KSA)")
-    proj_opts = _opts("Project")
-    teams_opts= _opts("Microsoft Teams")
-
-    try:
-        ids = pd.to_numeric(emp_df.get("Employee ID", pd.Series(dtype=str)), errors="coerce").dropna().astype(int)
-        next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
-    except Exception:
-        next_id_suggestion = str(len(emp_df) + 1)
-
-    with st.form("register_employee", clear_on_submit=True):
-        r1c1, r1c2, r1c3 = st.columns(3)
-        with r1c1:
-            emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
-        with r1c2:
-            new_sig = st.text_input("New Signature")
-        with r1c3:
-            name = st.text_input("Name *")
-
-        r2c1, r2c2, r2c3 = st.columns(3)
-        with r2c1:
-            address = st.text_input("Address")
-        with r2c2:
-            active  = st.text_input("Active")
-        with r2c3:
-            position = type_or_select("Position", pos_opts, key="pos")
-
-        r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1:
-            department = type_or_select("Department", dept_opts, key="dept")
-        with r3c2:
-            location_ksa = type_or_select("Location (KSA)", loc_opts, key="loc")
-        with r3c3:
-            project = type_or_select("Project", proj_opts, key="proj")
-
-        r4c1, r4c2 = st.columns(2)
-        with r4c1:
-            teams = type_or_select("Microsoft Teams", teams_opts, key="teams")
-        with r4c2:
-            mobile = st.text_input("Mobile Number")
-
-        submitted = st.form_submit_button("Save Employee", type="primary")
-
-    if submitted:
-        if not (name or "").strip():
-            st.error("Name is required.")
-            return
-
-        id_set    = set(emp_df.get("Employee ID", pd.Series(dtype=str)).astype(str).str.strip().str.lower())
-        name_set  = set(emp_df.get("Name", pd.Series(dtype=str)).astype(str).str.lower().str.replace(r"\s+", " ", regex=True))
-        phone_set = set(emp_df.get("Mobile Number", pd.Series(dtype=str)).astype(str).str.replace(r"\D+", "", regex=True))
-
-        id_norm    = (emp_id or "").strip().lower()
-        name_norm  = re.sub(r"\s+", " ", (name or "").strip().lower())
-        phone_norm = re.sub(r"\D+", "", mobile or "")
-
-        if id_norm and id_norm in id_set:
-            st.error(f"Employee ID '{emp_id}' already exists.")
-            return
-        if name_norm and name_norm in name_set:
-            st.error("An employee with the same name already exists.")
-            return
-        if phone_norm and phone_norm in phone_set:
-            st.error("Mobile Number is already used by another employee.")
-            return
-
-        row = {
-            "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
-            "New Signature": new_sig.strip(),
-            "Name": name.strip(),
-            "Address": address.strip(),
-            "Active": active.strip(),
-            "Position": position.strip(),
-            "Department": department.strip(),
-            "Location (KSA)": location_ksa.strip(),
-            "Project": project.strip(),
-            "Microsoft Teams": teams.strip(),
-            "Mobile Number": mobile.strip(),
-        }
-        new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True) if not emp_df.empty else pd.DataFrame([row])
-        new_df = _clean_employee_df(new_df)
-        write_worksheet(EMPLOYEE_WS, new_df)
-        st.success("✅ Employee saved to 'mainlists'.")
-
-# ---------- Inventory + Pending approvals ----------
-
-def register_device_tab():
-    st.subheader("📝 Register New Device")
-    with st.form("register_device", clear_on_submit=True):
-        r1c1, r1c2, r1c3 = st.columns(3)
-        with r1c1:
-            serial = st.text_input("Serial Number *")
-        with r1c2:
-            current_user = st.text_input("Current user")
-        with r1c3:
-            device = st.text_input("Device Type *")
-
-        r2c1, r2c2, r2c3 = st.columns(3)
-        with r2c1:
-            brand = st.text_input("Brand")
-        with r2c2:
-            model = st.text_input("Model")
-        with r2c3:
-            cpu = st.text_input("CPU")
-
-        r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1:
-            mem = st.text_input("Memory")
-        with r3c2:
-            hdd1 = st.text_input("Hard Drive 1")
-        with r3c3:
-            hdd2 = st.text_input("Hard Drive 2")
-
-        r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1:
-            gpu = st.text_input("GPU")
-        with r4c2:
-            screen = st.text_input("Screen Size")
-        with r4c3:
-            email = st.text_input("Email Address")
-
-        r5c1, r5c2, r5c3 = st.columns(3)
-        with r5c1:
-            contact = st.text_input("Contact Number")
-        with r5c2:
-            dept = st.text_input("Department")
-        with r5c3:
-            location = st.text_input("Location")
-
-        r6c1, r6c2 = st.columns([1, 2])
-        with r6c1:
-            office = st.text_input("Office")
-        with r6c2:
-            notes = st.text_area("Notes", height=60)
-
-        need_inline_admin = st.session_state.get("role") == "Staff"
-        if need_inline_admin:
-            st.caption("If an admin is next to you, they can confirm now to add directly; otherwise it goes to Pending for approval.")
-            inline_confirm = st.checkbox("Admin will confirm now", key="inline_admin_confirm")
-        else:
-            inline_confirm = False
-
-        submitted = st.form_submit_button("Save Device", type="primary")
-
-    if submitted:
-        if not serial.strip() or not device.strip():
-            st.error("Serial Number and Device Type are required.")
-            return
-
-        s_norm = normalize_serial(serial)
-        if not s_norm:
-            st.error("Serial Number cannot be blank after normalization.")
-            return
-
-        inv = read_worksheet(INVENTORY_WS)
-        if not inv.empty:
-            inv["__snorm"] = inv["Serial Number"].astype(str).map(normalize_serial)
-            if s_norm in set(inv["__snorm"]):
-                existing = inv[inv["__snorm"] == s_norm].iloc[0]
-                st.error(
-                    f"Duplicate serial. Already exists as '{existing['Serial Number']}' "
-                    f"({existing.get('Device Type','')} {existing.get('Brand','')}/{existing.get('Model','')})."
-                )
-                return
-
-        row = {
-            "Serial Number": serial.strip(),
-            "Device Type": device.strip(),
-            "Brand": brand.strip(),
-            "Model": model.strip(),
-            "CPU": cpu.strip(),
-            "Hard Drive 1": hdd1.strip(),
-            "Hard Drive 2": hdd2.strip(),
-            "Memory": mem.strip(),
-            "GPU": gpu.strip(),
-            "Screen Size": screen.strip(),
-            "Current user": current_user.strip(),
-            "Previous User": "",
-            "TO": current_user.strip(),
-            "Department": dept.strip(),
-            "Email Address": email.strip(),
-            "Contact Number": contact.strip(),
-            "Location": location.strip(),
-            "Office": office.strip(),
-            "Notes": notes.strip(),
-            "Date issued": datetime.now().strftime(DATE_FMT),
-            "Registered by": st.session_state.get("username", ""),
-        }
-
-        if st.session_state.get("role") == "Admin":
-            inv_fresh = read_worksheet(INVENTORY_WS)
-            inv_out = pd.concat([inv_fresh, pd.DataFrame([row])], ignore_index=True) if not inv_fresh.empty else pd.DataFrame([row])
-            inv_out = reorder_columns(inv_out, INVENTORY_COLS)
-            write_worksheet(INVENTORY_WS, inv_out)
-            st.success("✅ Device added to Inventory.")
-        else:
-            approver_now = False
-            if inline_confirm:
-                approver_now = admin_confirm_widget(key_prefix=f"add_{s_norm}", title="Admin confirmation to add device now")
-            if approver_now:
-                admin_user = st.session_state.get(f"admin_user_add_{s_norm}", "")
-                row_direct = dict(row)
-                row_direct["Registered by"] = f"{st.session_state.get('username','')} (via {admin_user})"
-                inv_fresh = read_worksheet(INVENTORY_WS)
-                inv_out = pd.concat([inv_fresh, pd.DataFrame([row_direct])], ignore_index=True) if not inv_fresh.empty else pd.DataFrame([row_direct])
-                inv_out = reorder_columns(inv_out, INVENTORY_COLS)
-                write_worksheet(INVENTORY_WS, inv_out)
-                st.success("✅ Device added to Inventory (admin confirmed).")
-            else:
-                pend = read_worksheet(PENDING_WS)
-                payload = dict(row)
-                payload.update({
-                    "Submitted by": st.session_state.get("username",""),
-                    "Submitted at": datetime.now().strftime(DATE_FMT),
-                    "Status": "Pending",
-                    "Approver": "",
-                    "Approved at": "",
-                    "Decision Note": "",
-                })
-                pend_out = pd.concat([pend, pd.DataFrame([payload])], ignore_index=True) if not pend.empty else pd.DataFrame([payload])
-                pend_out = reorder_columns(pend_out, PENDING_COLS)
-                write_worksheet(PENDING_WS, pend_out)
-                st.success("🕒 Submitted for admin approval. You'll be able to transfer after it's approved.")
-
-# ---------- Inventory view ----------
+# =============================================================================
+# TABS – INVENTORY
+# =============================================================================
 
 def inventory_tab():
     st.subheader("📋 Main Inventory")
@@ -902,157 +624,235 @@ def inventory_tab():
     else:
         st.dataframe(df, use_container_width=True)
 
-# ---------- Transfer with PDF required + Approvals (moved here) ----------
+# =============================================================================
+# TABS – TRANSFERS (NEW WORKFLOW)
+# =============================================================================
 
 def transfer_tab():
-    st.subheader("🔁 Transfer Device (PDF form required)")
+    """Staff can submit a transfer with a signed PDF; Admins approve and apply it."""
+    st.subheader("🔁 Transfer Device (Admin approval with PDF)")
 
-    # Blank template download
-    template_paths = ["assets/transfer_form_template.pdf", "transfer_form_template.pdf"]
-    found_template = next((p for p in template_paths if os.path.exists(p)), None)
-    col_dl, _ = st.columns([1,4])
-    with col_dl:
-        if found_template:
-            with open(found_template, "rb") as f:
-                st.download_button(
-                    "⬇️ Download transfer form (PDF)",
-                    f.read(),
-                    file_name="transfer_form_template.pdf",
-                    mime="application/pdf",
-                    key="dl_template_transfer"
-                )
-        else:
-            st.info("Place a template at assets/transfer_form_template.pdf to enable download.")
-
-    # Transfer form
-    inventory_df = read_worksheet(INVENTORY_WS)
-    if inventory_df.empty:
+    inv_df = read_worksheet(INVENTORY_WS)
+    if inv_df.empty:
         st.warning("Inventory is empty.")
         return
 
-    serial_list = sorted(inventory_df["Serial Number"].dropna().astype(str).unique().tolist())
-    serial = st.selectbox("Serial Number", ["— Select —"] + serial_list, key="transfer_sn")
-    chosen_serial = None if serial == "— Select —" else serial
+    # STAFF SUBMISSION UI ------------------------------------------------------
+    if st.session_state.get("role") == "Staff":
+        st.markdown("#### Submit Transfer for Approval")
+        _refresh_button("transfer_staff")
 
-    existing_users = sorted([u for u in inventory_df["Current user"].dropna().astype(str).tolist() if u.strip()])
-    new_owner_choice = st.selectbox("New Owner", ["— Select —"] + existing_users + ["Type a new name…"], key="transfer_new_owner_choice")
-    if new_owner_choice == "Type a new name…":
-        new_owner = st.text_input("Enter new owner name", key="transfer_new_owner_custom")
+        serials = sorted(inv_df["Serial Number"].dropna().astype(str).unique().tolist())
+        serial = st.selectbox("Serial Number", ["— Select —"] + serials, key="t_sn")
+        if serial != "— Select —":
+            row = inv_df[inv_df["Serial Number"].astype(str) == serial].iloc[0]
+            current_owner = str(row.get("Current user", ""))
+            st.info(f"Current owner: **{current_owner or '(blank)'}**")
+        else:
+            current_owner = ""
+
+        candidate_users = sorted([u for u in inv_df["Current user"].astype(str).tolist() if u.strip()])
+        to_owner_choice = st.selectbox("New Owner", ["— Select —"] + candidate_users + ["Type a new name…"], key="t_to_owner_choice")
+        if to_owner_choice == "Type a new name…":
+            to_owner = st.text_input("Enter new owner name", key="t_to_owner_custom")
+        else:
+            to_owner = "" if to_owner_choice == "— Select —" else to_owner_choice
+
+        uploaded_pdf = st.file_uploader(
+            "Upload signed approval form (PDF, ≤ 2 MB) *",
+            type=["pdf"], accept_multiple_files=False, key="t_pdf_staff"
+        )
+
+        def _pdf_ok(f):
+            if not f:
+                return False, "Please upload the signed approval form (PDF)."
+            if getattr(f, "type", "") != "application/pdf":
+                return False, "Only PDF files are allowed."
+            size = getattr(f, "size", None)
+            if size is None:
+                f.seek(0, os.SEEK_END); size = f.tell(); f.seek(0)
+            if size <= 0 or size > 2 * 1024 * 1024:
+                return False, "PDF must be between 1 byte and 2 MB."
+            return True, ""
+
+        ok_file, err = _pdf_ok(uploaded_pdf)
+        if not ok_file and uploaded_pdf is not None:
+            st.error(err)
+
+        submit_btn = st.button(
+            "📨 Submit for Admin Approval",
+            type="primary",
+            disabled=not (serial != "— Select —" and to_owner.strip() and ok_file),
+            key="t_submit"
+        )
+
+        if submit_btn:
+            try:
+                pdf_bytes = uploaded_pdf.getvalue()
+                pdf_url = upload_pdf_to_drive(
+                    f"transfer_{serial}_{int(time.time())}.pdf", pdf_bytes
+                )
+            except Exception as e:
+                st.error(f"Could not store PDF form. Ask admin to set [drive].folder_id in secrets. Detail: {e}")
+                return
+
+            payload = {
+                "Serial Number": serial,
+                "Device Type": str(row.get("Device Type", "")) if serial != "— Select —" else "",
+                "From owner": current_owner,
+                "To owner": to_owner.strip(),
+                "Submitted by": st.session_state.get("username", ""),
+                "Submitted at": datetime.now().strftime(DATE_FMT),
+                "PDF URL": pdf_url,
+                "Status": "Pending",
+                "Approver": "",
+                "Approved at": "",
+                "Decision Note": "",
+            }
+            append_to_worksheet(PENDING_TRANSFERS_WS, pd.DataFrame([payload]))
+            st.success("✅ Transfer submitted. Admin will review and approve.")
+
+    # ADMIN REVIEW & DIRECT TRANSFER ------------------------------------------
     else:
-        new_owner = new_owner_choice if new_owner_choice != "— Select —" else ""
-
-    uploaded_pdf = st.file_uploader(
-        "Upload signed transfer form (PDF, ≤ 100 KB) *",
-        type=["pdf"],
-        accept_multiple_files=False,
-        key="transfer_pdf"
-    )
-
-    def _pdf_ok() -> tuple[bool, str]:
-        if not uploaded_pdf:
-            return False, "Please upload the signed transfer form (PDF)."
-        if getattr(uploaded_pdf, "type", "") != "application/pdf":
-            return False, "Only PDF files are allowed."
-        size = getattr(uploaded_pdf, "size", None)
-        if size is None:
-            uploaded_pdf.seek(0, os.SEEK_END); size = uploaded_pdf.tell(); uploaded_pdf.seek(0)
-        if size <= 0 or size > 100 * 1024:
-            return False, "PDF must be between 1 byte and 100 KB."
-        return True, ""
-
-    ok_file, err_msg = _pdf_ok()
-    if not ok_file and uploaded_pdf is not None:
-        st.error(err_msg)
-
-    do_transfer = st.button(
-        "Transfer Now",
-        type="primary",
-        disabled=not (chosen_serial and new_owner.strip() and ok_file),
-        key="transfer_now"
-    )
-
-    if do_transfer:
-        match = inventory_df[inventory_df["Serial Number"].astype(str) == chosen_serial]
-        if match.empty:
-            st.warning("Serial number not found.")
-            return
-
-        pdf_bytes = uploaded_pdf.getvalue()
-        pdf_filename = f"transfer_{chosen_serial}_{int(time.time())}.pdf"
-        try:
-            form_url = upload_pdf_to_drive(pdf_filename, pdf_bytes)
-        except Exception as e:
-            st.error(f"Could not store PDF form. Admin: set [drive].folder_id in secrets and deploy. Detail: {e}")
-            return
-
-        idx = match.index[0]
-        prev_user = str(inventory_df.loc[idx, "Current user"] or "")
-        now_str   = datetime.now().strftime(DATE_FMT)
-        actor     = st.session_state.get("username", "")
-
-        inventory_df.loc[idx, "Previous User"] = prev_user
-        inventory_df.loc[idx, "Current user"]  = new_owner.strip()
-        inventory_df.loc[idx, "TO"]            = new_owner.strip()
-        inventory_df.loc[idx, "Date issued"]   = now_str
-        inventory_df.loc[idx, "Registered by"] = actor
-
-        inventory_df = reorder_columns(inventory_df, INVENTORY_COLS)
-        write_worksheet(INVENTORY_WS, inventory_df)
-
-        log_row = {
-            "Device Type": inventory_df.loc[idx, "Device Type"],
-            "Serial Number": chosen_serial,
-            "From owner": prev_user,
-            "To owner": new_owner.strip(),
-            "Date issued": now_str,
-            "Registered by": actor,
-            "Form URL": form_url,
-        }
-        append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
-
-        st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()} (form stored)")
-
-    # -------------------- Admin-only: Pending Device Approvals (moved here) --------------------
-    if st.session_state.get("role") == "Admin":
-        st.divider()
-        st.markdown("### 🔏 Pending Device Approvals")
-        _refresh_button("approvals_in_transfer")
-        pend = read_worksheet(PENDING_WS)
+        st.markdown("#### Admin – Pending Transfer Approvals")
+        _refresh_button("transfer_admin")
+        pend = read_worksheet(PENDING_TRANSFERS_WS)
         if pend.empty or not (pend["Status"] == "Pending").any():
-            st.info("No pending devices.")
+            st.info("No pending transfers.")
         else:
             for ridx, row in pend[pend["Status"] == "Pending"].reset_index().iterrows():
-                label = f"{row['Device Type']} — {row['Brand']} {row['Model']} — SN: {row['Serial Number']}"
+                label = f"SN {row['Serial Number']} – {row['From owner']} → {row['To owner']}"
                 with st.expander(label):
-                    st.write({k: row[k] for k in ["Submitted by","Submitted at","Department","Current user","Location","Notes"]})
+                    st.write({
+                        "Serial Number": row["Serial Number"],
+                        "From": row["From owner"],
+                        "To": row["To owner"],
+                        "Submitted by": row["Submitted by"],
+                        "Submitted at": row["Submitted at"],
+                    })
+                    if row.get("PDF URL"):
+                        st.link_button("Open PDF form", row["PDF URL"], key=f"open_pdf_{row['Serial Number']}_{ridx}")
                     c1, c2, c3 = st.columns([1,1,3])
                     with c3:
-                        note = st.text_input("Decision note", key=f"apx_note_{row['Serial Number']}_{ridx}")
-                    row_index = row['index']
+                        note = st.text_input("Decision note", key=f"tr_note_{row['Serial Number']}_{ridx}")
+                    real_idx = row["index"]
+
+                    def _apply_transfer(inv_df_local: pd.DataFrame, serial: str, to_owner: str):
+                        match = inv_df_local[inv_df_local["Serial Number"].astype(str) == str(serial)]
+                        if match.empty:
+                            st.error("Serial not found in inventory.")
+                            return False
+                        idx = match.index[0]
+                        prev_user = str(inv_df_local.loc[idx, "Current user"] or "")
+                        now_str   = datetime.now().strftime(DATE_FMT)
+                        actor     = st.session_state.get("username", "")
+                        inv_df_local.loc[idx, "Previous User"] = prev_user
+                        inv_df_local.loc[idx, "Current user"]  = to_owner
+                        inv_df_local.loc[idx, "TO"]            = to_owner
+                        inv_df_local.loc[idx, "Date issued"]   = now_str
+                        inv_df_local.loc[idx, "Registered by"] = actor
+                        write_worksheet(INVENTORY_WS, reorder_columns(inv_df_local, INVENTORY_COLS))
+                        log_row = {
+                            "Device Type": inv_df_local.loc[idx, "Device Type"],
+                            "Serial Number": serial,
+                            "From owner": prev_user,
+                            "To owner": to_owner,
+                            "Date issued": now_str,
+                            "Registered by": actor,
+                            "Form URL": row.get("PDF URL", ""),
+                        }
+                        append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
+                        return True
+
                     with c1:
-                        if st.button("✅ Approve", key=f"apx_approve_{row['Serial Number']}_{ridx}"):
-                            inv = read_worksheet(INVENTORY_WS)
-                            inv_out = pd.concat([inv, pd.DataFrame([row[INVENTORY_COLS].to_dict()])], ignore_index=True) if not inv.empty else pd.DataFrame([row[INVENTORY_COLS].to_dict()])
-                            inv_out = reorder_columns(inv_out, INVENTORY_COLS)
-                            write_worksheet(INVENTORY_WS, inv_out)
-                            pend.at[row_index, "Status"] = "Approved"
-                            pend.at[row_index, "Approver"] = st.session_state.get("username", "")
-                            pend.at[row_index, "Approved at"] = datetime.now().strftime(DATE_FMT)
-                            pend.at[row_index, "Decision Note"] = note
-                            write_worksheet(PENDING_WS, pend)
-                            st.success("Approved and added to Inventory.")
-                            st.rerun()
+                        if st.button("✅ Approve", key=f"tr_approve_{row['Serial Number']}_{ridx}"):
+                            inv_fresh = read_worksheet(INVENTORY_WS)
+                            ok = _apply_transfer(inv_fresh, row["Serial Number"], row["To owner"])
+                            if ok:
+                                pend.at[real_idx, "Status"] = "Approved"
+                                pend.at[real_idx, "Approver"] = st.session_state.get("username", "")
+                                pend.at[real_idx, "Approved at"] = datetime.now().strftime(DATE_FMT)
+                                pend.at[real_idx, "Decision Note"] = note
+                                write_worksheet(PENDING_TRANSFERS_WS, pend)
+                                st.success("Transfer approved and applied to inventory.")
+                                st.rerun()
                     with c2:
-                        if st.button("❌ Reject", key=f"apx_reject_{row['Serial Number']}_{ridx}"):
-                            pend.at[row_index, "Status"] = "Rejected"
-                            pend.at[row_index, "Approver"] = st.session_state.get("username", "")
-                            pend.at[row_index, "Approved at"] = datetime.now().strftime(DATE_FMT)
-                            pend.at[row_index, "Decision Note"] = note
-                            write_worksheet(PENDING_WS, pend)
-                            st.warning("Rejected.")
+                        if st.button("❌ Reject", key=f"tr_reject_{row['Serial Number']}_{ridx}"):
+                            pend.at[real_idx, "Status"] = "Rejected"
+                            pend.at[real_idx, "Approver"] = st.session_state.get("username", "")
+                            pend.at[real_idx, "Approved at"] = datetime.now().strftime(DATE_FMT)
+                            pend.at[real_idx, "Decision Note"] = note
+                            write_worksheet(PENDING_TRANSFERS_WS, pend)
+                            st.warning("Transfer rejected.")
                             st.rerun()
 
-# ---------- History ----------
+        st.divider()
+        st.markdown("#### Admin – Direct Transfer (with PDF)")
+        serials = sorted(inv_df["Serial Number"].dropna().astype(str).unique().tolist())
+        serial = st.selectbox("Serial Number", ["— Select —"] + serials, key="t_sn_admin")
+        if serial != "— Select —":
+            match = inv_df[inv_df["Serial Number"].astype(str) == serial]
+            if not match.empty:
+                st.caption(f"Current owner: {match.iloc[0]['Current user']}")
+        candidate_users = sorted([u for u in inv_df["Current user"].astype(str).tolist() if u.strip()])
+        to_owner_choice = st.selectbox("New Owner", ["— Select —"] + candidate_users + ["Type a new name…"], key="t_to_owner_choice_admin")
+        if to_owner_choice == "Type a new name…":
+            to_owner = st.text_input("Enter new owner name", key="t_to_owner_custom_admin")
+        else:
+            to_owner = "" if to_owner_choice == "— Select —" else to_owner_choice
+
+        pdf_admin = st.file_uploader(
+            "Upload signed approval form (PDF, ≤ 2 MB) *",
+            type=["pdf"], accept_multiple_files=False, key="t_pdf_admin"
+        )
+        ok_file = pdf_admin is not None
+        if ok_file and getattr(pdf_admin, "type", "") != "application/pdf":
+            st.error("Only PDF files are allowed.")
+            ok_file = False
+
+        btn_apply = st.button(
+            "⚡ Apply Transfer Now (Admin)",
+            type="primary",
+            disabled=not (serial != "— Select —" and to_owner.strip() and ok_file),
+            key="t_apply_admin"
+        )
+        if btn_apply:
+            try:
+                pdf_bytes = pdf_admin.getvalue()
+                pdf_url = upload_pdf_to_drive(f"transfer_{serial}_{int(time.time())}.pdf", pdf_bytes)
+            except Exception as e:
+                st.error(f"Could not store PDF form. Set [drive].folder_id in secrets. Detail: {e}")
+                return
+            # apply immediately
+            match = inv_df[inv_df["Serial Number"].astype(str) == serial]
+            if match.empty:
+                st.error("Serial not found.")
+                return
+            idx = match.index[0]
+            prev_user = str(inv_df.loc[idx, "Current user"] or "")
+            now_str   = datetime.now().strftime(DATE_FMT)
+            actor     = st.session_state.get("username", "")
+            inv_df.loc[idx, "Previous User"] = prev_user
+            inv_df.loc[idx, "Current user"]  = to_owner
+            inv_df.loc[idx, "TO"]            = to_owner
+            inv_df.loc[idx, "Date issued"]   = now_str
+            inv_df.loc[idx, "Registered by"] = actor
+            write_worksheet(INVENTORY_WS, reorder_columns(inv_df, INVENTORY_COLS))
+            log_row = {
+                "Device Type": inv_df.loc[idx, "Device Type"],
+                "Serial Number": serial,
+                "From owner": prev_user,
+                "To owner": to_owner,
+                "Date issued": now_str,
+                "Registered by": actor,
+                "Form URL": pdf_url,
+            }
+            append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
+            st.success("✅ Transfer applied.")
+
+# =============================================================================
+# TABS – HISTORY & EXPORT
+# =============================================================================
 
 def history_tab():
     st.subheader("📜 History Transfer")
@@ -1063,65 +863,27 @@ def history_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-# ---------- Export (CSV + template + open PDF forms) ----------
 
 def export_tab():
-    st.subheader("⬇️ Export (always fresh)")
+    st.subheader("⬇️ Export")
     _refresh_button("export")
-    inv = read_worksheet(INVENTORY_WS)
-    log = read_worksheet(TRANSFERLOG_WS)
-    emp = read_worksheet(EMPLOYEE_WS)
-    pend = read_worksheet(PENDING_WS)
-    st.caption(f"Last fetched: {datetime.now().strftime(DATE_FMT)}")
-
-    # CSV buttons (+ template PDF)
-    template_paths = ["assets/transfer_form_template.pdf", "transfer_form_template.pdf"]
-    found_template = next((p for p in template_paths if os.path.exists(p)), None)
+    inv  = read_worksheet(INVENTORY_WS)
+    log  = read_worksheet(TRANSFERLOG_WS)
+    emp  = read_worksheet(EMPLOYEE_WS)
+    pend_dev = read_worksheet(PENDING_DEVICES_WS)
+    pend_tr  = read_worksheet(PENDING_TRANSFERS_WS)
 
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
-        st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"), "inventory.csv", "text/csv", key="dl_inv")
+        st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"), "inventory.csv", "text/csv")
     with c2:
-        st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"), "transfer_log.csv", "text/csv", key="dl_log")
+        st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"), "transfer_log.csv", "text/csv")
     with c3:
-        st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"), "employees.csv", "text/csv", key="dl_emp")
+        st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"), "employees.csv", "text/csv")
     with c4:
-        st.download_button("Pending Devices CSV", pend.to_csv(index=False).encode("utf-8"), "pending_devices.csv", "text/csv", key="dl_pend")
+        st.download_button("Pending Devices CSV", pend_dev.to_csv(index=False).encode("utf-8"), "pending_devices.csv", "text/csv")
     with c5:
-        if found_template:
-            with open(found_template, "rb") as f:
-                st.download_button(
-                    "Blank Transfer Form (PDF)",
-                    f.read(),
-                    file_name="transfer_form_template.pdf",
-                    mime="application/pdf",
-                    key="dl_template_export"
-                )
-        else:
-            st.info("Add assets/transfer_form_template.pdf to enable template download.")
-
-    # Signed form open buttons
-    st.markdown("### 📄 Signed Transfer Forms")
-    if log.empty or not log.get("Form URL").dropna().any():
-        st.info("No signed forms uploaded yet.")
-        return
-
-    df_forms = log.dropna(subset=["Form URL"]).copy()
-    df_forms["__ts"] = pd.to_datetime(df_forms["Date issued"], errors="coerce")
-    df_forms = df_forms.sort_values("__ts", ascending=False)
-
-    sn_options = ["All"] + sorted(df_forms["Serial Number"].astype(str).unique().tolist())
-    choice_sn = st.selectbox("Filter by Serial Number", sn_options, key="export_forms_sn")
-    top_n = st.number_input("Show most recent N", min_value=1, max_value=1000, value=50, step=1, key="export_forms_n")
-
-    if choice_sn != "All":
-        df_forms = df_forms[df_forms["Serial Number"].astype(str) == choice_sn]
-
-    df_forms = df_forms.head(int(top_n))
-
-    for i, r in df_forms.iterrows():
-        label = f"{r['Serial Number']} – {r.get('From owner','')} → {r.get('To owner','')} ({r.get('Date issued','')})"
-        st.link_button(f"Open PDF: {label}", r["Form URL"], key=f"open_form_{i}")
+        st.download_button("Pending Transfers CSV", pend_tr.to_csv(index=False).encode("utf-8"), "pending_transfers.csv", "text/csv")
 
 # =============================================================================
 # MAIN
@@ -1133,28 +895,22 @@ def run_app():
 
     if st.session_state.role == "Admin":
         tabs = st.tabs([
-            "🧑‍💼 Employee Register",
             "🧾 Main Employees",
-            "📝 Register Device",
             "📋 Main Inventory",
-            "🔁 Transfer Device",
+            "🔁 Transfers",
             "📜 History Transfer",
             "⬇️ Export",
         ])
-        with tabs[0]: employee_register_tab()
-        with tabs[1]: employees_view_tab()
-        with tabs[2]: register_device_tab()
-        # Approvals tab removed; moved into Transfer
-        with tabs[3]: inventory_tab()
-        with tabs[4]: transfer_tab()
-        with tabs[5]: history_tab()
-        with tabs[6]: export_tab()
-    else:
-        tabs = st.tabs(["📋 Main Inventory", "📝 Register Device", "🔁 Transfer Device", "📜 History Transfer"])
-        with tabs[0]: inventory_tab()
-        with tabs[1]: register_device_tab()
+        with tabs[0]: employees_view_tab()
+        with tabs[1]: inventory_tab()
         with tabs[2]: transfer_tab()
         with tabs[3]: history_tab()
+        with tabs[4]: export_tab()
+    else:
+        tabs = st.tabs(["📋 Main Inventory", "🔁 Transfer (Request)", "📜 History Transfer"])
+        with tabs[0]: inventory_tab()
+        with tabs[1]: transfer_tab()
+        with tabs[2]: history_tab()
 
 # =============================================================================
 # ENTRY
@@ -1173,12 +929,13 @@ if not st.session_state.authenticated and not st.session_state.get("just_logged_
 if st.session_state.authenticated:
     run_app()
 else:
-    # Quick onboarding note if creds/secrets missing
     if DEBUG_SHOW:
         with st.expander("🔧 Debug – secrets checks"):
             st.write("Sheet URL:", _get_sheet_url())
             try:
                 st.write("Service account:", st.secrets["gcp_service_account"].get("client_email"))
-            except Exception as e:
+            except Exception:
                 st.error("Missing gcp_service_account in secrets")
+    st.subheader("Welcome")
+    st.caption("Please log in to continue.")
     show_login()
