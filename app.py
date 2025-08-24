@@ -335,15 +335,6 @@ def _load_sa_info() -> dict:
 def _get_creds():
     sa_info = _load_sa_info()
     return Credentials.from_service_account_info(sa_info, scopes=SCOPES)
-    
-try:
-= _get_creds()
-st.sidebar.success("✅ Service account key parsed OK")
-except Exception as e:
-import traceback
-st.sidebar.error("❌ Service account key FAILED to parse")
-st.sidebar.code(f"{type(e).__name__}: {e}")
-st.stop()
 
 
 @st.cache_resource(show_spinner=False)
