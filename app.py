@@ -383,6 +383,8 @@ def _drive_make_public(file_id: str):
     except Exception:
         pass
 
+from googleapiclient.http import MediaIoBaseUpload
+
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
     """Upload a PDF to a Shared-drive folder. Return (webViewLink, file_id)."""
     if uploaded_file is None:
@@ -390,22 +392,21 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
 
     data = uploaded_file.getvalue()
     fname = f"{prefix}_{int(time.time())}.pdf"
-    folder_id = st.secrets.get("drive", {}).get("approvals_folder_id", "")
-    
-file = drive.files().create(
-    body={"name": fname, "parents": [folder_id]},
-    media_body=media,
-    fields="id, webViewLink",
-    supportsAllDrives=True,
-).execute()
 
-    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
+    folder_id = st.secrets.get("drive", {}).get("approvals_folder_id", "")
+    metadata = {"name": fname}
+    if folder_id:
+        metadata["parents"] = [folder_id]
+
     drive = _get_drive()
+
+    # <- these two lines must be at the SAME indent level
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
     file = drive.files().create(
         body=metadata,
         media_body=media,
         fields="id, webViewLink",
-        supportsAllDrives=True,  # REQUIRED for Shared drives
+        supportsAllDrives=True,
     ).execute()
 
     file_id = file.get("id", "")
@@ -415,6 +416,7 @@ file = drive.files().create(
         _drive_make_public(file_id)
 
     return link, file_id
+
 
 
 # ---- Sheet helpers ----
