@@ -1290,9 +1290,7 @@ else:
             do_login(username, user.get("role", "Staff"))
         else:
             st.error("❌ Invalid username or password.")
-           json_b64 = "base64-encoded-json"
            mode = "local_server" | "console"
-      2) Env vars: GOOGLE_OAUTH_CLIENT_JSON or GOOGLE_OAUTH_CLIENT_B64
       3) Local file: credentials.json (desktop or web client)
     Returns:
       dict with keys:
