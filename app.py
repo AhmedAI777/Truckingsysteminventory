@@ -317,7 +317,8 @@ def _load_sa_info() -> dict:
       - st.secrets['gcp_service_account'] (dict or JSON string)
       - env GOOGLE_SERVICE_ACCOUNT_JSON (JSON string)
     """
-    sa = {}
+    sa = st.secrets["gcp_service_account"]
+    sa["private_key"] = sa["private_key"].replace("\n", "\n")
 
     raw = st.secrets.get("gcp_service_account", {})
     if isinstance(raw, dict):
