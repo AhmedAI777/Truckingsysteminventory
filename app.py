@@ -19,6 +19,38 @@ from gspread_dataframe import set_with_dataframe
 import extra_streamlit_components as stx
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
+import pickle
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+
+# ---- Gmail OAuth for Drive ----
+OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+
+def get_gmail_drive():
+    """Authenticate with Gmail (OAuth) instead of Service Account."""
+    creds = None
+    token_path = "token.pickle"
+
+    # Load saved token if it exists
+    if os.path.exists(token_path):
+        with open(token_path, "rb") as token:
+            creds = pickle.load(token)
+
+    # Refresh / request new login
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                "credentials.json", OAUTH_SCOPES
+            )
+            creds = flow.run_local_server(port=0)
+
+        # Save the token for reuse
+        with open(token_path, "wb") as token:
+            pickle.dump(creds, token)
+
+    return build("drive", "v3", credentials=creds)
 
 # =============================================================================
 # CONFIG
@@ -409,6 +441,7 @@ def _drive_make_public(file_id: str):
 def _is_pdf_bytes(data: bytes) -> bool:
     return isinstance(data, (bytes, bytearray)) and data[:4] == b"%PDF"
 
+
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
     """Upload PDF to a specific folder in My Drive using OAuth Gmail login."""
     if uploaded_file is None:
@@ -442,6 +475,16 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
 
     file_id = file.get("id", "")
     link = file.get("webViewLink", "")
+
+    # ✅ Make it public if set in secrets.toml
+    if st.secrets.get("drive", {}).get("public", True):
+        try:
+            drive.permissions().create(
+                fileId=file_id,
+                body={"role": "reader", "type": "anyone"},
+            ).execute()
+        except Exception as e:
+            st.warning(f"Could not make file public: {e}")
 
     return link, file_id
 
