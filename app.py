@@ -1,4 +1,4 @@
-# pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth google-api-python-client
+# pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth google-api-python-client google-auth-oauthlib
 
 import os
 import re
@@ -26,14 +26,605 @@ from google.auth.transport.requests import Request
 # ---- Gmail OAuth for Drive ----
 OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
-def get_gmail_drive():
-    """Authenticate with Gmail (OAuth) instead of Service Account."""
-    import pickle
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from google.auth.transport.requests import Request
-    from googleapiclient.discovery import build
+def _load_oauth_client_config():
+    """
+    Load Google OAuth client config for user sign-in (Drive upload).
+    Supports:
+      1) Streamlit secrets:
+           [gmail_oauth]
+           json = """{...{"web":{"client_id":"436839270168-lkdbicfjfefo161qkfevvrlkbrl8od54.apps.googleusercontent.com","project_id":"truckingsysteminventory","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":"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","redirect_uris":["https://advancedconstructiontrackingsystem.streamlit.app"],"javascript_origins":["https://advancedconstructiontrackingsystem.streamlit.app"]}}...}"""
+           # or
+           json_b64 = "base64-encoded-json"
+           mode = "local_server" | "console"
+      2) Env vars: GOOGLE_OAUTH_CLIENT_JSON or GOOGLE_OAUTH_CLIENT_B64
+      3) Local file: credentials.json (desktop or web client)
+    Returns:
+      dict with keys:
+        - "mode": "config" | "file"
+        - "client": dict (if mode=config) ready for InstalledAppFlow.from_client_config
+        - "path": str (if mode=file) path to credentials.json
+        - "auth_mode": "local_server" | "console"
+    """
+    auth_mode = st.secrets.get("gmail_oauth", {}).get("mode", "local_server")
 
+    # 1) Secrets: raw json or base64
+    go = st.secrets.get("gmail_oauth", {})
+    raw_json = go.get("json", "")
+    if not raw_json and go.get("json_b64", ""):
+        try:
+            raw_json = base64.b64decode(go["json_b64"]).decode()
+        except Exception:
+            st.warning("gmail_oauth.json_b64 is not valid base64; falling back.")
+
+    if raw_json:
+        try:
+            parsed = json.loads(raw_json)
+            # Accept either {"installed": {...}} or {"web": {...}} or the inner dict
+            if "installed" in parsed or "web" in parsed:
+                return {"mode": "config", "client": parsed, "auth_mode": auth_mode}
+            # If it's the inner block, wrap it
+            if parsed.get("redirect_uris") or parsed.get("client_id"):
+                # Assume desktop style if no redirect_uris domain
+                wrapper_key = "installed"
+                if parsed.get("javascript_origins") or parsed.get("redirect_uris"):
+                    # could be web config, but InstalledAppFlow can still accept under "installed" for local flow
+                    # If you truly deploy with web flow, you'll handle redirects yourself.
+                    wrapper_key = "installed"
+                return {"mode": "config", "client": {wrapper_key: parsed}, "auth_mode": auth_mode}
+        except Exception:
+            st.warning("gmail_oauth.json in secrets is not valid JSON; falling back.")
+
+    # 2) Env vars
+    env_raw = os.environ.get("GOOGLE_OAUTH_CLIENT_JSON", "")
+    if not env_raw and os.environ.get("GOOGLE_OAUTH_CLIENT_B64", ""):
+        try:
+            env_raw = base64.b64decode(os.environ["GOOGLE_OAUTH_CLIENT_B64"]).decode()
+        except Exception:
+            st.warning("GOOGLE_OAUTH_CLIENT_B64 is not valid base64; falling back.")
+
+    if env_raw:
+        try:
+            parsed = json.loads(env_raw)
+            if "installed" in parsed or "web" in parsed:
+                return {"mode": "config", "client": parsed, "auth_mode": auth_mode}
+            if parsed.get("redirect_uris") or parsed.get("client_id"):
+                return {"mode": "config", "client": {"installed": parsed}, "auth_mode": auth_mode}
+        except Exception:
+            st.warning("GOOGLE_OAUTH_CLIENT_JSON is not valid JSON; falling back.")
+
+    # 3) Local credentials.json
+    local_path = "credentials.json"
+    if os.path.exists(local_path):
+        return {"mode": "file", "path": local_path, "auth_mode": auth_mode}
+
+    # Not found
+    return {"mode": None, "auth_mode": auth_mode}
+
+def get_gmail_drive():
+    """Authenticate the user with OAuth (NOT service account) and return Drive client."""
+    cfg = _load_oauth_client_config()
+    token_path = "token.pickle"
     creds = None
+
+    # Load saved token if it exists
+    if os.path.exists(token_path):
+        try:
+            with open(token_path, "rb") as token:
+                creds = pickle.load(token)
+        except Exception:
+            creds = None
+
+    # Refresh / login
+    if not creds or not creds.valid:
+        if creds and creds.expired and getattr(creds, "refresh_token", None):
+            creds.refresh(Request())
+        else:
+            if cfg["mode"] == "file":
+                if cfg.get("path") and os.path.exists(cfg["path"]):
+                    flow = InstalledAppFlow.from_client_secrets_file(cfg["path"], OAUTH_SCOPES)
+                else:
+                    st.error("credentials.json path not found. Provide OAuth client via secrets/env or place credentials.json next to the app.")
+                    st.stop()
+            elif cfg["mode"] == "config":
+                flow = InstalledAppFlow.from_client_config(cfg["client"], OAUTH_SCOPES)
+            else:
+                st.error(
+                    "Google OAuth client not found.\n\n"
+                    "Provide one of:\n"
+                    "• credentials.json file next to your app\n"
+                    "• st.secrets [gmail_oauth].json (or json_b64)\n"
+                    "• env var GOOGLE_OAUTH_CLIENT_JSON (or GOOGLE_OAUTH_CLIENT_B64)"
+                )
+                st.stop()
+
+            # Choose auth flow mode
+            if cfg.get("auth_mode", "local_server") == "console":
+                creds = flow.run_console()
+            else:
+                # Best for local dev; for headless servers use 'console' mode in secrets
+                creds = flow.run_local_server(port=0)
+
+        # Save the token for reuse
+        try:
+            with open(token_path, "wb") as token:
+                pickle.dump(creds, token)
+        except Exception:
+            pass
+
+    return build("drive", "v3", credentials=creds)
+
+# =============================================================================
+# CONFIG
+# =============================================================================
+APP_TITLE = "Tracking Inventory Management System"
+SUBTITLE  = "Advanced Construction"
+DATE_FMT  = "%Y-%m-%d %H:%M:%S"
+
+SESSION_TTL_DAYS = 30
+SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60
+COOKIE_NAME = "ac_auth_v2"
+COOKIE_PATH = "/"
+
+# If you embed the app (or see logout-on-refresh), keep SameSite=None + Secure=True (HTTPS required).
+COOKIE_SECURE   = st.secrets.get("auth", {}).get("cookie_secure", True)
+COOKIE_SAMESITE = st.secrets.get("auth", {}).get("cookie_samesite", "Lax")  # use "None" only when embedded
+
+SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
+
+INVENTORY_WS    = "truckinventory"
+TRANSFERLOG_WS  = "transfer_log"
+EMPLOYEE_WS     = "mainlists"
+
+# New: Pending approvals sheets
+PENDING_DEVICE_WS    = "pending_device_reg"
+PENDING_TRANSFER_WS  = "pending_transfers"
+
+INVENTORY_COLS = [
+    "Serial Number","Device Type","Brand","Model","CPU",
+    "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
+    "Current user","Previous User","TO",
+    "Department","Email Address","Contact Number","Location","Office",
+    "Notes","Date issued","Registered by"
+]
+LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
+
+# Employees sheet columns (canonical). Keep both name columns, remove APLUS from schema.
+EMPLOYEE_CANON_COLS = [
+    "New Employeer","Employee ID","New Signature","Name","Address",
+    "Active","Position","Department","Location (KSA)",
+    "Project","Microsoft Teams","Mobile Number"
+]
+
+# New: Pending approvals columns
+APPROVAL_META_COLS = [
+    "Approval Status",              # Pending / Approved / Rejected
+    "Approval PDF",                 # Drive webViewLink
+    "Approval File ID",             # Drive file id
+    "Submitted by",
+    "Submitted at",
+    "Approver",
+    "Decision at"
+]
+PENDING_DEVICE_COLS   = INVENTORY_COLS + APPROVAL_META_COLS
+PENDING_TRANSFER_COLS = LOG_COLS + APPROVAL_META_COLS
+
+# Label used when a device is not assigned yet
+UNASSIGNED_LABEL = "Unassigned (Stock)"
+
+HEADER_SYNONYMS = {
+    "new employee": "New Employeer",
+    "new employeer": "New Employeer",
+    "employeeid": "Employee ID",
+    "newsignature": "New Signature",
+    "locationksa": "Location (KSA)",
+    "microsoftteams": "Microsoft Teams",
+    "microsoftteam": "Microsoft Teams",
+    "mobile": "Mobile Number",
+    "mobilenumber": "Mobile Number",
+}
+
+INVENTORY_HEADER_SYNONYMS = {
+    "user": "Current user",
+    "currentuser": "Current user",
+    "previoususer": "Previous User",
+    "to": "TO",
+    "department1": None,
+}
+
+st.set_page_config(page_title=APP_TITLE, layout="wide")
+COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
+
+# =============================================================================
+# AUTH (users + cookie)
+# =============================================================================
+
+def _load_users_from_secrets():
+    users_cfg = st.secrets.get("auth", {}).get("users", [])
+    users = {}
+    for u in users_cfg:
+        users[u["username"]] = {
+            "password": u.get("password", ""),
+            "role": u.get("role", "Staff"),
+        }
+    return users
+
+USERS = _load_users_from_secrets()
+
+def _verify_password(raw: str, stored: str) -> bool:
+    return hmac.compare_digest(str(stored), str(raw))
+
+def do_logout():
+    try:
+        COOKIE_MGR.delete(COOKIE_NAME)
+        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1))
+    except Exception:
+        pass
+    for k in ["authenticated", "role", "username", "name"]:
+        st.session_state.pop(k, None)
+    st.session_state.just_logged_out = True
+    st.rerun()
+
+if "cookie_bootstrapped" not in st.session_state:
+    st.session_state.cookie_bootstrapped = True
+    _ = COOKIE_MGR.get_all()  # ensure JS-side cookie store is loaded
+    st.rerun()
+
+def _cookie_key() -> str:
+    return st.secrets.get("auth", {}).get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
+
+def _cookie_keys() -> list[str]:
+    keys = [st.secrets.get("auth", {}).get("cookie_key", "")]
+    keys += st.secrets.get("auth", {}).get("legacy_cookie_keys", [])
+    return [k for k in keys if k]
+
+def _sign(raw: bytes, *, key: str | None = None) -> str:
+    use = key or st.secrets.get("auth", {}).get("cookie_key", "")
+    return hmac.new(use.encode(), raw, hashlib.sha256).hexdigest()
+
+def _verify_sig(sig: str, raw: bytes) -> bool:
+    for k in _cookie_keys():
+        if hmac.compare_digest(sig, _sign(raw, key=k)):
+            return True
+    return False
+
+def _issue_session_cookie(username: str, role: str):
+    iat = int(time.time())
+    exp = iat + (SESSION_TTL_SECONDS if SESSION_TTL_SECONDS > 0 else 0)
+    payload = {"u": username, "r": role, "iat": iat, "exp": exp, "v": 1}
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
+
+    COOKIE_MGR.set(
+        COOKIE_NAME, token,
+        expires_at=(datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS)) if SESSION_TTL_SECONDS > 0 else None,
+        secure=COOKIE_SECURE,
+    )
+
+def _read_cookie():
+    token = COOKIE_MGR.get(COOKIE_NAME)
+    if not token:
+        return None
+    try:
+        data_b64, sig = token.split(".", 1)
+        raw = base64.urlsafe_b64decode(data_b64.encode())
+        if not _verify_sig(sig, raw):
+            COOKIE_MGR.delete(COOKIE_NAME)
+            return None
+        payload = json.loads(raw.decode())
+        exp = int(payload.get("exp", 0))
+        now = int(time.time())
+        if exp and now > exp:
+            COOKIE_MGR.delete(COOKIE_NAME)
+            return None
+        return payload
+    except Exception:
+        COOKIE_MGR.delete(COOKIE_NAME)
+        return None
+
+def do_login(username: str, role: str):
+    st.session_state.authenticated = True
+    st.session_state.username = username
+    st.session_state.name = username
+    st.session_state.role = role
+    st.session_state.just_logged_out = False
+    _issue_session_cookie(username, role)
+    st.rerun()
+
+# =============================================================================
+# STYLE
+# =============================================================================
+
+def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
+    if not os.path.exists(font_path):
+        return
+    ext = os.path.splitext(font_path)[1].lower()
+    mime = "font/ttf" if ext == ".ttf" else "font/otf"
+    fmt  = "truetype" if ext == ".ttf" else "opentype"
+    try:
+        with open(font_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("utf-8")
+    except Exception:
+        return
+    st.markdown(
+        f"""
+        <style>
+          @font-face {{
+            font-family: '{family}';
+            src: url(data:{mime};base64,{b64}) format('{fmt}');
+            font-weight: normal; font-style: normal; font-display: swap;
+          }}
+          html, body, [class*="css"] {{
+            font-family: '{family}', -apple-system, BlinkMacSystemFont, "Segoe UI",
+                         Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif !important;
+          }}
+          h1,h2,h3,h4,h5,h6, .stTabs [role="tab"] {{
+            font-family: '{family}', sans-serif !important;
+          }}
+          section.main > div {{ padding-top: 0.6rem; }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+def _font_candidates():
+    cands = []
+    secrets_font = st.secrets.get("branding", {}).get("font_file")
+    if secrets_font:
+        cands.append(secrets_font)
+    cands += [
+        "company_font.ttf", "company_font.otf",
+        "ACBrandFont.ttf", "ACBrandFont.otf",
+        "FounderGroteskCondensed-Regular.otf",
+        "Cairo-Regular.ttf",
+    ]
+    try:
+        cands += sorted(glob.glob("fonts/*.ttf")) + sorted(glob.glob("fonts/*.otf"))
+    except Exception:
+        pass
+    return cands
+
+def _apply_brand_font():
+    fam = st.secrets.get("branding", {}).get("font_family", "ACBrandFont")
+    for p in _font_candidates():
+        if os.path.exists(p):
+            _inject_font_css(p, family=fam)
+            return
+
+def render_header():
+    _apply_brand_font()
+    c_logo, c_title, c_user = st.columns([1.2, 6, 3], gap="small")
+    with c_logo:
+        if os.path.exists("company_logo.jpeg"):
+            try:
+                st.image("company_logo.jpeg", use_container_width=True)
+            except TypeError:
+                st.image("company_logo.jpeg", use_column_width=True)
+    with c_title:
+        st.markdown(f"### {APP_TITLE}")
+        st.caption(SUBTITLE)
+    with c_user:
+        username = st.session_state.get("username", "")
+        role = st.session_state.get("role", "")
+        st.markdown(
+            f"""<div style=\"display:flex; align-items:center; justify-content:flex-end; gap:1rem;\">\
+                   <div>\
+                     <div style=\"font-weight:600;\">Welcome, {username or '—'}</div>\
+                     <div>Role: <b>{role or '—'}</b></div>\
+                   </div>\
+                 </div>""",
+            unsafe_allow_html=True,
+        )
+        if st.session_state.get("authenticated") and st.button("Logout"):
+            do_logout()
+
+    st.markdown("<hr style='margin-top:0.8rem;'>", unsafe_allow_html=True)
+
+def hide_table_toolbar_for_non_admin():
+    if st.session_state.get("role") != "Admin":
+        st.markdown(
+            """
+            <style>
+              div[data-testid="stDataFrame"] div[data-testid="stElementToolbar"] { display:none !important; }
+              div[data-testid="stDataEditor"]  div[data-testid="stElementToolbar"] { display:none !important; }
+              div[data-testid="stElementToolbar"] { display:none !important; }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
+
+# =============================================================================
+# GOOGLE SHEETS & DRIVE
+# =============================================================================
+
+# ---- Scopes ----
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+def _load_sa_info() -> dict:
+    """
+    Load service account credentials.
+    Supports:
+      - Streamlit secrets (TOML dict or JSON string)
+      - Environment variable GOOGLE_SERVICE_ACCOUNT_JSON
+      - Normalizes private_key newlines
+    """
+    raw = st.secrets.get("gcp_service_account", {})
+    sa: dict = {}
+
+    # ✅ Case 1: Already a dict (TOML format)
+    if isinstance(raw, dict):
+        sa = dict(raw)
+
+    # ✅ Case 2: String (maybe JSON string in secrets)
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            sa = json.loads(raw)
+        except ValueError:
+            st.error("❌ gcp_service_account is not valid JSON string. If using TOML, keep it as [gcp_service_account].")
+            sa = {}
+
+    # ✅ Case 3: Environment variable fallback
+    if not sa:
+        env_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+        if env_json:
+            try:
+                sa = json.loads(env_json)
+            except ValueError:
+                st.error("❌ GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON")
+                sa = {}
+
+    # ✅ Normalize private key (fixes \n vs newline issue)
+    pk = sa.get("private_key", "")
+    if isinstance(pk, str) and "\\n" in pk:
+        sa["private_key"] = pk.replace("\\n", "\n")
+
+    if "private_key" not in sa:
+        raise RuntimeError(
+            "Service account JSON not found or missing 'private_key'. "
+            "Add it to secrets as [gcp_service_account] in secrets.toml, "
+            "or set GOOGLE_SERVICE_ACCOUNT_JSON env variable."
+        )
+
+    return sa
+
+@st.cache_resource(show_spinner=False)
+def _get_creds():
+    sa_info = _load_sa_info()
+    if not sa_info or "private_key" not in sa_info:
+        raise RuntimeError("Service account JSON not found or missing 'private_key'. Put it in secrets as `gcp_service_account`.")
+    return Credentials.from_service_account_info(sa_info, scopes=SCOPES)
+
+@st.cache_resource(show_spinner=False)
+def _get_gc():
+    return gspread.authorize(_get_creds())
+
+@st.cache_resource(show_spinner=False)
+def _get_drive():
+    return build("drive", "v3", credentials=_get_creds())
+
+@st.cache_resource(show_spinner=False)
+def _get_sheet_url():
+    return st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
+
+def get_sh():
+    gc = _get_gc()
+    url = _get_sheet_url()
+    last_exc = None
+    for attempt in range(3):
+        try:
+            return gc.open_by_url(url)
+        except gspread.exceptions.APIError as e:
+            last_exc = e
+            time.sleep(0.6 * (attempt + 1))
+    st.error("Google Sheets API error while opening the spreadsheet. Please confirm access and try again.")
+    raise last_exc
+
+# ---- Drive upload helpers ----
+
+def _drive_make_public(file_id: str):
+    """Best-effort: make the file viewable by anyone with the link."""
+    try:
+        drive = _get_drive()
+        drive.permissions().create(
+            fileId=file_id,
+            body={"role": "reader", "type": "anyone"},
+            fields="id",
+            supportsAllDrives=True,
+        ).execute()
+    except Exception:
+        pass
+
+# FIX: add PDF header sniff
+def _is_pdf_bytes(data: bytes) -> bool:
+    return isinstance(data, (bytes, bytearray)) and data[:4] == b"%PDF"
+
+def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
+    """Upload PDF to a specific folder in My Drive using OAuth Gmail login."""
+    if uploaded_file is None:
+        return "", ""
+
+    if uploaded_file.type not in ("application/pdf", "application/x-pdf", "binary/octet-stream"):
+        st.error("Only PDF files are allowed.")
+        return "", ""
+
+    data = uploaded_file.getvalue()
+    fname = f"{prefix}_{int(time.time())}.pdf"
+
+    # Authenticate with user OAuth (Drive.file scope)
+    drive = get_gmail_drive()
+
+    # Folder in Drive (from secrets.toml)
+    folder_id = st.secrets.get("drive", {}).get("approvals", "")
+    file_metadata = {"name": fname}
+    if folder_id:
+        file_metadata["parents"] = [folder_id]
+
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
+    file = drive.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id, webViewLink"
+    ).execute()
+
+    file_id = file.get("id", "")
+    link = file.get("webViewLink", "")
+
+    # Make public if configured
+    if st.secrets.get("drive", {}).get("public", True):
+        try:
+            drive.permissions().create(
+                fileId=file_id,
+                body={"role": "reader", "type": "anyone"},
+            ).execute()
+        except Exception as e:
+            st.warning(f"Could not make file public: {e}")
+
+    return link, file_id
+
+# ---- Sheet helpers ----
+
+def _norm_title(t: str) -> str:
+    return (t or "").strip().lower()
+
+def _norm_header(h: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
+
+def _canon_header(h: str) -> str:
+    key = _norm_header(h)
+    return HEADER_SYNONYMS.get(key, h.strip())
+
+def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
+    rename = {}
+    drop_cols = []
+    for c in df.columns:
+        key = _norm_header(c)
+        if key in INVENTORY_HEADER_SYNONYMS:
+            new = INVENTORY_HEADER_SYNONYMS[key]
+            if new:
+                rename[c] = new
+            else:
+                drop_cols.append(c)
+    if rename:
+        df = df.rename(columns=rename)
+    if drop_cols:
+        df = df.drop(columns=drop_cols)
+    # 🔧 Cast ALL columns to string to avoid Arrow serialization issues
+    df = df.astype(str)
+    return df
+
+def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
+    for c in desired:
+        if c not in df.columns:
+            df[c] = ""
+    tail = [c for c in df.columns if c not in desired]
+    return df[desired + tail]
+
+def _find_ws_candidates(title: str):
+    sh = get_sh()
+    target = _norm_title(title)
+    return [ws for ws in sh.worksheets
     token_path = "token.pickle"
 
     if os.path.exists(token_path):
