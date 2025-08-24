@@ -32,7 +32,7 @@ def _load_oauth_client_config():
     Supports:
       1) Streamlit secrets:
            [gmail_oauth]
-           json = """{...{"web":{"client_id":"436839270168-lkdbicfjfefo161qkfevvrlkbrl8od54.apps.googleusercontent.com","project_id":"truckingsysteminventory","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_secret":"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","redirect_uris":["https://advancedconstructiontrackingsystem.streamlit.app"],"javascript_origins":["https://advancedconstructiontrackingsystem.streamlit.app"]}}...}"""
+           json = """{...json...}"""
            # or
            json_b64 = "base64-encoded-json"
            mode = "local_server" | "console"
