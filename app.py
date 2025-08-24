@@ -319,15 +319,18 @@ SCOPES = [
 ]
 
 def _load_sa_info() -> dict:
-    sa = st.secrets.get("gcp_service_account", {})
+    """
+    Load service-account info from secrets and fix the private_key newlines if needed.
+    """
+    sa = st.secrets.get("gcp_service_account", {}) or {}
     pk = sa.get("""-----BEGIN PRIVATE KEY-----
 \nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDbUw5JakRNW47X\njAKWa8xkBHl5+Z8I4q5z6vK2UhAjOcJWKBHNB+XvWDUowr0d2FYmrvSfbIVK3K7w\n1xncl0t5OwDx1quJKcoZnUoirf5mPkbiPw6FNAT3Gzdyyts7ChShPNHbKWOvzrI2\nwQzaeA+M+sRQ18lEShtzSqCtDuRgwL6YhRzj9WeFlbZXnR+jLA1E2KMfJT2TTmC5\nTN+BWBzXRsXuYCl+B1s+zuIPPDXyv0p1z34pNtJb4fmzoyToSSU4FYbfw3YXu2+C\new//YLGpKBG/X8PudSWg4c9Lsamczv+I30m8tRNEIHmTJQVpPS/N3ZJQ9Ey+rSpz\n0Y/F058zAgMBAAECggEAXI+sX2J4SfeCjMhbjTUYcPuMcuRc8GiOfIBjB3wRsHQf\nZrIJdTDIox7kbHvnSXG0RiYfOisYA/Sn5h+5m+XEJfk3WFkjUsNutimyEHnC/E57\nJt+61o+SKuFzIMCpDj0eYL/kxywsFJXUk5QcwxTZZ0Or13yCRg5KkHkl33OCAax+\njoGUtW7O254l2Ued+V5Gpfv7LKOlANp/a68wjoW5cn4aGQcyNQxL2nelXSvSjir1\n7YVpx5thVuSpRzjm6wznSwY2caf5Kn6Gn0Kc52U8/6r6olWhf0WLEIbbmqOtwnE0\nM8SAqOVBBX5bpDG18y3EERS8FVAxDiXdNWu3j6IH7QKBgQDzn3AMCHKG7c2WoXal\nBs/oI2vtLLYUvE/uULxpLlMkxPBqBCEZs/MToWblQsonzzvEHqiyikv9wBFL+Fy5\nwrU9BSlGxKHOoP2aJUdnoXLaDmZUf3ojkbMnT3nx47/OF21j1lHo1x5EJ79MlBu6\ncjRRZvaKqUwBHRD8Gfs8L0695wKBgQDmd5fY925Yax9qRGgjCHb30RCpL9V4oQTg\ninZi9GZkAWdL1PuxCmp1/QNvRU4oy5ygHiuG5F3GAVPYRtJ/kL4PI3TaAv90sRaF\nWtIlmzb0TYW+z5g2gooTjM4gMN2nNNjukayItOxWZlfmd4wmMpMpQ4rwOAtiTzFs\nCH+YgfOy1QKBgF+lnxX6UwyKXIbhCXWtAP9AuOS7AxmM/UyxQeeBmn77GvBkgqJW\ntf5lBcLIwBl1ER/kcZL3HPKY77GF5tG/kexNFHGGTYiUSDy2mhwjlLXrpV1TVx6T\n22R5nYTMR8egBwCFak8h9e4INODZ3TEMGWJELFMwOHjPcpWnla2BXUbNAoGBALQK\nBzCykpw2CxOcHvIHQdD0nJxextf2ifXTlQpWvMoxIn3mAz1Z0rMblZxOOvG5pkCb\ncQtuySbOkK5rHTQUYbU30KgjIWcKlHpW6cYBDBwrl2jpiZJDxhPhsoEJS468xR8R\n5APjuqEAUHi1OWH5rmbU4ewpDBOfpA8uUGdWVYeFAoGAVSobeFTS3zImrkQzqkhK\neIlPOcJAzpv4bK/K0A/kgbRQvAJ/W/ybDfbnnPk9tibDfBz3Kuh4NTPxE9PUTSvc\n5tc+7tik8j8XN9t1zNCZtfU4C/5efuD0g96x0zsBPwEsRjNTQLVQJtyhItssv+tI\n92jEgIErZzvy2Ny/BUYx2eM=\n
 -----END PRIVATE KEY-----""", "")
-    if isinstance(pk, str) and "\\n" in pk:          # literal backslash-ns
+    if isinstance(pk, str) and "\\n" in pk:
         sa = dict(sa)
         sa["""-----BEGIN PRIVATE KEY-----
 \nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDbUw5JakRNW47X\njAKWa8xkBHl5+Z8I4q5z6vK2UhAjOcJWKBHNB+XvWDUowr0d2FYmrvSfbIVK3K7w\n1xncl0t5OwDx1quJKcoZnUoirf5mPkbiPw6FNAT3Gzdyyts7ChShPNHbKWOvzrI2\nwQzaeA+M+sRQ18lEShtzSqCtDuRgwL6YhRzj9WeFlbZXnR+jLA1E2KMfJT2TTmC5\nTN+BWBzXRsXuYCl+B1s+zuIPPDXyv0p1z34pNtJb4fmzoyToSSU4FYbfw3YXu2+C\new//YLGpKBG/X8PudSWg4c9Lsamczv+I30m8tRNEIHmTJQVpPS/N3ZJQ9Ey+rSpz\n0Y/F058zAgMBAAECggEAXI+sX2J4SfeCjMhbjTUYcPuMcuRc8GiOfIBjB3wRsHQf\nZrIJdTDIox7kbHvnSXG0RiYfOisYA/Sn5h+5m+XEJfk3WFkjUsNutimyEHnC/E57\nJt+61o+SKuFzIMCpDj0eYL/kxywsFJXUk5QcwxTZZ0Or13yCRg5KkHkl33OCAax+\njoGUtW7O254l2Ued+V5Gpfv7LKOlANp/a68wjoW5cn4aGQcyNQxL2nelXSvSjir1\n7YVpx5thVuSpRzjm6wznSwY2caf5Kn6Gn0Kc52U8/6r6olWhf0WLEIbbmqOtwnE0\nM8SAqOVBBX5bpDG18y3EERS8FVAxDiXdNWu3j6IH7QKBgQDzn3AMCHKG7c2WoXal\nBs/oI2vtLLYUvE/uULxpLlMkxPBqBCEZs/MToWblQsonzzvEHqiyikv9wBFL+Fy5\nwrU9BSlGxKHOoP2aJUdnoXLaDmZUf3ojkbMnT3nx47/OF21j1lHo1x5EJ79MlBu6\ncjRRZvaKqUwBHRD8Gfs8L0695wKBgQDmd5fY925Yax9qRGgjCHb30RCpL9V4oQTg\ninZi9GZkAWdL1PuxCmp1/QNvRU4oy5ygHiuG5F3GAVPYRtJ/kL4PI3TaAv90sRaF\nWtIlmzb0TYW+z5g2gooTjM4gMN2nNNjukayItOxWZlfmd4wmMpMpQ4rwOAtiTzFs\nCH+YgfOy1QKBgF+lnxX6UwyKXIbhCXWtAP9AuOS7AxmM/UyxQeeBmn77GvBkgqJW\ntf5lBcLIwBl1ER/kcZL3HPKY77GF5tG/kexNFHGGTYiUSDy2mhwjlLXrpV1TVx6T\n22R5nYTMR8egBwCFak8h9e4INODZ3TEMGWJELFMwOHjPcpWnla2BXUbNAoGBALQK\nBzCykpw2CxOcHvIHQdD0nJxextf2ifXTlQpWvMoxIn3mAz1Z0rMblZxOOvG5pkCb\ncQtuySbOkK5rHTQUYbU30KgjIWcKlHpW6cYBDBwrl2jpiZJDxhPhsoEJS468xR8R\n5APjuqEAUHi1OWH5rmbU4ewpDBOfpA8uUGdWVYeFAoGAVSobeFTS3zImrkQzqkhK\neIlPOcJAzpv4bK/K0A/kgbRQvAJ/W/ybDfbnnPk9tibDfBz3Kuh4NTPxE9PUTSvc\n5tc+7tik8j8XN9t1zNCZtfU4C/5efuD0g96x0zsBPwEsRjNTQLVQJtyhItssv+tI\n92jEgIErZzvy2Ny/BUYx2eM=\n
------END PRIVATE KEY-----"""] = pk.replace("\\n", "\n")  # convert to real newlines
+-----END PRIVATE KEY-----"""] = pk.replace("\\n", "\n")
     return sa
 
 
@@ -365,45 +368,50 @@ def get_sh():
 
 # ---- Drive upload helpers ----
 
-def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
-    if uploaded_file is None:
-        return "", ""
-
-    gauth_settings = json.loads(st.secrets["google_drive_credentials"])
-    gauth = GoogleAuth(settings=gauth_settings)
-    drive = GoogleDrive(gauth)
-
-    data = uploaded_file.getvalue()
-    fname = f"{prefix}_{int(time.time())}.pdf"
-    folder_id = st.secrets.get("drive", {}).get("uploadid")  # <-- updated here
-
-    file_metadata = {'title': fname}
-    if folder_id:
-        file_metadata['parents'] = [{'id': folder_id}]
-
-    file_drive = drive.CreateFile(file_metadata)
-
-    # Write binary PDF data
-    with open(f"/tmp/{fname}", "wb") as f:
-        f.write(data)
-    file_drive.SetContentFile(f"/tmp/{fname}")
-    file_drive.Upload()
-
-    file_id = file_drive['id']
-    link = f"https://drive.google.com/file/d/{file_id}/view"
-    return link, file_id
+from googleapiclient.http import MediaIoBaseUpload
 
 def _drive_make_public(file_id: str):
+    """Best-effort: make the file viewable by anyone with the link."""
     try:
         drive = _get_drive()
         drive.permissions().create(
             fileId=file_id,
             body={"role": "reader", "type": "anyone"},
             fields="id",
-            supportsAllDrives=True,  # important for Shared drives
+            supportsAllDrives=True,
         ).execute()
     except Exception:
-        pass  # best-effort
+        pass
+
+def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
+    """Upload a PDF to a Shared-drive folder. Return (webViewLink, file_id)."""
+    if uploaded_file is None:
+        return "", ""
+
+    data = uploaded_file.getvalue()
+    fname = f"{prefix}_{int(time.time())}.pdf"
+    folder_id = st.secrets.get("drive", {}).get("approvals_folder_id", "")
+
+    metadata = {"name": fname}
+    if folder_id:
+        metadata["parents"] = [folder_id]
+
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
+    drive = _get_drive()
+    file = drive.files().create(
+        body=metadata,
+        media_body=media,
+        fields="id, webViewLink",
+        supportsAllDrives=True,  # REQUIRED for Shared drives
+    ).execute()
+
+    file_id = file.get("id", "")
+    link = file.get("webViewLink", "")
+
+    if st.secrets.get("drive", {}).get("public", True):
+        _drive_make_public(file_id)
+
+    return link, file_id
 
 
 # ---- Sheet helpers ----
