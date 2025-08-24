@@ -318,7 +318,7 @@ def _load_sa_info() -> dict:
       - env GOOGLE_SERVICE_ACCOUNT_JSON (JSON string)
     """
     sa = st.secrets["gcp_service_account"]
-    sa[private_key = """-----BEGIN PRIVATE KEY-----
+    sa["""-----BEGIN PRIVATE KEY-----
 \nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDbUw5JakRNW47X
 \njAKWa8xkBHl5+Z8I4q5z6vK2UhAjOcJWKBHNB+XvWDUowr0d2FYmrvSfbIVK3K7w
 \n1xncl0t5OwDx1quJKcoZnUoirf5mPkbiPw6FNAT3Gzdyyts7ChShPNHbKWOvzrI2
@@ -345,7 +345,7 @@ def _load_sa_info() -> dict:
 \neIlPOcJAzpv4bK/K0A/kgbRQvAJ/W/ybDfbnnPk9tibDfBz3Kuh4NTPxE9PUTSvc
 \n5tc+7tik8j8XN9t1zNCZtfU4C/5efuD0g96x0zsBPwEsRjNTQLVQJtyhItssv+tI
 \n92jEgIErZzvy2Ny/BUYx2eM=\n
------END PRIVATE KEY-----\n"""] = sa[private_key = """-----BEGIN PRIVATE KEY-----
+-----END PRIVATE KEY-----\n"""] = sa["""-----BEGIN PRIVATE KEY-----
 \nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDbUw5JakRNW47X
 \njAKWa8xkBHl5+Z8I4q5z6vK2UhAjOcJWKBHNB+XvWDUowr0d2FYmrvSfbIVK3K7w
 \n1xncl0t5OwDx1quJKcoZnUoirf5mPkbiPw6FNAT3Gzdyyts7ChShPNHbKWOvzrI2
