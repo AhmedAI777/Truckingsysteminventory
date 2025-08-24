@@ -10,8 +10,7 @@ import hashlib
 import time
 import io
 from datetime import datetime, timedelta
-# from pydrive2.auth import GoogleAuth
-# from pydrive2.drive import GoogleDrive
+
 import streamlit as st
 import pandas as pd
 import gspread
@@ -31,10 +30,9 @@ DATE_FMT  = "%Y-%m-%d %H:%M:%S"
 SESSION_TTL_DAYS = 30
 SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60
 COOKIE_NAME = "ac_auth_v2"
-COOKIE_PATH = "/"  # not used by CookieManager, left here for clarity
+COOKIE_PATH = "/"
 
 # If you embed the app (or see logout-on-refresh), keep SameSite=None + Secure=True (HTTPS required).
-# You can override via secrets: [auth] cookie_secure=true/false, cookie_samesite="None"/"Lax"/"Strict"
 COOKIE_SECURE   = st.secrets.get("auth", {}).get("cookie_secure", True)
 COOKIE_SAMESITE = st.secrets.get("auth", {}).get("cookie_samesite", "Lax")  # use "None" only when embedded
 
@@ -120,13 +118,11 @@ def _load_users_from_secrets():
 USERS = _load_users_from_secrets()
 
 def _verify_password(raw: str, stored: str) -> bool:
-    # Simple constant-time comparison; replace with bcrypt if you store hashed passwords
     return hmac.compare_digest(str(stored), str(raw))
 
 def do_logout():
     try:
-        COOKIE_MGR.delete(COOKIE_NAME)  # CookieManager has no 'path' parameter
-        # belt & suspenders for older browsers
+        COOKIE_MGR.delete(COOKIE_NAME)
         COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1))
     except Exception:
         pass
@@ -141,11 +137,9 @@ if "cookie_bootstrapped" not in st.session_state:
     st.rerun()
 
 def _cookie_key() -> str:
-    # MUST be stable across app restarts; set in secrets
     return st.secrets.get("auth", {}).get("cookie_key", "PLEASE_SET_auth.cookie_key_IN_SECRETS")
 
 def _cookie_keys() -> list[str]:
-    """Return current key + any legacy keys to keep old cookies valid."""
     keys = [st.secrets.get("auth", {}).get("cookie_key", "")]
     keys += st.secrets.get("auth", {}).get("legacy_cookie_keys", [])
     return [k for k in keys if k]
@@ -167,10 +161,8 @@ def _issue_session_cookie(username: str, role: str):
     raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
     token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
 
-    # Persistent cookie (survives refresh & restarts)
     COOKIE_MGR.set(
-        COOKIE_NAME,
-        token,
+        COOKIE_NAME, token,
         expires_at=(datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS)) if SESSION_TTL_SECONDS > 0 else None,
         secure=COOKIE_SECURE,
     )
@@ -310,32 +302,54 @@ def hide_table_toolbar_for_non_admin():
 # =============================================================================
 # GOOGLE SHEETS & DRIVE
 # =============================================================================
-# =============================================================================
-# GOOGLE CREDS + CLIENTS (one source of truth)
-# =============================================================================
+
+# ---- Scopes ----
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
 
+# ---- FIXED: Service Account loader ----
 def _load_sa_info() -> dict:
-    sa = st.secrets.get("gcp_service_account", {}) or {}
-    pk = sa.get("""-----BEGIN PRIVATE KEY-----
-\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDbUw5JakRNW47X\njAKWa8xkBHl5+Z8I4q5z6vK2UhAjOcJWKBHNB+XvWDUowr0d2FYmrvSfbIVK3K7w\n1xncl0t5OwDx1quJKcoZnUoirf5mPkbiPw6FNAT3Gzdyyts7ChShPNHbKWOvzrI2\nwQzaeA+M+sRQ18lEShtzSqCtDuRgwL6YhRzj9WeFlbZXnR+jLA1E2KMfJT2TTmC5\nTN+BWBzXRsXuYCl+B1s+zuIPPDXyv0p1z34pNtJb4fmzoyToSSU4FYbfw3YXu2+C\new//YLGpKBG/X8PudSWg4c9Lsamczv+I30m8tRNEIHmTJQVpPS/N3ZJQ9Ey+rSpz\n0Y/F058zAgMBAAECggEAXI+sX2J4SfeCjMhbjTUYcPuMcuRc8GiOfIBjB3wRsHQf\nZrIJdTDIox7kbHvnSXG0RiYfOisYA/Sn5h+5m+XEJfk3WFkjUsNutimyEHnC/E57\nJt+61o+SKuFzIMCpDj0eYL/kxywsFJXUk5QcwxTZZ0Or13yCRg5KkHkl33OCAax+\njoGUtW7O254l2Ued+V5Gpfv7LKOlANp/a68wjoW5cn4aGQcyNQxL2nelXSvSjir1\n7YVpx5thVuSpRzjm6wznSwY2caf5Kn6Gn0Kc52U8/6r6olWhf0WLEIbbmqOtwnE0\nM8SAqOVBBX5bpDG18y3EERS8FVAxDiXdNWu3j6IH7QKBgQDzn3AMCHKG7c2WoXal\nBs/oI2vtLLYUvE/uULxpLlMkxPBqBCEZs/MToWblQsonzzvEHqiyikv9wBFL+Fy5\nwrU9BSlGxKHOoP2aJUdnoXLaDmZUf3ojkbMnT3nx47/OF21j1lHo1x5EJ79MlBu6\ncjRRZvaKqUwBHRD8Gfs8L0695wKBgQDmd5fY925Yax9qRGgjCHb30RCpL9V4oQTg\ninZi9GZkAWdL1PuxCmp1/QNvRU4oy5ygHiuG5F3GAVPYRtJ/kL4PI3TaAv90sRaF\nWtIlmzb0TYW+z5g2gooTjM4gMN2nNNjukayItOxWZlfmd4wmMpMpQ4rwOAtiTzFs\nCH+YgfOy1QKBgF+lnxX6UwyKXIbhCXWtAP9AuOS7AxmM/UyxQeeBmn77GvBkgqJW\ntf5lBcLIwBl1ER/kcZL3HPKY77GF5tG/kexNFHGGTYiUSDy2mhwjlLXrpV1TVx6T\n22R5nYTMR8egBwCFak8h9e4INODZ3TEMGWJELFMwOHjPcpWnla2BXUbNAoGBALQK\nBzCykpw2CxOcHvIHQdD0nJxextf2ifXTlQpWvMoxIn3mAz1Z0rMblZxOOvG5pkCb\ncQtuySbOkK5rHTQUYbU30KgjIWcKlHpW6cYBDBwrl2jpiZJDxhPhsoEJS468xR8R\n5APjuqEAUHi1OWH5rmbU4ewpDBOfpA8uUGdWVYeFAoGAVSobeFTS3zImrkQzqkhK\neIlPOcJAzpv4bK/K0A/kgbRQvAJ/W/ybDfbnnPk9tibDfBz3Kuh4NTPxE9PUTSvc\n5tc+7tik8j8XN9t1zNCZtfU4C/5efuD0g96x0zsBPwEsRjNTQLVQJtyhItssv+tI\n92jEgIErZzvy2Ny/BUYx2eM=\n
------END PRIVATE KEY-----""", "")
-    if isinstance(pk, str) and "\\n" in pk:
-        sa = dict(sa)
-        sa["""-----BEGIN PRIVATE KEY-----
-\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDbUw5JakRNW47X\njAKWa8xkBHl5+Z8I4q5z6vK2UhAjOcJWKBHNB+XvWDUowr0d2FYmrvSfbIVK3K7w\n1xncl0t5OwDx1quJKcoZnUoirf5mPkbiPw6FNAT3Gzdyyts7ChShPNHbKWOvzrI2\nwQzaeA+M+sRQ18lEShtzSqCtDuRgwL6YhRzj9WeFlbZXnR+jLA1E2KMfJT2TTmC5\nTN+BWBzXRsXuYCl+B1s+zuIPPDXyv0p1z34pNtJb4fmzoyToSSU4FYbfw3YXu2+C\new//YLGpKBG/X8PudSWg4c9Lsamczv+I30m8tRNEIHmTJQVpPS/N3ZJQ9Ey+rSpz\n0Y/F058zAgMBAAECggEAXI+sX2J4SfeCjMhbjTUYcPuMcuRc8GiOfIBjB3wRsHQf\nZrIJdTDIox7kbHvnSXG0RiYfOisYA/Sn5h+5m+XEJfk3WFkjUsNutimyEHnC/E57\nJt+61o+SKuFzIMCpDj0eYL/kxywsFJXUk5QcwxTZZ0Or13yCRg5KkHkl33OCAax+\njoGUtW7O254l2Ued+V5Gpfv7LKOlANp/a68wjoW5cn4aGQcyNQxL2nelXSvSjir1\n7YVpx5thVuSpRzjm6wznSwY2caf5Kn6Gn0Kc52U8/6r6olWhf0WLEIbbmqOtwnE0\nM8SAqOVBBX5bpDG18y3EERS8FVAxDiXdNWu3j6IH7QKBgQDzn3AMCHKG7c2WoXal\nBs/oI2vtLLYUvE/uULxpLlMkxPBqBCEZs/MToWblQsonzzvEHqiyikv9wBFL+Fy5\nwrU9BSlGxKHOoP2aJUdnoXLaDmZUf3ojkbMnT3nx47/OF21j1lHo1x5EJ79MlBu6\ncjRRZvaKqUwBHRD8Gfs8L0695wKBgQDmd5fY925Yax9qRGgjCHb30RCpL9V4oQTg\ninZi9GZkAWdL1PuxCmp1/QNvRU4oy5ygHiuG5F3GAVPYRtJ/kL4PI3TaAv90sRaF\nWtIlmzb0TYW+z5g2gooTjM4gMN2nNNjukayItOxWZlfmd4wmMpMpQ4rwOAtiTzFs\nCH+YgfOy1QKBgF+lnxX6UwyKXIbhCXWtAP9AuOS7AxmM/UyxQeeBmn77GvBkgqJW\ntf5lBcLIwBl1ER/kcZL3HPKY77GF5tG/kexNFHGGTYiUSDy2mhwjlLXrpV1TVx6T\n22R5nYTMR8egBwCFak8h9e4INODZ3TEMGWJELFMwOHjPcpWnla2BXUbNAoGBALQK\nBzCykpw2CxOcHvIHQdD0nJxextf2ifXTlQpWvMoxIn3mAz1Z0rMblZxOOvG5pkCb\ncQtuySbOkK5rHTQUYbU30KgjIWcKlHpW6cYBDBwrl2jpiZJDxhPhsoEJS468xR8R\n5APjuqEAUHi1OWH5rmbU4ewpDBOfpA8uUGdWVYeFAoGAVSobeFTS3zImrkQzqkhK\neIlPOcJAzpv4bK/K0A/kgbRQvAJ/W/ybDfbnnPk9tibDfBz3Kuh4NTPxE9PUTSvc\n5tc+7tik8j8XN9t1zNCZtfU4C/5efuD0g96x0zsBPwEsRjNTQLVQJtyhItssv+tI\n92jEgIErZzvy2Ny/BUYx2eM=\n
------END PRIVATE KEY-----"""] = pk.replace("\\n", "\n")
-    return sa
+    """
+    Load service account JSON from Streamlit secrets or env, and normalize newlines in private_key.
+    Supported sources:
+      - st.secrets['gcp_service_account'] (dict or JSON string)
+      - env GOOGLE_SERVICE_ACCOUNT_JSON (JSON string)
+    """
+    sa = {}
 
+    raw = st.secrets.get("gcp_service_account", {})
+    if isinstance(raw, dict):
+        sa = dict(raw)
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            sa = json.loads(raw)
+        except Exception:
+            sa = {}
+
+    # Optional env fallback
+    if not sa:
+        env_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+        if env_json:
+            try:
+                sa = json.loads(env_json)
+            except Exception:
+                pass
+
+    # FIX: Ensure the expected key name and unescape newlines
+    pk = sa.get("private_key", "")
+    if isinstance(pk, str) and "\\n" in pk:
+        sa["private_key"] = pk.replace("\\n", "\n")
+
+    return sa
 
 @st.cache_resource(show_spinner=False)
 def _get_creds():
     sa_info = _load_sa_info()
+    if not sa_info or "private_key" not in sa_info:
+        raise RuntimeError("Service account JSON not found or missing 'private_key'. Put it in secrets as `gcp_service_account`.")
     return Credentials.from_service_account_info(sa_info, scopes=SCOPES)
-
 
 @st.cache_resource(show_spinner=False)
 def _get_gc():
@@ -343,7 +357,6 @@ def _get_gc():
 
 @st.cache_resource(show_spinner=False)
 def _get_drive():
-    # Google Drive API client
     return build("drive", "v3", credentials=_get_creds())
 
 @st.cache_resource(show_spinner=False)
@@ -365,8 +378,6 @@ def get_sh():
 
 # ---- Drive upload helpers ----
 
-from googleapiclient.http import MediaIoBaseUpload
-
 def _drive_make_public(file_id: str):
     """Best-effort: make the file viewable by anyone with the link."""
     try:
@@ -380,14 +391,25 @@ def _drive_make_public(file_id: str):
     except Exception:
         pass
 
-from googleapiclient.http import MediaIoBaseUpload
+# FIX: add PDF header sniff
+def _is_pdf_bytes(data: bytes) -> bool:
+    return isinstance(data, (bytes, bytearray)) and data[:4] == b"%PDF"
 
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
     """Upload a PDF to a Shared-drive folder. Return (webViewLink, file_id)."""
     if uploaded_file is None:
         return "", ""
 
+    # Validate MIME and header (defends against renamed files)
+    if getattr(uploaded_file, "type", "") not in ("application/pdf", "application/x-pdf", "binary/octet-stream"):
+        st.error("Only PDF files are allowed.")
+        return "", ""
+
     data = uploaded_file.getvalue()
+    if not _is_pdf_bytes(data):
+        st.error("The uploaded file doesn't look like a real PDF.")
+        return "", ""
+
     fname = f"{prefix}_{int(time.time())}.pdf"
 
     folder_id = st.secrets.get("drive", {}).get("approvals_folder_id", "")
@@ -397,7 +419,6 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
 
     drive = _get_drive()
 
-    # <- these two lines must be at the SAME indent level
     media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
     file = drive.files().create(
         body=metadata,
@@ -413,8 +434,6 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
         _drive_make_public(file_id)
 
     return link, file_id
-
-
 
 # ---- Sheet helpers ----
 
@@ -443,13 +462,9 @@ def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.rename(columns=rename)
     if drop_cols:
         df = df.drop(columns=drop_cols)
-    
     # 🔧 Cast ALL columns to string to avoid Arrow serialization issues
     df = df.astype(str)
-
     return df
-
-
 
 def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     for c in desired:
@@ -806,6 +821,8 @@ def register_device_tab():
             st.success("✅ Device registered and added to Inventory.")
         else:
             link, fid = upload_pdf_and_link(pdf_file, prefix=f"device_{s_norm}")
+            if not fid:
+                return
             pending = {**row,
                 "Approval Status": "Pending",
                 "Approval PDF": link,
@@ -878,6 +895,8 @@ def transfer_tab():
             st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
         else:
             link, fid = upload_pdf_and_link(pdf_file, prefix=f"transfer_{normalize_serial(chosen_serial)}")
+            if not fid:
+                return
             pend = {
                 "Device Type": inventory_df.loc[idx, "Device Type"],
                 "Serial Number": chosen_serial,
@@ -1228,4 +1247,3 @@ else:
             do_login(username, user.get("role", "Staff"))  # sets cookie + rerun
         else:
             st.error("❌ Invalid username or password.")
-
