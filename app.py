@@ -28,12 +28,63 @@ OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 def _load_oauth_client_config():
     """
-    Load Google OAuth client config for user sign-in (Drive upload).
-    Pref order:
-      1) st.secrets["gmail_oauth"] => json or json_b64 (optionally 'mode')
-      2) env: GOOGLE_OAUTH_CLIENT_JSON or GOOGLE_OAUTH_CLIENT_B64
-      3) local file: credentials.json
+    Load Google OAuth client config for user sign‑in (Drive upload).
+    Priority:
+      1) st.secrets["gmail_oauth"]  (json or json_b64, optional 'mode')
+      2) env GOOGLE_OAUTH_CLIENT_JSON or GOOGLE_OAUTH_CLIENT_B64
+      3) local file credentials.json
     Returns:
+      {"mode":"config","client":dict,"auth_mode":str}  or
+      {"mode":"file","path":str,"auth_mode":str}       or
+      {"mode":None,"auth_mode":str}
+    """
+    # valid values: "local_server" (default) or "console"
+    auth_mode = st.secrets.get("gmail_oauth", {}).get("mode", "local_server")
+
+    # 1) Streamlit secrets
+    go = st.secrets.get("gmail_oauth", {})
+    raw_json = go.get("json", "")
+    if not raw_json:
+        b64 = go.get("json_b64", "")
+        if b64:
+            try:
+                raw_json = base64.b64decode(b64).decode()
+            except Exception:
+                st.warning("gmail_oauth.json_b64 is not valid base64; skipping.")
+    if raw_json:
+        try:
+            parsed = json.loads(raw_json)
+            if "installed" in parsed or "web" in parsed:
+                return {"mode": "config", "client": parsed, "auth_mode": auth_mode}
+            # allow flattened client object
+            if parsed.get("client_id") or parsed.get("redirect_uris"):
+                return {"mode": "config", "client": {"installed": parsed}, "auth_mode": auth_mode}
+        except Exception:
+            st.warning("gmail_oauth.json in secrets is not valid JSON; skipping.")
+
+    # 2) Environment variables
+    env_raw = os.environ.get("GOOGLE_OAUTH_CLIENT_JSON", "")
+    if not env_raw:
+        b64 = os.environ.get("GOOGLE_OAUTH_CLIENT_B64", "")
+        if b64:
+            try:
+                env_raw = base64.b64decode(b64).decode()
+            except Exception:
+                st.warning("GOOGLE_OAUTH_CLIENT_B64 invalid; skipping.")
+    if env_raw:
+        try:
+            parsed = json.loads(env_raw)
+            if "installed" in parsed or "web" in parsed:
+                return {"mode": "config", "client": parsed, "auth_mode": auth_mode}
+            if parsed.get("client_id") or parsed.get("redirect_uris"):
+                return {"mode": "config", "client": {"installed": parsed}, "auth_mode": auth_mode}
+        except Exception:
+            st.warning("GOOGLE_OAUTH_CLIENT_JSON invalid; skipping.")
+
+    # 3) Fallback to local file
+    if os.path.exists("credentials.json"):
+        return {"mode": "file", "path": "credentials.json", "auth_mode": auth_mode}
+
       {"mode":"config","client":dict,"auth_mode":str}  OR
       {"mode":"file","path":str,"auth_mode":str}       OR
       {"mode":None,"auth_mode":str}
