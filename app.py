@@ -310,27 +310,51 @@ SCOPES = [
 ]
 
 def _load_sa_info() -> dict:
-    # 1. Check session
-    if "gcp_service_account" in st.session_state:
-        return st.session_state["gcp_service_account"]
-
-    # 2. Check secrets
+    """
+    Load service account credentials.
+    Supports:
+      - Streamlit secrets (TOML dict or JSON string)
+      - Environment variable GOOGLE_SERVICE_ACCOUNT_JSON
+      - Normalizes private_key newlines
+    """
     raw = st.secrets.get("gcp_service_account", {})
-    if isinstance(raw, dict) and "private_key" in raw:
-        return raw
+    sa: dict = {}
 
-    # 3. Load from local file (your .json)
-    if os.path.exists("truckingsysteminventory-2f7caf94b91f.json"):
-        with open("truckingsysteminventory-2f7caf94b91f.json") as f:
-            sa = json.load(f)
-            return sa
+    # ✅ Case 1: Already a dict (TOML format)
+    if isinstance(raw, dict):
+        sa = dict(raw)
 
-    # 4. Fallback: env variable
-    env_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-    if env_json:
-        return json.loads(env_json)
+    # ✅ Case 2: String (maybe JSON string in secrets)
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            sa = json.loads(raw)
+        except ValueError:
+            st.error("❌ gcp_service_account is not valid JSON string. If using TOML, keep it as [gcp_service_account].")
+            sa = {}
 
-    raise RuntimeError("Service account JSON not found or missing 'private_key'.")
+    # ✅ Case 3: Environment variable fallback
+    if not sa:
+        env_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+        if env_json:
+            try:
+                sa = json.loads(env_json)
+            except ValueError:
+                st.error("❌ GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON")
+                sa = {}
+
+    # ✅ Normalize private key (fixes \n vs newline issue)
+    pk = sa.get("private_key", "")
+    if isinstance(pk, str) and "\\n" in pk:
+        sa["private_key"] = pk.replace("\\n", "\n")
+
+    if "private_key" not in sa:
+        raise RuntimeError(
+            "Service account JSON not found or missing 'private_key'. "
+            "Add it to secrets as [gcp_service_account] in secrets.toml, "
+            "or set GOOGLE_SERVICE_ACCOUNT_JSON env variable."
+        )
+
+    return sa
 
 
 
