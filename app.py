@@ -32,7 +32,7 @@ def _load_oauth_client_config():
     Supports:
       1) Streamlit secrets:
            [gmail_oauth]
-           json = """{...json...}"""
+           json = """{...credentials.json...}"""
            # or
            json_b64 = "base64-encoded-json"
            mode = "local_server" | "console"
