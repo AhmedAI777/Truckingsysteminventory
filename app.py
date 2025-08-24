@@ -646,62 +646,6 @@ def select_with_other(label: str, base_options: list[str], existing_values: list
 # =============================================================================
 # VIEWS
 # =============================================================================
-def _diagnose_shared_drive_folder():
-    st.markdown("### Drive diagnostics")
-    folder_id = st.secrets.get("drive", {}).get("approvals_folder_id", "").strip()
-    if not folder_id or "?" in folder_id:
-        st.error("`[drive].approvals_folder_id` is missing or has extra query params. Use ONLY the raw ID.")
-        return
-
-    drive = _get_drive()
-    try:
-        # 1) Read folder metadata
-        meta = drive.files().get(
-            fileId=folder_id,
-            fields="id, name, mimeType, driveId, parents, capabilities, owners, permissions",
-            supportsAllDrives=True
-        ).execute()
-        st.write("**Folder metadata**", meta)
-
-        if meta.get("mimeType") != "application/vnd.google-apps.folder":
-            st.error("The provided ID is not a folder.")
-            return
-
-        # If it's in a Shared drive, driveId will be present
-        if meta.get("driveId"):
-            st.success(f"✅ Folder is in a Shared drive (driveId: {meta['driveId']}).")
-        else:
-            st.warning("⚠️ Folder does NOT show a `driveId` — that usually means it’s in My Drive.")
-
-        # 2) Try a tiny test upload (won't keep it)
-        import io, time
-        test_name = f"drive_diagnose_test_{int(time.time())}.txt"
-        media = MediaIoBaseUpload(io.BytesIO(b"hello from streamlit"), mimetype="text/plain", resumable=False)
-        file = drive.files().create(
-            body={"name": test_name, "parents": [folder_id]},
-            media_body=media,
-            fields="id, webViewLink",
-            supportsAllDrives=True
-        ).execute()
-        st.success(f"✅ Upload test succeeded: {file.get('webViewLink')}")
-        # best-effort cleanup
-        try:
-            drive.files().delete(fileId=file["id"]).execute()
-            st.caption("Cleanup: test file deleted.")
-        except Exception:
-            st.caption("Cleanup: could not delete test file (non-blocking).")
-
-    except Exception as e:
-        import traceback
-        st.error("❌ Drive diagnostics failed.")
-        st.code(f"{type(e).__name__}: {e}")
-        st.text(traceback.format_exc())
-
-# call it once from the UI (remove after passing)
-with st.expander("🔧 Drive diagnostics (temporary)"):
-    if st.button("Run Drive diagnostics"):
-        _diagnose_shared_drive_folder()
-
 
 def employees_view_tab():
     st.subheader("📇 Employees (mainlists)")
