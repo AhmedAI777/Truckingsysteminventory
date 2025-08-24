@@ -28,15 +28,18 @@ OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 def get_gmail_drive():
     """Authenticate with Gmail (OAuth) instead of Service Account."""
+    import pickle
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+
     creds = None
     token_path = "token.pickle"
 
-    # Load saved token if it exists
     if os.path.exists(token_path):
         with open(token_path, "rb") as token:
             creds = pickle.load(token)
 
-    # Refresh / request new login
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
@@ -46,7 +49,6 @@ def get_gmail_drive():
             )
             creds = flow.run_local_server(port=0)
 
-        # Save the token for reuse
         with open(token_path, "wb") as token:
             pickle.dump(creds, token)
 
@@ -444,6 +446,9 @@ def _is_pdf_bytes(data: bytes) -> bool:
 
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
     """Upload PDF to a specific folder in My Drive using OAuth Gmail login."""
+    import io
+    from googleapiclient.http import MediaIoBaseUpload
+
     if uploaded_file is None:
         return "", ""
 
@@ -454,18 +459,13 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
     data = uploaded_file.getvalue()
     fname = f"{prefix}_{int(time.time())}.pdf"
 
-    # Authenticate with Gmail OAuth
     drive = get_gmail_drive()
 
-    # ✅ Get folder ID from secrets.toml
     folder_id = st.secrets.get("drive", {}).get("approvals", "")
-
-    # File metadata → puts it inside your approvals folder
     file_metadata = {"name": fname}
     if folder_id:
         file_metadata["parents"] = [folder_id]
 
-    # Upload to Drive
     media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
     file = drive.files().create(
         body=file_metadata,
@@ -476,7 +476,6 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
     file_id = file.get("id", "")
     link = file.get("webViewLink", "")
 
-    # ✅ Make it public if set in secrets.toml
     if st.secrets.get("drive", {}).get("public", True):
         try:
             drive.permissions().create(
