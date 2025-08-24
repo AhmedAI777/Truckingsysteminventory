@@ -410,44 +410,41 @@ def _is_pdf_bytes(data: bytes) -> bool:
     return isinstance(data, (bytes, bytearray)) and data[:4] == b"%PDF"
 
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
-    """Upload a PDF to a Shared-drive folder. Return (webViewLink, file_id)."""
+    """Upload PDF to a specific folder in My Drive using OAuth Gmail login."""
     if uploaded_file is None:
         return "", ""
 
-    # Validate MIME and header (defends against renamed files)
-    if getattr(uploaded_file, "type", "") not in ("application/pdf", "application/x-pdf", "binary/octet-stream"):
+    if uploaded_file.type not in ("application/pdf", "application/x-pdf", "binary/octet-stream"):
         st.error("Only PDF files are allowed.")
         return "", ""
 
     data = uploaded_file.getvalue()
-    if not _is_pdf_bytes(data):
-        st.error("The uploaded file doesn't look like a real PDF.")
-        return "", ""
-
     fname = f"{prefix}_{int(time.time())}.pdf"
 
+    # Authenticate with Gmail OAuth
+    drive = get_gmail_drive()
+
+    # ✅ Get folder ID from secrets.toml
     folder_id = st.secrets.get("drive", {}).get("approvals", "")
-    metadata = {"name": fname}
+
+    # File metadata → puts it inside your approvals folder
+    file_metadata = {"name": fname}
     if folder_id:
-        metadata["parents"] = [folder_id]
+        file_metadata["parents"] = [folder_id]
 
-    drive = _get_drive()
-
+    # Upload to Drive
     media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
     file = drive.files().create(
-        body=metadata,
+        body=file_metadata,
         media_body=media,
-        fields="id, webViewLink",
-        supportsAllDrives=True,
+        fields="id, webViewLink"
     ).execute()
 
     file_id = file.get("id", "")
     link = file.get("webViewLink", "")
 
-    if st.secrets.get("drive", {}).get("public", True):
-        _drive_make_public(file_id)
-
     return link, file_id
+
 
 # ---- Sheet helpers ----
 
