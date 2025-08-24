@@ -336,7 +336,7 @@ def _get_creds():
     sa_info = _load_sa_info()
     return Credentials.from_service_account_info(sa_info, scopes=SCOPES)
     try:
-    _ = _get_creds()
+     = _get_creds()
     st.sidebar.success("✅ Service account key parsed OK")
 except Exception as e:
     import traceback
