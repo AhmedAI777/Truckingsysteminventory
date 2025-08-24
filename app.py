@@ -23,20 +23,17 @@ import pickle
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
-# ---- Gmail OAuth for Drive (user OAuth) ----
+
+    # ---- Gmail OAuth for Drive (user OAuth) ----
 OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 def _load_oauth_client_config():
     """
     Load Google OAuth client config for user sign‑in (Drive upload).
     Priority:
-      1) st.secrets["gmail_oauth"]  (json or json_b64, optional 'mode')
+      1) st.secrets["gmail_oauth"] (json or json_b64, optional 'mode')
       2) env GOOGLE_OAUTH_CLIENT_JSON or GOOGLE_OAUTH_CLIENT_B64
       3) local file credentials.json
-    Returns:
-      {"mode":"config","client":dict,"auth_mode":str}  or
-      {"mode":"file","path":str,"auth_mode":str}       or
-      {"mode":None,"auth_mode":str}
     """
     # valid values: "local_server" (default) or "console"
     auth_mode = st.secrets.get("gmail_oauth", {}).get("mode", "local_server")
@@ -56,7 +53,6 @@ def _load_oauth_client_config():
             parsed = json.loads(raw_json)
             if "installed" in parsed or "web" in parsed:
                 return {"mode": "config", "client": parsed, "auth_mode": auth_mode}
-            # allow flattened client object
             if parsed.get("client_id") or parsed.get("redirect_uris"):
                 return {"mode": "config", "client": {"installed": parsed}, "auth_mode": auth_mode}
         except Exception:
@@ -85,61 +81,15 @@ def _load_oauth_client_config():
     if os.path.exists("credentials.json"):
         return {"mode": "file", "path": "credentials.json", "auth_mode": auth_mode}
 
-      {"mode":"config","client":dict,"auth_mode":str}  OR
-      {"mode":"file","path":str,"auth_mode":str}       OR
-      {"mode":None,"auth_mode":str}
-    """
-    auth_mode = st.secrets.get("gmail_oauth", {}).get("mode", "local_server")
-
-    # 1) Streamlit secrets
-    go = st.secrets.get("gmail_oauth", {})
-    raw_json = go.get("json", "")
-    if not raw_json and go.get("json_b64"):
-        try:
-            raw_json = base64.b64decode(go["json_b64"]).decode()
-        except Exception:
-            st.warning("gmail_oauth.json_b64 is not valid base64; skipping.")
-    if raw_json:
-        try:
-            parsed = json.loads(raw_json)
-            if "installed" in parsed or "web" in parsed:
-                return {"mode": "config", "client": parsed, "auth_mode": auth_mode}
-            if parsed.get("client_id") or parsed.get("redirect_uris"):
-                return {"mode": "config", "client": {"installed": parsed}, "auth_mode": auth_mode}
-        except Exception:
-            st.warning("gmail_oauth.json in secrets is not valid JSON; skipping.")
-
-    # 2) Env vars
-    env_raw = os.environ.get("GOOGLE_OAUTH_CLIENT_JSON", "")
-    if not env_raw and os.environ.get("GOOGLE_OAUTH_CLIENT_B64"):
-        try:
-            env_raw = base64.b64decode(os.environ["GOOGLE_OAUTH_CLIENT_B64"]).decode()
-        except Exception:
-            st.warning("GOOGLE_OAUTH_CLIENT_B64 invalid; skipping.")
-    if env_raw:
-        try:
-            parsed = json.loads(env_raw)
-            if "installed" in parsed or "web" in parsed:
-                return {"mode": "config", "client": parsed, "auth_mode": auth_mode}
-            if parsed.get("client_id") or parsed.get("redirect_uris"):
-                return {"mode": "config", "client": {"installed": parsed}, "auth_mode": auth_mode}
-        except Exception:
-            st.warning("GOOGLE_OAUTH_CLIENT_JSON invalid; skipping.")
-
-    # 3) Local credentials.json
-    local_path = "credentials.json"
-    if os.path.exists(local_path):
-        return {"mode": "file", "path": local_path, "auth_mode": auth_mode}
-
     return {"mode": None, "auth_mode": auth_mode}
 
 def get_gmail_drive():
-    """Authenticate end user (OAuth) and return Drive service for uploads."""
+    """Authenticate the end user (OAuth) and return a Drive v3 service for uploads."""
     cfg = _load_oauth_client_config()
     token_path = "token.pickle"
     creds = None
 
-    # load cached token
+    # load cached token if present
     if os.path.exists(token_path):
         try:
             with open(token_path, "rb") as f:
@@ -152,26 +102,26 @@ def get_gmail_drive():
             creds.refresh(Request())
         else:
             if cfg["mode"] == "file":
-                if not os.path.exists(cfg["path"]):
-                    st.error("credentials.json not found. Provide OAuth client via secrets/env or place credentials.json next to the app.")
-                    st.stop()
                 flow = InstalledAppFlow.from_client_secrets_file(cfg["path"], OAUTH_SCOPES)
             elif cfg["mode"] == "config":
                 flow = InstalledAppFlow.from_client_config(cfg["client"], OAUTH_SCOPES)
             else:
                 st.error(
-                    "Google OAuth client not found.\n\nProvide one of:\n"
-                    "• credentials.json file next to your app, or\n"
-                    "• st.secrets [gmail_oauth].json (or json_b64), or\n"
-                    "• env GOOGLE_OAUTH_CLIENT_JSON (or GOOGLE_OAUTH_CLIENT_B64)."
+                    "Google OAuth client not found.\n"
+                    "Provide one of:\n"
+                    "• credentials.json next to the app\n"
+                    "• st.secrets [gmail_oauth].json (or json_b64)\n"
+                    "• env GOOGLE_OAUTH_CLIENT_JSON (or GOOGLE_OAUTH_CLIENT_B64)"
                 )
                 st.stop()
 
+            # choose the auth mode
             if cfg.get("auth_mode", "local_server") == "console":
                 creds = flow.run_console()
             else:
                 creds = flow.run_local_server(port=0)
 
+        # cache token for future runs
         try:
             with open(token_path, "wb") as f:
                 pickle.dump(creds, f)
@@ -179,6 +129,7 @@ def get_gmail_drive():
             pass
 
     return build("drive", "v3", credentials=creds)
+
 
 # =============================================================================
 # APP CONFIG
