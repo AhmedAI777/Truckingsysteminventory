@@ -310,39 +310,28 @@ SCOPES = [
 ]
 
 def _load_sa_info() -> dict:
-    """
-    Load service account JSON from Streamlit secrets (dict or JSON string)
-    and normalize private_key newlines.
-    """
+    # 1. Check session
+    if "gcp_service_account" in st.session_state:
+        return st.session_state["gcp_service_account"]
+
+    # 2. Check secrets
     raw = st.secrets.get("gcp_service_account", {})
-    sa: dict = {}
+    if isinstance(raw, dict) and "private_key" in raw:
+        return raw
 
-    if isinstance(raw, dict):
-        sa = dict(raw)
-    elif isinstance(raw, str) and raw.strip():
-        try:
-            sa = json.loads(raw)
-        except Exception:
-            sa = {}
+    # 3. Load from local file (your .json)
+    if os.path.exists("truckingsysteminventory-2f7caf94b91f.json"):
+        with open("truckingsysteminventory-2f7caf94b91f.json") as f:
+            sa = json.load(f)
+            return sa
 
-    if not sa:
-        env_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-        if env_json:
-            try:
-                sa = json.loads(env_json)
-            except Exception:
-                pass
+    # 4. Fallback: env variable
+    env_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    if env_json:
+        return json.loads(env_json)
 
-    pk = sa.get("private_key", "")
-    if isinstance(pk, str) and "\\n" in pk:
-        sa["private_key"] = pk.replace("\\n", "\n")
+    raise RuntimeError("Service account JSON not found or missing 'private_key'.")
 
-    if "private_key" not in sa:
-        raise RuntimeError(
-            "Service account JSON not found or missing 'private_key'. "
-            "Add it to secrets as `gcp_service_account`."
-        )
-    return sa
 
 
 @st.cache_resource(show_spinner=False)
