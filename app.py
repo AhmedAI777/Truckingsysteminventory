@@ -15,6 +15,9 @@ from tempfile import NamedTemporaryFile
 
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
+from google.oauth2.credentials import Credentials as UserCredentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 
 import streamlit as st
 import pandas as pd
@@ -280,43 +283,19 @@ def hide_table_toolbar_for_non_admin():
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets",
           "https://www.googleapis.com/auth/drive"]
 
-def _load_sa_info() -> dict:
-    raw = st.secrets.get("gcp_service_account", {})
-    sa: dict = {}
-    if isinstance(raw, dict):
-        sa = dict(raw)
-    elif isinstance(raw, str) and raw.strip():
-        try:
-            sa = json.loads(raw)
-        except Exception:
-            sa = {}
-    if not sa:
-        env_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-        if env_json:
-            try:
-                sa = json.loads(env_json)
-            except Exception:
-                sa = {}
-    pk = sa.get("private_key", "")
-    if isinstance(pk, str) and "\\n" in pk:
-        sa["private_key"] = pk.replace("\\n", "\n")
-    if "private_key" not in sa:
-        raise RuntimeError("Service account JSON not found or missing 'private_key'.")
-    return sa
-
 @st.cache_resource(show_spinner=False)
 def _get_user_creds():
-    """OAuth creds for Sheets/Drive using client_id/secret from st.secrets (no files in repo)."""
+    """OAuth creds for Sheets/Drive using client_id/secret from st.secrets (no client_secrets.json file)."""
     oauth = st.secrets.get("google_oauth", {})
     client_id = oauth.get("client_id", "")
     client_secret = oauth.get("client_secret", "")
-    token_file = oauth.get("token_file", "oauth_token.json")
+    token_file = oauth.get("token_file", "oauth_token.json")  # where to cache the refresh token
 
     if not client_id or not client_secret:
         raise RuntimeError("Missing [google_oauth] client_id/client_secret in st.secrets.")
 
     creds = None
-    # load cached token if present
+    # try to load cached token
     if os.path.exists(token_file):
         try:
             creds = UserCredentials.from_authorized_user_file(token_file, SCOPES)
@@ -325,9 +304,10 @@ def _get_user_creds():
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
+            # refresh silently if possible
             creds.refresh(Request())
         else:
-            # Build in-memory client config (no client_secrets.json file)
+            # build in-memory client config (no client_secrets.json on disk)
             client_config = {
                 "installed": {
                     "client_id": client_id,
@@ -338,15 +318,15 @@ def _get_user_creds():
                 }
             }
             try:
-                # local dev (opens browser)
+                # local dev: opens a browser
                 flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
                 creds = flow.run_local_server(port=8080, open_browser=True)
             except Exception:
-                # headless fallback
+                # headless fallback (Streamlit Cloud, servers)
                 flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
                 creds = flow.run_console()
 
-        # cache token so you don’t re-auth each run
+        # cache token so you don’t re-auth every run
         try:
             with open(token_file, "w") as f:
                 f.write(creds.to_json())
@@ -357,8 +337,9 @@ def _get_user_creds():
 
 @st.cache_resource(show_spinner=False)
 def _get_gc():
-    # authorize gspread with your user OAuth credentials
+    """Authorize gspread with user OAuth credentials."""
     return gspread.authorize(_get_user_creds())
+
 
 # ----------------- PyDrive2 (user OAuth) -----------------
 @st.cache_resource(show_spinner=False)
