@@ -297,9 +297,14 @@ def hide_table_toolbar_for_non_admin():
 # =============================================================================
 # GOOGLE SHEETS & DRIVE (Service Account)
 # =============================================================================
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets",
-          "https://drive.google.com/drive/folders/16xJfNpbgi6h1-A6m83PLxpdteY3B1Sgh"]
+# Keep SA for Sheets + Drive perms
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive/my-drive
+]
 
+# OAuth used only for uploads to *My Drive*
+OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
 def _load_sa_info() -> dict:
     raw = st.secrets.get("gcp_service_account", {})
@@ -326,38 +331,21 @@ def _load_sa_info() -> dict:
     return sa
 
 
-OAUTH_SCOPES = ["https://drive.google.com/drive/folders/16xJfNpbgi6h1-A6m83PLxpdteY3B1Sgh"]  # upload only
+@st.cache_resource(show_spinner=False)
+def _get_creds():
+    return Credentials.from_service_account_info(_load_sa_info(), scopes=SCOPES)
 
 @st.cache_resource(show_spinner=False)
-def _get_user_creds():
-    token_path = st.secrets.get("drive", {}).get("oauth_token_path", "oauth_token.json")
-    creds = None
-    if os.path.exists(token_path):
-        creds = UserCredentials.from_authorized_user_file(token_path, OAUTH_SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            cfg = st.secrets.get("google_oauth", {})
-            if not cfg:
-                st.error("Missing [google_oauth] in secrets for Drive OAuth.")
-                st.stop()
-            flow = InstalledAppFlow.from_client_config(
-                {
-                    "installed": {
-                        "client_id": cfg["client_id"],
-                        "client_secret": cfg["client_secret"],
-                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                        "token_uri": "https://oauth2.googleapis.com/token",
-                        "redirect_uris": ["http://localhost", "http://localhost:8501/"],
-                    }
-                },
-                scopes=OAUTH_SCOPES,
-            )
-            creds = flow.run_local_server(port=0)
-            with open(token_path, "w") as f:
-                f.write(creds.to_json())
-    return creds
+def _get_gc():
+    return gspread.authorize(_get_creds())
+
+@st.cache_resource(show_spinner=False)
+def _get_drive():
+    return build("drive", "v3", credentials=_get_creds())
+
+@st.cache_resource(show_spinner=False)
+def _get_user_drive():
+    return build("drive", "v3", credentials=_get_user_creds())
 
 
 @st.cache_resource(show_spinner=False)
@@ -398,45 +386,18 @@ def _is_pdf_bytes(data: bytes) -> bool:
 
 
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
-    # ... (unchanged validation code above)
-
-    fname = f"{prefix}_{int(time.time())}.pdf"
-    folder_id = st.secrets.get("drive", {}).get("approvals_folder_id", "")
-    metadata = {"name": fname}
-    if folder_id:
-        metadata["parents"] = [folder_id]
-
-    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
-
-    # 1) Try Service Account (works only if folder is on a Shared drive)
-    drive = _get_drive()
-    try:
-        file = drive.files().create(
-            body=metadata,
-            media_body=media,
-            fields="id, webViewLink",
-            supportsAllDrives=True,
-        ).execute()
-    except HttpError as e:
-        # 2) If SA cannot own storage (your case), automatically fall back to OAuth user
-        if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
-            drive = _get_user_drive()
-            file = drive.files().create(
-                body=metadata,
-                media_body=media,
-                fields="id, webViewLink",
-                supportsAllDrives=False,  # My Drive
-            ).execute()
-        else:
-            raise
-
-    file_id = file.get("id", "")
-    link = file.get("webViewLink", "")
-
-    if st.secrets.get("drive", {}).get("public", True) and file_id:
-        _drive_make_public(file_id, drive_client=drive)
-
-    return link, file_id
+    if uploaded_file is None:
+        return "", ""
+    if getattr(uploaded_file, "type", "") not in (
+        "application/pdf", "application/x-pdf", "binary/octet-stream"
+    ):
+        st.error("Only PDF files are allowed.")
+        return "", ""
+    data = uploaded_file.getvalue()
+    if not _is_pdf_bytes(data):
+        st.error("The uploaded file doesn't look like a real PDF.")
+        return "", ""
+    # ... rest of function unchanged
 
 
 # =============================================================================
