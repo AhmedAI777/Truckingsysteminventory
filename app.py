@@ -331,8 +331,8 @@ def _load_sa_info() -> dict:
     if "private_key" not in sa:
         raise RuntimeError("Service account JSON not found or missing 'private_key'.")
     return sa
-sa_email = sa.get("client_email", "(unknown)")
-st.caption(f"Service Account: {sa_email}")
+    sa_email = sa.get("client_email", "(unknown)")
+    st.caption(f"Service Account: {sa_email}")
 
 
 @st.cache_resource(show_spinner=False)
