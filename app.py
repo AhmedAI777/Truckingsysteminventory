@@ -425,6 +425,29 @@ def get_or_create_ws(title, rows=500, cols=80):
     except gspread.exceptions.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
+# --- NEW: choose the correct employees sheet (handles duplicates) ---
+def get_employee_ws():
+    """Return the correct 'mainlists' worksheet.
+    - Never auto-create
+    - If duplicates exist, prefer the one with data (header + ≥1 data row)
+    """
+    sh = get_sh()
+    wanted = EMPLOYEE_WS.strip().lower()
+    matches = [ws for ws in sh.worksheets() if ws.title.strip().lower() == wanted]
+
+    if not matches:
+        raise RuntimeError(f"Worksheet '{EMPLOYEE_WS}' not found. Please create/rename it in the spreadsheet.")
+
+    if len(matches) > 1:
+        for ws in matches:
+            try:
+                if len(ws.get_all_values()) > 1:
+                    return ws
+            except Exception:
+                pass
+        st.warning(f"Multiple worksheets named '{EMPLOYEE_WS}' found; using the first (all appear empty).")
+    return matches[0]
+
 @st.cache_data(ttl=120, show_spinner=False)
 def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
     if ws_title == PENDING_DEVICE_WS:
@@ -436,7 +459,7 @@ def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
         df = pd.DataFrame(ws.get_all_records())
         return reorder_columns(df, PENDING_TRANSFER_COLS)
     if ws_title == EMPLOYEE_WS:
-        ws = get_or_create_ws(EMPLOYEE_WS)
+        ws = get_employee_ws()  # <-- use the robust resolver
         df = pd.DataFrame(ws.get_all_records())
         return reorder_columns(df, EMPLOYEE_CANON_COLS)
 
@@ -470,7 +493,13 @@ def write_worksheet(ws_title, df):
         df = reorder_columns(df, PENDING_DEVICE_COLS)
     if ws_title == PENDING_TRANSFER_WS:
         df = reorder_columns(df, PENDING_TRANSFER_COLS)
-    ws = get_or_create_ws(ws_title)
+
+    # Use the correct resolver for employees (no auto-create)
+    if ws_title == EMPLOYEE_WS:
+        ws = get_employee_ws()
+    else:
+        ws = get_or_create_ws(ws_title)
+
     ws.clear()
     set_with_dataframe(ws, df)
     st.cache_data.clear()
