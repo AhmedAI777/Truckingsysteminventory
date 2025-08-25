@@ -441,6 +441,27 @@ def get_or_create_ws(title, rows=500, cols=80):
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
 # --- choose the correct employees sheet (handles duplicates) ---
+@st.cache_resource(show_spinner=False)
+def _get_sheet_url() -> str:
+    """Spreadsheet URL from secrets with a fallback default."""
+    return st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
+
+def get_sh():
+    """Open the Google Spreadsheet via gspread (OAuth user creds)."""
+    gc = _get_gc()
+    url = _get_sheet_url()
+    last_exc = None
+    for attempt in range(3):  # small retry loop
+        try:
+            return gc.open_by_url(url)
+        except gspread.exceptions.APIError as e:
+            last_exc = e
+            time.sleep(0.6 * (attempt + 1))
+    st.error("Google Sheets API error while opening the spreadsheet.")
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Failed to open spreadsheet.")
+
 def get_employee_ws():
     """Return the correct 'mainlists' worksheet (never auto-create)."""
     sh = get_sh()
