@@ -300,7 +300,7 @@ def hide_table_toolbar_for_non_admin():
 # Keep SA for Sheets + Drive perms
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive/my-drive
+    "https://www.googleapis.com/auth/drive/my-drive"
 ]
 
 # OAuth used only for uploads to *My Drive*
