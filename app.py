@@ -295,19 +295,24 @@ def _get_user_creds():
         raise RuntimeError("Missing [google_oauth] client_id/client_secret in st.secrets.")
 
     creds = None
-    # try to load cached token
+
+    # 1) Try to load cached token
     if os.path.exists(token_file):
         try:
             creds = UserCredentials.from_authorized_user_file(token_file, SCOPES)
         except Exception:
             creds = None
 
+    # 2) If no valid creds, refresh or do interactive OAuth
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            # refresh silently if possible
-            creds.refresh(Request())
-        else:
-            # build in-memory client config (no client_secrets.json on disk)
+            try:
+                creds.refresh(Request())
+            except Exception:
+                creds = None
+
+        if not creds or not creds.valid:
+            # Build in-memory client config (no client_secrets.json on disk)
             client_config = {
                 "installed": {
                     "client_id": client_id,
@@ -317,16 +322,31 @@ def _get_user_creds():
                     "redirect_uris": ["http://localhost:8080/"],
                 }
             }
-            try:
-                # local dev: opens a browser
-                flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-                creds = flow.run_local_server(port=8080, open_browser=True)
-            except Exception:
-                # headless fallback (Streamlit Cloud, servers)
-                flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-                creds = flow.run_console()
+            flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
 
-        # cache token so you don’t re-auth every run
+            # Try local browser first
+            try:
+                # port=0 picks a free port; open_browser=True for local dev
+                creds = flow.run_local_server(port=0, open_browser=True)
+            except Exception:
+                # Headless fallback: show auth URL and accept a pasted code
+                auth_url, _ = flow.authorization_url(
+                    prompt="consent",
+                    access_type="offline",
+                    include_granted_scopes="true",
+                )
+                st.warning("Google authorization required. Click the link below, complete the consent, "
+                           "and paste the **authorization code** here.")
+                st.markdown(f"[Authorize Google]({auth_url})")
+                code = st.text_input("Paste the authorization code", key="oauth_code")
+                if not code:
+                    # Stop here so Streamlit can render the input; user will paste and re-run
+                    st.stop()
+                # Exchange code for tokens
+                flow.fetch_token(code=code)
+                creds = flow.credentials
+
+        # 3) Cache token so you don’t re-auth every run
         try:
             with open(token_file, "w") as f:
                 f.write(creds.to_json())
@@ -334,11 +354,11 @@ def _get_user_creds():
             pass
 
     return creds
-
+    
 @st.cache_resource(show_spinner=False)
 def _get_gc():
-    """Authorize gspread with user OAuth credentials."""
     return gspread.authorize(_get_user_creds())
+
 
 
 # ----------------- PyDrive2 (user OAuth) -----------------
