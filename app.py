@@ -298,13 +298,15 @@ def hide_table_toolbar_for_non_admin():
 # GOOGLE SHEETS & DRIVE (Service Account)
 # =============================================================================
 # Keep SA for Sheets + Drive perms
+# Service Account (Sheets + Drive listing/permissions)
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive/my-drive"
+    "https://www.googleapis.com/auth/drive"
 ]
 
-# OAuth used only for uploads to *My Drive*
+# OAuth (only used for user uploads to My Drive)
 OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+
 
 def _load_sa_info() -> dict:
     raw = st.secrets.get("gcp_service_account", {})
@@ -329,6 +331,8 @@ def _load_sa_info() -> dict:
     if "private_key" not in sa:
         raise RuntimeError("Service account JSON not found or missing 'private_key'.")
     return sa
+sa_email = sa.get("client_email", "(unknown)")
+st.caption(f"Service Account: {sa_email}")
 
 
 @st.cache_resource(show_spinner=False)
