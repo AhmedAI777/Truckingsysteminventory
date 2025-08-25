@@ -15,7 +15,7 @@ extra-streamlit-components
 streamlit_cookies_controller
 gspread-dataframe
 pydrive2
-
+streamlit_pdf_viewer
 
 
 
