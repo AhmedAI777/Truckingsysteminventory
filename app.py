@@ -34,6 +34,7 @@ SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60
 COOKIE_NAME = "ac_auth_v2"
 
 SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
+API_Key="AIzaSyB_VJqFLie_AQbSAfGyT71MVsD6mS-lLA0"
 
 INVENTORY_WS    = "truckinventory"
 TRANSFERLOG_WS  = "transfer_log"
