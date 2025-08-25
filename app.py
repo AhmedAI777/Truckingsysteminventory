@@ -283,7 +283,6 @@ def hide_table_toolbar_for_non_admin():
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets",
           "https://www.googleapis.com/auth/drive"]
 
-@st.cache_resource(show_spinner=False)
 def _get_user_creds():
     """OAuth creds for Sheets/Drive using client_id/secret from st.secrets (no client_secrets.json file)."""
     oauth = st.secrets.get("google_oauth", {})
