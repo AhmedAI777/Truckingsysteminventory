@@ -576,7 +576,7 @@ def register_device_tab():
                 help="Choose 'Unassigned (Stock)' if the device has no owner yet."
             )
             if assigned_choice == "Type a new name…":
-                assigned_to = st.text_input("Assignee name")
+                assigned_to = st.text_input("Name")
             elif assigned_choice == UNASSIGNED_LABEL:
                 assigned_to = UNASSIGNED_LABEL
             else:
