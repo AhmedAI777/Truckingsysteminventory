@@ -12,6 +12,12 @@ import time
 import io
 from datetime import datetime, timedelta
 
+from tempfile import NamedTemporaryFile
+
+
+from pydrive.auth import GoogleAuth
+from pydrive.drive import GoogleDrive
+
 import streamlit as st
 import pandas as pd
 import gspread
@@ -343,42 +349,62 @@ def _drive_make_public(file_id: str):
     except Exception:
         pass
 
+# ----------------- PyDrive (user OAuth) -----------------
+@st.cache_resource(show_spinner=False)
+def _get_pydrive():
+    """Authenticate the user via local webserver and return a PyDrive client."""
+    gauth = GoogleAuth()
+    # If you have a client_secrets.json in the app folder, this will pick it up.
+    # Otherwise, configure via settings.yaml or programmatically if needed.
+    gauth.LocalWebserverAuth()
+    return GoogleDrive(gauth)
+    
 def _is_pdf_bytes(data: bytes) -> bool:
     return isinstance(data, (bytes, bytearray)) and data[:4] == b"%PDF"
 
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
-    """Upload PDF to a Drive folder (service account). Returns (webViewLink, file_id)."""
+    """
+    Upload PDF using PyDrive (user OAuth). Returns (webViewLink, file_id).
+    """
     if uploaded_file is None:
         return "", ""
-    if getattr(uploaded_file, "type", "") not in ("application/pdf", "application/x-pdf", "binary/octet-stream"):
+
+    mime = getattr(uploaded_file, "type", "")
+    if mime not in ("application/pdf", "application/x-pdf", "binary/octet-stream"):
         st.error("Only PDF files are allowed.")
         return "", ""
+
     data = uploaded_file.getvalue()
     if not _is_pdf_bytes(data):
         st.error("The uploaded file doesn't look like a real PDF.")
         return "", ""
 
-    fname = f"{prefix}_{int(time.time())}.pdf"
+    drive = _get_pydrive()
     folder_id = st.secrets.get("drive", {}).get("approvals_folder_id", "")
-    metadata = {"name": fname}
-    if folder_id:
-        metadata["parents"] = [folder_id]
+    title = f"{prefix}_{int(time.time())}.pdf"
 
-    drive = _get_drive()
-    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
-    file = drive.files().create(
-        body=metadata,
-        media_body=media,
-        fields="id, webViewLink",
-        supportsAllDrives=True,
-    ).execute()
+    with NamedTemporaryFile(delete=True, suffix=".pdf") as tmp:
+        tmp.write(data)
+        tmp.flush()
 
-    file_id = file.get("id", "")
-    link = file.get("webViewLink", "")
+        meta = {"title": title}
+        if folder_id:
+            meta["parents"] = [{"id": folder_id}]
 
+        gfile = drive.CreateFile(meta)
+        gfile.SetContentFile(tmp.name)
+        gfile.Upload()
+
+    file_id = gfile["id"]
+    # Make public if desired
     if st.secrets.get("drive", {}).get("public", True):
-        _drive_make_public(file_id)
+        try:
+            gfile.InsertPermission({"type": "anyone", "value": "anyone", "role": "reader"})
+        except Exception:
+            pass
 
+    # Build a web-view link (PyDrive doesn’t auto-fill webViewLink)
+    link = f"https://drive.google.com/file/d/{file_id}/view"
     return link, file_id
 
 # =============================================================================
