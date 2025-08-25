@@ -1,5 +1,5 @@
 # app.py
-# pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth google-api-python-client
+# pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas google-auth pydrive2
 
 import os
 import re
@@ -11,12 +11,10 @@ import hashlib
 import time
 import io
 from datetime import datetime, timedelta
-
 from tempfile import NamedTemporaryFile
 
-
-from pydrive.auth import GoogleAuth
-from pydrive.drive import GoogleDrive
+from pydrive2.auth import GoogleAuth
+from pydrive2.drive import GoogleDrive
 
 import streamlit as st
 import pandas as pd
@@ -24,8 +22,6 @@ import gspread
 from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe
 import extra_streamlit_components as stx
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 
 # =============================================================================
 # CONFIG
@@ -279,7 +275,7 @@ def hide_table_toolbar_for_non_admin():
         )
 
 # =============================================================================
-# GOOGLE SHEETS & DRIVE (Service Account)
+# GOOGLE SHEETS (Service Account) + DRIVE (OAuth via PyDrive2)
 # =============================================================================
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets",
           "https://www.googleapis.com/auth/drive"]
@@ -317,10 +313,6 @@ def _get_gc():
     return gspread.authorize(_get_creds())
 
 @st.cache_resource(show_spinner=False)
-def _get_drive():
-    return build("drive", "v3", credentials=_get_creds())
-
-@st.cache_resource(show_spinner=False)
 def _get_sheet_url():
     return st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
 
@@ -337,35 +329,23 @@ def get_sh():
     st.error("Google Sheets API error while opening the spreadsheet.")
     raise last_exc
 
-def _drive_make_public(file_id: str):
-    try:
-        drive = _get_drive()
-        drive.permissions().create(
-            fileId=file_id,
-            body={"role": "reader", "type": "anyone"},
-            fields="id",
-            supportsAllDrives=True,
-        ).execute()
-    except Exception:
-        pass
-
-# ----------------- PyDrive (user OAuth) -----------------
+# ----------------- PyDrive2 (user OAuth) -----------------
 @st.cache_resource(show_spinner=False)
 def _get_pydrive():
-    """Authenticate the user via local webserver and return a PyDrive client."""
+    """Authenticate the user and return a PyDrive2 client."""
     gauth = GoogleAuth()
-    # If you have a client_secrets.json in the app folder, this will pick it up.
-    # Otherwise, configure via settings.yaml or programmatically if needed.
-    gauth.LocalWebserverAuth()
+    # LocalWebserverAuth works on local machines; for headless, use CommandLineAuth.
+    try:
+        gauth.LocalWebserverAuth()
+    except Exception:
+        gauth.CommandLineAuth()
     return GoogleDrive(gauth)
-    
+
 def _is_pdf_bytes(data: bytes) -> bool:
     return isinstance(data, (bytes, bytearray)) and data[:4] == b"%PDF"
 
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
-    """
-    Upload PDF using PyDrive (user OAuth). Returns (webViewLink, file_id).
-    """
+    """Upload PDF using PyDrive2. Returns (webViewLink, file_id)."""
     if uploaded_file is None:
         return "", ""
 
@@ -386,24 +366,21 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
     with NamedTemporaryFile(delete=True, suffix=".pdf") as tmp:
         tmp.write(data)
         tmp.flush()
-
         meta = {"title": title}
         if folder_id:
             meta["parents"] = [{"id": folder_id}]
-
         gfile = drive.CreateFile(meta)
         gfile.SetContentFile(tmp.name)
         gfile.Upload()
 
     file_id = gfile["id"]
-    # Make public if desired
+    # Make public if configured
     if st.secrets.get("drive", {}).get("public", True):
         try:
             gfile.InsertPermission({"type": "anyone", "value": "anyone", "role": "reader"})
         except Exception:
             pass
 
-    # Build a web-view link (PyDrive doesn’t auto-fill webViewLink)
     link = f"https://drive.google.com/file/d/{file_id}/view"
     return link, file_id
 
@@ -451,19 +428,14 @@ def get_or_create_ws(title, rows=500, cols=80):
     except gspread.exceptions.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
-# --- NEW: choose the correct employees sheet (handles duplicates) ---
+# --- choose the correct employees sheet (handles duplicates) ---
 def get_employee_ws():
-    """Return the correct 'mainlists' worksheet.
-    - Never auto-create
-    - If duplicates exist, prefer the one with data (header + ≥1 data row)
-    """
+    """Return the correct 'mainlists' worksheet (never auto-create)."""
     sh = get_sh()
     wanted = EMPLOYEE_WS.strip().lower()
     matches = [ws for ws in sh.worksheets() if ws.title.strip().lower() == wanted]
-
     if not matches:
         raise RuntimeError(f"Worksheet '{EMPLOYEE_WS}' not found. Please create/rename it in the spreadsheet.")
-
     if len(matches) > 1:
         for ws in matches:
             try:
@@ -485,7 +457,7 @@ def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
         df = pd.DataFrame(ws.get_all_records())
         return reorder_columns(df, PENDING_TRANSFER_COLS)
     if ws_title == EMPLOYEE_WS:
-        ws = get_employee_ws()  # <-- use the robust resolver
+        ws = get_employee_ws()
         df = pd.DataFrame(ws.get_all_records())
         return reorder_columns(df, EMPLOYEE_CANON_COLS)
 
@@ -520,7 +492,6 @@ def write_worksheet(ws_title, df):
     if ws_title == PENDING_TRANSFER_WS:
         df = reorder_columns(df, PENDING_TRANSFER_COLS)
 
-    # Use the correct resolver for employees (no auto-create)
     if ws_title == EMPLOYEE_WS:
         ws = get_employee_ws()
     else:
