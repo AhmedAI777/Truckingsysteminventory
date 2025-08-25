@@ -1,6 +1,11 @@
-# app.py — Tracking Inventory Management System
-# Sheets via Service Account; Drive uploads try SA then fall back to OAuth user (My Drive).
-# Admins must review the uploaded PDF inline before Approve.
+# app.py — Tracking Inventory Management System (Option B: My Drive via OAuth token)
+# - Google Sheets via Service Account (SA)
+# - Google Drive uploads: try SA → on 403 storageQuotaExceeded, fall back to OAuth **token from secrets**
+# - Streamlit Cloud safe (no interactive browser). Admin must review PDF inline before Approve.
+#
+# Requirements:
+#   pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas \
+#               google-auth google-api-python-client streamlit-pdf-viewer requests
 
 import os
 import re
@@ -280,12 +285,7 @@ def render_header():
         username = st.session_state.get("username", "")
         role = st.session_state.get("role", "")
         st.markdown(
-            f"""<div style="display:flex; align-items:center; justify-content:flex-end; gap:1rem;">
-                   <div>
-                     <div style="font-weight:600;">Welcome, {username or '—'}</div>
-                     <div>Role: <b>{role or '—'}</b></div>
-                   </div>
-                 </div>""",
+            f"""<div style=\"display:flex; align-items:center; justify-content:flex-end; gap:1rem;\">\n                   <div>\n                     <div style=\"font-weight:600;\">Welcome, {username or '—'}</div>\n                     <div>Role: <b>{role or '—'}</b></div>\n                   </div>\n                 </div>""",
             unsafe_allow_html=True,
         )
         if st.session_state.get("authenticated") and st.button("Logout"):
@@ -307,13 +307,17 @@ def hide_table_toolbar_for_non_admin():
         )
 
 # =============================================================================
-# GOOGLE SHEETS & DRIVE (Service Account + OAuth fallback)
+# GOOGLE SHEETS & DRIVE (Service Account + OAuth token fallback)
 # =============================================================================
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]  # user upload
+OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]  # user upload to My Drive
+
+# Option B flag: allow OAuth fallback, but ONLY via token in secrets (no browser in cloud)
+ALLOW_OAUTH_FALLBACK = st.secrets.get("drive", {}).get("allow_oauth_fallback", True)
+
 
 def _load_sa_info() -> dict:
     raw = st.secrets.get("gcp_service_account", {})
@@ -353,47 +357,53 @@ def _get_drive():
 
 @st.cache_resource(show_spinner=False)
 def _get_user_creds():
-    """Obtain OAuth creds. Supports token_json in secrets for cloud; falls back to local browser flow."""
+    """Get user OAuth creds STRICTLY from secrets.token_json in cloud.
+    If token_json is missing and LOCAL_OAUTH=1, allow interactive local auth.
+    Otherwise stop with a helpful error (prevents 'no runnable browser').
+    """
     cfg = st.secrets.get("google_oauth", {})
     token_json = cfg.get("token_json")
     if token_json:
         try:
             info = json.loads(token_json)
-            creds = UserCredentials.from_authorized_user_info(info, OAUTH_SCOPES)
-            if not creds.valid and creds.refresh_token:
-                creds.refresh(Request())
-            return creds
         except Exception:
-            pass
-    # Local dev (file cache or interactive flow)
-    token_path = st.secrets.get("drive", {}).get("oauth_token_path", "oauth_token.json")
-    creds = None
-    if os.path.exists(token_path):
-        creds = UserCredentials.from_authorized_user_file(token_path, OAUTH_SCOPES)
+            info = None
+        if not info:
+            st.error("google_oauth.token_json is not valid JSON.")
+            st.stop()
+        creds = UserCredentials.from_authorized_user_info(info, OAUTH_SCOPES)
         if not creds.valid and creds.refresh_token:
             creds.refresh(Request())
-            with open(token_path, "w") as f:
-                f.write(creds.to_json())
-            return creds
-    if not cfg:
-        st.error("Missing [google_oauth] in secrets for Drive OAuth.")
-        st.stop()
-    flow = InstalledAppFlow.from_client_config(
-        {
-            "installed": {
-                "client_id": cfg["client_id"],
-                "client_secret": cfg["client_secret"],
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": ["http://localhost", "http://localhost:8501/"],
-            }
-        },
-        scopes=OAUTH_SCOPES,
+        return creds
+
+    # No token_json present
+    if os.environ.get("LOCAL_OAUTH", "0") == "1":
+        # Local-only flow
+        client_id = cfg.get("client_id")
+        client_secret = cfg.get("client_secret")
+        if not client_id or not client_secret:
+            st.error("[google_oauth] client_id/client_secret required for local OAuth.")
+            st.stop()
+        flow = InstalledAppFlow.from_client_config(
+            {
+                "installed": {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": ["http://localhost"],
+                }
+            },
+            scopes=OAUTH_SCOPES,
+        )
+        creds = flow.run_local_server(port=0)
+        return creds
+
+    st.error(
+        "OAuth token not configured. Add [google_oauth].token_json to secrets (generated locally), "
+        "or move the folder to a Shared drive and disable OAuth fallback."
     )
-    creds = flow.run_local_server(port=0)
-    with open(token_path, "w") as f:
-        f.write(creds.to_json())
-    return creds
+    st.stop()
 
 @st.cache_resource(show_spinner=False)
 def _get_user_drive():
@@ -402,6 +412,7 @@ def _get_user_drive():
 @st.cache_resource(show_spinner=False)
 def _get_sheet_url():
     return st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
+
 
 def get_sh():
     gc = _get_gc()
@@ -416,6 +427,7 @@ def get_sh():
     st.error("Google Sheets API error while opening the spreadsheet.")
     raise last_exc
 
+
 def _drive_make_public(file_id: str, drive_client=None):
     try:
         cli = drive_client or _get_drive()
@@ -428,11 +440,13 @@ def _drive_make_public(file_id: str, drive_client=None):
     except Exception:
         pass
 
+
 def _is_pdf_bytes(data: bytes) -> bool:
     return isinstance(data, (bytes, bytearray)) and data[:4] == b"%PDF"
 
+
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
-    """Upload PDF to Drive. Try SA first (Shared drives); fall back to user OAuth (My Drive)."""
+    """Upload PDF to Drive. Try SA first; on 403 storage quota, fall back to OAuth user (My Drive)."""
     if uploaded_file is None:
         return "", ""
     if getattr(uploaded_file, "type", "") not in ("application/pdf", "application/x-pdf", "binary/octet-stream"):
@@ -461,7 +475,11 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
         ).execute()
     except HttpError as e:
         if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
-            # Service accounts can't own storage in My Drive → use user OAuth
+            if not ALLOW_OAUTH_FALLBACK:
+                st.error(
+                    "Service Account cannot upload to My Drive. Either move folder to a Shared drive or enable OAuth token fallback."
+                )
+                st.stop()
             drive_cli = _get_user_drive()
             file = drive_cli.files().create(
                 body=metadata,
@@ -478,8 +496,9 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
         _drive_make_public(file_id, drive_client=drive_cli)
     return link, file_id
 
+
 def _fetch_public_pdf_bytes(file_id: str, link: str) -> bytes:
-    """Fetch bytes for PDF preview. Works when file is public (we set 'anyone with the link')."""
+    """Fetch bytes for PDF preview (works when file is public)."""
     try:
         if file_id:
             url = f"https://drive.google.com/uc?export=download&id={file_id}"
@@ -497,12 +516,15 @@ def _fetch_public_pdf_bytes(file_id: str, link: str) -> bytes:
 def _norm_title(t: str) -> str:
     return (t or "").strip().lower()
 
+
 def _norm_header(h: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
+
 
 def _canon_header(h: str) -> str:
     key = _norm_header(h)
     return HEADER_SYNONYMS.get(key, h.strip())
+
 
 def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
     rename = {}
@@ -521,6 +543,7 @@ def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.drop(columns=drop_cols)
     return df.astype(str)
 
+
 def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     for c in desired:
         if c not in df.columns:
@@ -528,12 +551,14 @@ def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     tail = [c for c in df.columns if c not in desired]
     return df[desired + tail]
 
+
 def get_or_create_ws(title, rows=500, cols=80):
     sh = get_sh()
     try:
         return sh.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
+
 
 def get_employee_ws():
     sh = get_sh()
@@ -552,6 +577,7 @@ def get_employee_ws():
                 pass
         st.warning(f"Multiple worksheets named '{EMPLOYEE_WS}' found; using the first (all appear empty).")
     return matches[0]
+
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
@@ -578,6 +604,7 @@ def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
         return reorder_columns(df, LOG_COLS)
     return df
 
+
 def read_worksheet(ws_title):
     try:
         return _read_worksheet_cached(ws_title)
@@ -589,6 +616,7 @@ def read_worksheet(ws_title):
         if ws_title == PENDING_DEVICE_WS: return pd.DataFrame(columns=PENDING_DEVICE_COLS)
         if ws_title == PENDING_TRANSFER_WS: return pd.DataFrame(columns=PENDING_TRANSFER_COLS)
         return pd.DataFrame()
+
 
 def write_worksheet(ws_title, df):
     if ws_title == INVENTORY_WS:
@@ -607,6 +635,7 @@ def write_worksheet(ws_title, df):
     ws.clear()
     set_with_dataframe(ws, df)
     st.cache_data.clear()
+
 
 def append_to_worksheet(ws_title, new_data):
     ws = get_or_create_ws(ws_title)
@@ -628,6 +657,7 @@ def append_to_worksheet(ws_title, new_data):
 
 def normalize_serial(s: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
+
 
 def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
     if a == b:
@@ -652,11 +682,13 @@ def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
         prev = cur
     return prev[-1]
 
+
 def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
     if df.empty or col not in df.columns:
         return []
     vals = [str(x).strip() for x in df[col].dropna().astype(str).tolist()]
     return sorted({v for v in vals if v})
+
 
 def select_with_other(label: str, base_options: list[str], existing_values: list[str]) -> str:
     merged = [o for o in base_options if o]
@@ -680,6 +712,7 @@ def employees_view_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
+
 def inventory_tab():
     st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
@@ -690,6 +723,7 @@ def inventory_tab():
             st.dataframe(df, use_container_width=True)
         else:
             st.dataframe(df, use_container_width=True, hide_index=True)
+
 
 def register_device_tab():
     st.subheader("📝 Register New Device")
@@ -852,6 +886,7 @@ def register_device_tab():
             append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
             st.success("🕒 Submitted for admin approval. You'll see it in Inventory once approved.")
 
+
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
     inventory_df = read_worksheet(INVENTORY_WS)
@@ -942,6 +977,7 @@ def transfer_tab():
             append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pend]))
             st.success("🕒 Transfer submitted for admin approval.")
 
+
 def history_tab():
     st.subheader("📜 Transfer Log")
     df = read_worksheet(TRANSFERLOG_WS)
@@ -949,6 +985,7 @@ def history_tab():
         st.info("No transfer history found.")
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
+
 
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
@@ -1027,6 +1064,7 @@ def employee_register_tab():
         write_worksheet(EMPLOYEE_WS, new_df)
         st.success("✅ Employee saved to 'mainlists'.")
 
+
 def approvals_tab():
     st.subheader("✅ Approvals (Admin)")
     if st.session_state.get("role") != "Admin":
@@ -1098,6 +1136,7 @@ def approvals_tab():
                     if r_col.button("Reject", key=f"reject_tr_{i}"):
                         _reject_row(PENDING_TRANSFER_WS, i, row)
 
+
 def _approve_device_row(row: pd.Series):
     inv = read_worksheet(INVENTORY_WS)
     now_str = datetime.now().strftime(DATE_FMT)
@@ -1115,6 +1154,7 @@ def _approve_device_row(row: pd.Series):
 
     _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
     st.success("✅ Device approved and added to Inventory.")
+
 
 def _approve_transfer_row(row: pd.Series):
     inv = read_worksheet(INVENTORY_WS)
@@ -1147,6 +1187,7 @@ def _approve_transfer_row(row: pd.Series):
     _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
     st.success("✅ Transfer approved and applied.")
 
+
 def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
     df = read_worksheet(ws_title)
     key_cols = [c for c in ["Serial Number", "Submitted at", "Submitted by", "To owner"] if c in df.columns]
@@ -1164,6 +1205,7 @@ def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
     df.loc[idx, "Approver"] = st.session_state.get("username", "")
     df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
     write_worksheet(ws_title, df)
+
 
 def _reject_row(ws_title: str, i: int, row: pd.Series):
     _mark_decision(ws_title, row, status="Rejected")
@@ -1234,7 +1276,7 @@ def _config_check_ui():
             "- Put your Service Account JSON under `st.secrets['gcp_service_account']` or env `GOOGLE_SERVICE_ACCOUNT_JSON`.\n"
             "- Ensure it includes **private_key** and **client_email**.\n"
             "- Share the Google Sheet URL in `st.secrets['sheets']['url']` with the service account email (Editor).\n"
-            "- If you upload PDFs, share the Drive folder (ID in `st.secrets['drive']['approvals_folder_id']`) with the same email."
+            "- For Drive uploads to **My Drive**, add `[google_oauth].token_json` to secrets (Option B)."
         )
         st.stop()
     # Try opening the spreadsheet once so errors surface early
@@ -1245,6 +1287,7 @@ def _config_check_ui():
         st.code(str(e))
         st.info("Share the sheet with the Service Account email above and try again.")
         st.stop()
+
 
 def run_app():
     render_header()
