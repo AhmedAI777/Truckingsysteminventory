@@ -14,7 +14,7 @@ openpyxl==3.1.5
 extra-streamlit-components
 streamlit_cookies_controller
 gspread-dataframe
-pydrive
+pydrive2
 
 
 
