@@ -305,29 +305,60 @@ def _load_sa_info() -> dict:
     return sa
 
 @st.cache_resource(show_spinner=False)
-def _get_creds():
-    return Credentials.from_service_account_info(_load_sa_info(), scopes=SCOPES)
+def _get_user_creds():
+    """OAuth creds for Sheets/Drive using client_id/secret from st.secrets (no files in repo)."""
+    oauth = st.secrets.get("google_oauth", {})
+    client_id = oauth.get("client_id", "")
+    client_secret = oauth.get("client_secret", "")
+    token_file = oauth.get("token_file", "oauth_token.json")
+
+    if not client_id or not client_secret:
+        raise RuntimeError("Missing [google_oauth] client_id/client_secret in st.secrets.")
+
+    creds = None
+    # load cached token if present
+    if os.path.exists(token_file):
+        try:
+            creds = UserCredentials.from_authorized_user_file(token_file, SCOPES)
+        except Exception:
+            creds = None
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            # Build in-memory client config (no client_secrets.json file)
+            client_config = {
+                "installed": {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": ["http://localhost:8080/"],
+                }
+            }
+            try:
+                # local dev (opens browser)
+                flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+                creds = flow.run_local_server(port=8080, open_browser=True)
+            except Exception:
+                # headless fallback
+                flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+                creds = flow.run_console()
+
+        # cache token so you don’t re-auth each run
+        try:
+            with open(token_file, "w") as f:
+                f.write(creds.to_json())
+        except Exception:
+            pass
+
+    return creds
 
 @st.cache_resource(show_spinner=False)
 def _get_gc():
-    return gspread.authorize(_get_creds())
-
-@st.cache_resource(show_spinner=False)
-def _get_sheet_url():
-    return st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
-
-def get_sh():
-    gc = _get_gc()
-    url = _get_sheet_url()
-    last_exc = None
-    for attempt in range(3):
-        try:
-            return gc.open_by_url(url)
-        except gspread.exceptions.APIError as e:
-            last_exc = e
-            time.sleep(0.6 * (attempt + 1))
-    st.error("Google Sheets API error while opening the spreadsheet.")
-    raise last_exc
+    # authorize gspread with your user OAuth credentials
+    return gspread.authorize(_get_user_creds())
 
 # ----------------- PyDrive2 (user OAuth) -----------------
 @st.cache_resource(show_spinner=False)
