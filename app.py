@@ -1006,26 +1006,24 @@ def transfer_tab():
         now_str   = datetime.now().strftime(DATE_FMT)
         actor     = st.session_state.get("username", "")
 
-               if is_admin and pdf_file is None:
-            # ... fast path that directly writes to inventory + log ...
-            st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
-               else:
-            # --- NEW NAMING: ST-TIF-TRF-LTP54321-0002-YYYYMMDD.pdf
-            serial_norm = normalize_serial(chosen_serial)
-
-            # pull department/location from the row in inventory (safe defaults)
-            dep_val = str(inventory_df.loc[idx, "Department"] or "")
-            loc_val = str(inventory_df.loc[idx, "Location"] or "")
-
-            project_code = project_code_from(dep_val or "UNK")
-            city_code    = city_code_from(loc_val or "UNK")
-            order_number = get_next_order_number("TRF")
-            today_str    = datetime.now().strftime("%Y%m%d")
-
-            prefix = f"{project_code}-{city_code}-TRF-{serial_norm}-{order_number}-{today_str}"
-            link, fid = upload_pdf_and_link(pdf_file, prefix=prefix)
-            if not fid:
-                return
+    if is_admin and pdf_file is None:
+        # ... fast path that directly writes to inventory + log ...
+        st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
+    else:
+        # --- NEW NAMING: ST-TIF-TRF-LTP54321-0002-YYYYMMDD.pdf
+        serial_norm = normalize_serial(chosen_serial)
+        # pull department/location from the row in inventory (safe defaults)
+        dep_val = str(inventory_df.loc[idx, "Department"] or "")
+        loc_val = str(inventory_df.loc[idx, "Location"] or "")
+        project_code = project_code_from(dep_val or "UNK")
+        city_code    = city_code_from(loc_val or "UNK")
+        order_number = get_next_order_number("TRF")
+        today_str    = datetime.now().strftime("%Y%m%d")
+        prefix = f"{project_code}-{city_code}-TRF-{serial_norm}-{order_number}-{today_str}"
+        
+        link, fid = upload_pdf_and_link(pdf_file, prefix=prefix)
+        if not fid:
+            return
             pend = {
                 "Device Type": inventory_df.loc[idx, "Device Type"],
                 "Serial Number": chosen_serial,
