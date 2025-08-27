@@ -928,36 +928,37 @@ def register_device_tab():
 
                 # ...
         if is_admin and pdf_file is None:
-            # (unchanged admin fast-path)
-            inv_fresh = read_worksheet(INVENTORY_WS)
-            inv_out = pd.concat([
-                inv_fresh if not inv_fresh.empty else pd.DataFrame(columns=INVENTORY_COLS),
-                pd.DataFrame([row])
-            ], ignore_index=True)
-            inv_out = reorder_columns(inv_out, INVENTORY_COLS)
-            write_worksheet(INVENTORY_WS, inv_out)
-            st.success("✅ Device registered and added to Inventory.")
-        else:
-            # --- NEW NAMING: HO-RUH-REG-LTP12345-0001-YYYYMMDD.pdf
-            serial_norm = normalize_serial(serial)
-            project_code = project_code_from(dept or "UNK")
-            city_code    = city_code_from(location or "UNK")
-            order_number = get_next_order_number("REG")
-            today_str    = datetime.now().strftime("%Y%m%d")
+        # (unchanged admin fast-path)
+        inv_fresh = read_worksheet(INVENTORY_WS)
+        inv_out = pd.concat([
 
-            prefix = f"{project_code}-{city_code}-REG-{serial_norm}-{order_number}-{today_str}"
-            link, fid = upload_pdf_and_link(pdf_file, prefix=prefix)
-            if not fid:
-                return
+        inv_fresh if not inv_fresh.empty else pd.DataFrame(columns=INVENTORY_COLS),
+        pd.DataFrame([row])
+        ], ignore_index=True)
+        inv_out = reorder_columns(inv_out, INVENTORY_COLS)
+        write_worksheet(INVENTORY_WS, inv_out)
+        st.success("✅ Device registered and added to Inventory.")
+    else:
+        # --- NEW NAMING: HO-RUH-REG-LTP12345-0001-YYYYMMDD.pdf
+        serial_norm = normalize_serial(serial)
+        project_code = project_code_from(dept or "UNK")
+        city_code    = city_code_from(location or "UNK")
+        order_number = get_next_order_number("REG")
+        today_str    = datetime.now().strftime("%Y%m%d")
+
+        prefix = f"{project_code}-{city_code}-REG-{serial_norm}-{order_number}-{today_str}"
+        link, fid = upload_pdf_and_link(pdf_file, prefix=prefix)
+        if not fid:
+            return
             pending = {**row,
-                "Approval Status": "Pending",
-                "Approval PDF": link,
-                "Approval File ID": fid,
-                "Submitted by": actor,
-                "Submitted at": now_str,
-                "Approver": "",
-                "Decision at": "",
-            }
+                       "Approval Status": "Pending",
+                       "Approval PDF": link,
+                       "Approval File ID": fid,
+                       "Submitted by": actor,
+                       "Submitted at": now_str,
+                       "Approver": "",
+                       "Decision at": "",
+                      }
             append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
             st.success("🕒 Submitted for admin approval. You'll see it in Inventory once approved.")
 
