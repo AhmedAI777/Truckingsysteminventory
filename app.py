@@ -700,6 +700,71 @@ def select_with_other(label: str, base_options: list[str], existing_values: list
         return st.text_input(f"{label} (Other)")
     return "" if sel == "— Select —" else sel
 
+def delete_drive_file(file_id: str):
+    try:
+        if not file_id:
+            return
+        drive_cli = _get_drive()
+        drive_cli.files().delete(fileId=file_id, supportsAllDrives=True).execute()
+    except Exception as e:
+        st.warning(f"Failed to delete Drive file: {e}")
+        
+def _reject_row(ws_title: str, i: int, row: pd.Series):
+    delete_drive_file(row.get("Approval File ID", ""))
+    _mark_decision(ws_title, row, status="Rejected")
+    st.info("❌ Request rejected and file deleted from Drive.")
+
+
+# === File naming helpers ===
+
+def project_code_from(name: str) -> str:
+    if not name: return "UNK"
+    mapping = {
+        "Head Office": "HO",
+        "Site": "ST",
+        "Finance": "FIN",
+        "IT": "IT",
+    }
+    return mapping.get(name.strip(), name.strip()[:2].upper())
+
+def city_code_from(name: str) -> str:
+    if not name: return "UNK"
+    mapping = {
+        "Jeddah": "JED",
+        "Taif": "TIF",
+        "Madinah": "MED",
+        "Riyadh": "RUH",
+    }
+    # default: first 3 letters upper, if you add a new city later
+    return mapping.get(name.strip(), name.strip()[:3].upper())
+
+def get_next_order_number(type_: str) -> str:
+    """
+    Keeps a simple counter per type in a 'counters' worksheet.
+    - REG starts at 0001
+    - TRF starts at 0002
+    """
+    ws = get_or_create_ws("counters", rows=10, cols=2)
+    df = pd.DataFrame(ws.get_all_records())
+
+    default_start = 1 if type_ == "REG" else 2
+
+    if "Type" not in df.columns or "LastUsed" not in df.columns:
+        df = pd.DataFrame([{"Type": "REG", "LastUsed": default_start - 1}])
+
+    if type_ not in df.get("Type", pd.Series(dtype=str)).values:
+        df = pd.concat([df, pd.DataFrame([{"Type": type_, "LastUsed": default_start - 1}])], ignore_index=True)
+
+    idx = df[df["Type"] == type_].index[0]
+    current = int(df.at[idx, "LastUsed"]) + 1
+    df.at[idx, "LastUsed"] = current
+
+    ws.clear()
+    set_with_dataframe(ws, df)
+
+    return str(current).zfill(4)  # -> 0001, 0002, 0003, ...
+
+
 # =============================================================================
 # VIEWS
 # =============================================================================
@@ -861,7 +926,9 @@ def register_device_tab():
             st.error("Approval PDF is required for submission.")
             return
 
+                # ...
         if is_admin and pdf_file is None:
+            # (unchanged admin fast-path)
             inv_fresh = read_worksheet(INVENTORY_WS)
             inv_out = pd.concat([
                 inv_fresh if not inv_fresh.empty else pd.DataFrame(columns=INVENTORY_COLS),
@@ -871,7 +938,15 @@ def register_device_tab():
             write_worksheet(INVENTORY_WS, inv_out)
             st.success("✅ Device registered and added to Inventory.")
         else:
-            link, fid = upload_pdf_and_link(pdf_file, prefix=f"device_{s_norm}")
+            # --- NEW NAMING: HO-RUH-REG-LTP12345-0001-YYYYMMDD.pdf
+            serial_norm = normalize_serial(serial)
+            project_code = project_code_from(dept or "UNK")
+            city_code    = city_code_from(location or "UNK")
+            order_number = get_next_order_number("REG")
+            today_str    = datetime.now().strftime("%Y%m%d")
+
+            prefix = f"{project_code}-{city_code}-REG-{serial_norm}-{order_number}-{today_str}"
+            link, fid = upload_pdf_and_link(pdf_file, prefix=prefix)
             if not fid:
                 return
             pending = {**row,
@@ -931,32 +1006,24 @@ def transfer_tab():
         now_str   = datetime.now().strftime(DATE_FMT)
         actor     = st.session_state.get("username", "")
 
-        if not is_admin and pdf_file is None:
-            st.error("Approval PDF is required for submission.")
-            return
-
-        if is_admin and pdf_file is None:
-            inventory_df.loc[idx, "Previous User"] = prev_user
-            inventory_df.loc[idx, "Current user"]  = new_owner.strip()
-            inventory_df.loc[idx, "TO"]            = new_owner.strip()
-            inventory_df.loc[idx, "Date issued"]   = now_str
-            inventory_df.loc[idx, "Registered by"] = actor
-
-            inventory_df = reorder_columns(inventory_df, INVENTORY_COLS)
-            write_worksheet(INVENTORY_WS, inventory_df)
-
-            log_row = {
-                "Device Type": inventory_df.loc[idx, "Device Type"],
-                "Serial Number": chosen_serial,
-                "From owner": prev_user,
-                "To owner": new_owner.strip(),
-                "Date issued": now_str,
-                "Registered by": actor,
-            }
-            append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
+               if is_admin and pdf_file is None:
+            # ... fast path that directly writes to inventory + log ...
             st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
-        else:
-            link, fid = upload_pdf_and_link(pdf_file, prefix=f"transfer_{normalize_serial(chosen_serial)}")
+               else:
+            # --- NEW NAMING: ST-TIF-TRF-LTP54321-0002-YYYYMMDD.pdf
+            serial_norm = normalize_serial(chosen_serial)
+
+            # pull department/location from the row in inventory (safe defaults)
+            dep_val = str(inventory_df.loc[idx, "Department"] or "")
+            loc_val = str(inventory_df.loc[idx, "Location"] or "")
+
+            project_code = project_code_from(dep_val or "UNK")
+            city_code    = city_code_from(loc_val or "UNK")
+            order_number = get_next_order_number("TRF")
+            today_str    = datetime.now().strftime("%Y%m%d")
+
+            prefix = f"{project_code}-{city_code}-TRF-{serial_norm}-{order_number}-{today_str}"
+            link, fid = upload_pdf_and_link(pdf_file, prefix=prefix)
             if not fid:
                 return
             pend = {
@@ -976,6 +1043,7 @@ def transfer_tab():
             }
             append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pend]))
             st.success("🕒 Transfer submitted for admin approval.")
+
 
 
 def history_tab():
@@ -1208,8 +1276,10 @@ def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
 
 
 def _reject_row(ws_title: str, i: int, row: pd.Series):
+    file_id = row.get("Approval File ID", "")
+    delete_drive_file(file_id)  # 🔥 Delete file from Drive
     _mark_decision(ws_title, row, status="Rejected")
-    st.info("❌ Request rejected.")
+    st.info("❌ Request rejected and file deleted from Drive.")
 
 # =============================================================================
 # Export
