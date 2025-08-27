@@ -1,5 +1,3 @@
-# app.py — Tracking Inventory Management System (Drive folders per Project/City/Type/Status)
-
 import os
 import re
 import glob
@@ -315,6 +313,38 @@ OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]  # user upload to 
 
 ALLOW_OAUTH_FALLBACK = st.secrets.get("drive", {}).get("allow_oauth_fallback", True)
 
+# -------------------------
+# Helper: pretty folder names
+# -------------------------
+
+def _proj_display_name(code: str) -> str:
+    code = (code or "").upper()
+    mapping = {
+        "HO": "Head Office (HO)",
+        "ST": "Site (ST)",
+        "FIN": "Finance (FIN)",
+        "IT": "IT (IT)",
+    }
+    return mapping.get(code, f"{code} ({code})" if code else "Unknown")
+
+
+def _city_display_name(code: str) -> str:
+    code = (code or "").upper()
+    mapping = {
+        "RUH": "Riyadh (RUH)",
+        "JED": "Jeddah (JED)",
+        "TIF": "Taif (TIF)",
+        "MED": "Madinah (MED)",
+    }
+    return mapping.get(code, f"{code} ({code})" if code else "Unknown")
+
+
+def _type_display_name(type_code: str) -> str:
+    return "Register" if (type_code or "").upper() == "REG" else "Transfer"
+
+
+# -------- Credentials --------
+
 def _load_sa_info() -> dict:
     raw = st.secrets.get("gcp_service_account", {})
     sa: dict = {}
@@ -440,9 +470,16 @@ def _get_drive_client_for_writes():
     except Exception:
         return _get_user_drive()
 
+
 def _find_child_folder_id(parent_id: str, name: str) -> str | None:
+    """Find exact child folder name under a parent."""
+    if not parent_id or not name:
+        return None
     drive = _get_drive_client_for_writes()
-    q = f"'{parent_id}' in parents and name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    q = (
+        f"'{parent_id}' in parents and "
+        f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    )
     res = drive.files().list(
         q=q, spaces="drive",
         fields="files(id,name)",
@@ -450,6 +487,7 @@ def _find_child_folder_id(parent_id: str, name: str) -> str | None:
     ).execute()
     files = res.get("files", [])
     return files[0]["id"] if files else None
+
 
 def _create_child_folder(parent_id: str, name: str) -> str:
     drive = _get_drive_client_for_writes()
@@ -461,34 +499,53 @@ def _create_child_folder(parent_id: str, name: str) -> str:
     folder = drive.files().create(body=file_metadata, fields="id", supportsAllDrives=True).execute()
     return folder["id"]
 
+
 def _ensure_child_folder(parent_id: str, name: str) -> str:
     fid = _find_child_folder_id(parent_id, name)
     return fid or _create_child_folder(parent_id, name)
 
-def ensure_folder_tree(project_code: str, city_code: str, type_code: str, status: str) -> str:
-    """
-    Returns: <ROOT>/ <Project> / <City> / <Type> / <Status>
-    Root can be any of: approvals_root_id, approvals_folder_id, approvals.
-    """
+
+def _approvals_root_id_from_secrets() -> str:
     drive_cfg = st.secrets.get("drive", {})
-    root_id = (
+    return (
         drive_cfg.get("approvals_root_id")
         or drive_cfg.get("approvals_folder_id")
-        or drive_cfg.get("approvals")   # ← your current key
+        or drive_cfg.get("approvals")   # backward-compat key
         or ""
     )
+
+
+def ensure_folder_tree(project_code: str, city_code: str, type_code: str, status: str | None = None) -> str:
+    """
+    Ensure Drive tree exists and return the leaf folder ID.
+
+    Structure (confirmed):
+    Approvals/
+      Head Office (HO)/ or Site (ST)/ ...
+        Riyadh (RUH)/ ...
+          Register/ or Transfer/
+            [Optional Status]/  -> if status provided (e.g., Pending/Approved/Rejected)
+    """
+    root_id = _approvals_root_id_from_secrets()
     if not root_id:
+        # If a root ID is not provided, we cannot reliably create under My Drive root; fail fast.
+        st.error("[drive] approvals_root_id/approvals_folder_id not configured in secrets.")
         return ""
 
-    # pretty names in Drive
-    project_names = {"HO": "Head Office", "ST": "Site", "FIN": "Finance", "IT": "IT"}
-    city_names    = {"RUH": "Riyadh", "JED": "Jeddah", "TIF": "Taif", "MED": "Madinah"}
+    # Pretty names with codes
+    proj_name = _proj_display_name(project_code)
+    city_name = _city_display_name(city_code)
+    type_name = _type_display_name(type_code)
 
-    pid = _ensure_child_folder(root_id, project_names.get(project_code, project_code))
-    cid = _ensure_child_folder(pid,    city_names.get(city_code,    city_code))
-    tid = _ensure_child_folder(cid,    "Register" if type_code == "REG" else "Transfer")
-    sid = _ensure_child_folder(tid,    status)  # Pending / Approved / Rejected
-    return sid
+    # Drill down
+    pid = _ensure_child_folder(root_id, proj_name)
+    cid = _ensure_child_folder(pid,    city_name)
+    tid = _ensure_child_folder(cid,    type_name)
+
+    if status:
+        sid = _ensure_child_folder(tid, status)
+        return sid
+    return tid
 
 
 def move_drive_file(file_id: str, new_parent_id: str):
@@ -505,6 +562,7 @@ def move_drive_file(file_id: str, new_parent_id: str):
         supportsAllDrives=True
     ).execute()
 
+
 def delete_drive_file(file_id: str):
     try:
         if not file_id:
@@ -514,8 +572,10 @@ def delete_drive_file(file_id: str):
     except Exception as e:
         st.warning(f"Failed to delete Drive file: {e}")
 
+
 def _is_pdf_bytes(data: bytes) -> bool:
     return isinstance(data, (bytes, bytearray)) and data[:4] == b"%PDF"
+
 
 def upload_pdf_and_link(uploaded_file, *, prefix: str, parent_folder_id: str | None = None) -> tuple[str, str]:
     """Upload PDF to Drive into desired folder. Try SA first; on 403 storage quota, fall back to OAuth (My Drive)."""
@@ -570,6 +630,7 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str, parent_folder_id: str | N
         _drive_make_public(file_id, drive_client=drive_cli)
     return link, file_id
 
+
 def _fetch_public_pdf_bytes(file_id: str, link: str) -> bytes:
     try:
         if file_id:
@@ -588,12 +649,15 @@ def _fetch_public_pdf_bytes(file_id: str, link: str) -> bytes:
 def _norm_title(t: str) -> str:
     return (t or "").strip().lower()
 
+
 def _norm_header(h: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
+
 
 def _canon_header(h: str) -> str:
     key = _norm_header(h)
     return HEADER_SYNONYMS.get(key, h.strip())
+
 
 def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
     rename = {}
@@ -612,6 +676,7 @@ def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.drop(columns=drop_cols)
     return df.astype(str)
 
+
 def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     for c in desired:
         if c not in df.columns:
@@ -619,12 +684,14 @@ def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
     tail = [c for c in df.columns if c not in desired]
     return df[desired + tail]
 
+
 def get_or_create_ws(title, rows=500, cols=80):
     sh = get_sh()
     try:
         return sh.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
+
 
 def get_employee_ws():
     sh = get_sh()
@@ -667,6 +734,7 @@ def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
         return reorder_columns(df, LOG_COLS)
     return df
 
+
 def read_worksheet(ws_title):
     try:
         return _read_worksheet_cached(ws_title)
@@ -678,6 +746,7 @@ def read_worksheet(ws_title):
         if ws_title == PENDING_DEVICE_WS: return pd.DataFrame(columns=PENDING_DEVICE_COLS)
         if ws_title == PENDING_TRANSFER_WS: return pd.DataFrame(columns=PENDING_TRANSFER_COLS)
         return pd.DataFrame()
+
 
 def write_worksheet(ws_title, df):
     if ws_title == INVENTORY_WS:
@@ -696,6 +765,7 @@ def write_worksheet(ws_title, df):
     ws.clear()
     set_with_dataframe(ws, df)
     st.cache_data.clear()
+
 
 def append_to_worksheet(ws_title, new_data):
     ws = get_or_create_ws(ws_title)
@@ -717,6 +787,7 @@ def append_to_worksheet(ws_title, new_data):
 
 def normalize_serial(s: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
+
 
 def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
     if a == b:
@@ -741,11 +812,13 @@ def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
         prev = cur
     return prev[-1]
 
+
 def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
     if df.empty or col not in df.columns:
         return []
     vals = [str(x).strip() for x in df[col].dropna().astype(str).tolist()]
     return sorted({v for v in vals if v})
+
 
 def select_with_other(label: str, base_options: list[str], existing_values: list[str]) -> str:
     merged = [o for o in base_options if o]
@@ -803,6 +876,7 @@ def city_code_from(text: str) -> str:
 
     return "RUH"
 
+
 def get_next_order_number(type_: str) -> str:
     """
     Keeps a simple counter per type in a 'counters' worksheet.
@@ -841,6 +915,7 @@ def employees_view_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
+
 def inventory_tab():
     st.subheader("📋 Inventory")
     df = read_worksheet(INVENTORY_WS)
@@ -851,6 +926,7 @@ def inventory_tab():
             st.dataframe(df, use_container_width=True)
         else:
             st.dataframe(df, use_container_width=True, hide_index=True)
+
 
 def register_device_tab():
     st.subheader("📝 Register New Device")
@@ -1031,6 +1107,7 @@ def register_device_tab():
     append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
     st.success("🕒 Submitted for admin approval. You'll see it in Inventory once approved.")
 
+
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
     inventory_df = read_worksheet(INVENTORY_WS)
@@ -1121,7 +1198,8 @@ def transfer_tab():
     link, fid = upload_pdf_and_link(pdf_file, prefix=prefix, parent_folder_id=pending_folder)
     if not fid:
         return
-        pend = {
+
+    pend = {
         "Device Type": inventory_df.loc[idx, "Device Type"],
         "Serial Number": chosen_serial,
         "From owner": prev_user,
@@ -1135,9 +1213,10 @@ def transfer_tab():
         "Submitted at": now_str,
         "Approver": "",
         "Decision at": "",
-        }
+    }
     append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pend]))
     st.success("🕒 Transfer submitted for admin approval.")
+
 
 def history_tab():
     st.subheader("📜 Transfer Log")
@@ -1146,6 +1225,7 @@ def history_tab():
         st.info("No transfer history found.")
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
+
 
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
@@ -1224,6 +1304,7 @@ def employee_register_tab():
         write_worksheet(EMPLOYEE_WS, new_df)
         st.success("✅ Employee saved to 'mainlists'.")
 
+
 def approvals_tab():
     st.subheader("✅ Approvals (Admin)")
     if st.session_state.get("role") != "Admin":
@@ -1294,6 +1375,7 @@ def approvals_tab():
                     if r_col.button("Reject", key=f"reject_tr_{i}"):
                         _reject_row(PENDING_TRANSFER_WS, i, row)
 
+
 def _approve_device_row(row: pd.Series):
     inv = read_worksheet(INVENTORY_WS)
     now_str = datetime.now().strftime(DATE_FMT)
@@ -1320,6 +1402,7 @@ def _approve_device_row(row: pd.Series):
 
     _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
     st.success("✅ Device approved and added to Inventory.")
+
 
 def _approve_transfer_row(row: pd.Series):
     inv = read_worksheet(INVENTORY_WS)
@@ -1369,6 +1452,7 @@ def _approve_transfer_row(row: pd.Series):
     _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
     st.success("✅ Transfer approved and applied.")
 
+
 def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
     df = read_worksheet(ws_title)
     key_cols = [c for c in ["Serial Number", "Submitted at", "Submitted by", "To owner"] if c in df.columns]
@@ -1386,6 +1470,7 @@ def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
     df.loc[idx, "Approver"] = st.session_state.get("username", "")
     df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
     write_worksheet(ws_title, df)
+
 
 def _reject_row(ws_title: str, i: int, row: pd.Series):
     # Move to Rejected folder (or call delete_drive_file to delete instead)
@@ -1479,6 +1564,7 @@ def _config_check_ui():
         st.code(str(e))
         st.info("Share the sheet with the Service Account email above and try again.")
         st.stop()
+
 
 def run_app():
     render_header()
