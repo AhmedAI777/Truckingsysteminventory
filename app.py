@@ -881,6 +881,7 @@ def history_tab():
         st.info("No transfer history found.")
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
+
 def register_device_tab():
     st.subheader("📝 Register New Device")
     emp_df = read_worksheet(EMPLOYEE_WS)
@@ -890,7 +891,7 @@ def register_device_tab():
     })
 
     with st.form("register_device", clear_on_submit=True):
-        # Row 1
+        # === Form fields ===
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
             serial = st.text_input("Serial Number *")
@@ -898,7 +899,7 @@ def register_device_tab():
             assigned_choice = st.selectbox(
                 "Assigned to",
                 [UNASSIGNED_LABEL] + emp_names + ["Type a new name…"],
-                help="Choose 'Unassigned (Stock)' if no owner yet."
+                help="Choose 'Unassigned (Stock)' if the device has no owner yet."
             )
             if assigned_choice == "Type a new name…":
                 assigned_to = st.text_input("Name")
@@ -909,73 +910,43 @@ def register_device_tab():
         with r1c3:
             device = st.text_input("Device Type *")
 
-        # Row 2
-        r2c1, r2c2, r2c3 = st.columns(3)
-        with r2c1: brand = st.text_input("Brand")
-        with r2c2: model = st.text_input("Model")
-        with r2c3: cpu = st.text_input("CPU")
+        # Other fields…
+        brand = st.text_input("Brand")
+        model = st.text_input("Model")
+        cpu = st.text_input("CPU")
+        mem = st.text_input("Memory")
+        hdd1 = st.text_input("Hard Drive 1")
+        hdd2 = st.text_input("Hard Drive 2")
+        gpu = st.text_input("GPU")
+        screen = st.text_input("Screen Size")
+        email = st.text_input("Email Address")
+        contact = st.text_input("Contact Number")
+        dept = st.text_input("Department")
+        location = st.text_input("Location")
+        office = st.text_input("Office")
+        notes = st.text_area("Notes", height=60)
 
-        # Row 3
-        r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1: mem = st.text_input("Memory")
-        with r3c2: hdd1 = st.text_input("Hard Drive 1")
-        with r3c3: hdd2 = st.text_input("Hard Drive 2")
+        # === Required signed PDF upload ===
+        pdf_file = st.file_uploader("Upload Signed Approval PDF *", type=["pdf"], key="reg_pdf")
 
-        # Row 4
-        r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1: gpu = st.text_input("GPU")
-        with r4c2: screen = st.text_input("Screen Size")
-        with r4c3: email = st.text_input("Email Address")
-
-        # Row 5
-        r5c1, r5c2, r5c3 = st.columns(3)
-        with r5c1: contact = st.text_input("Contact Number")
-        with r5c2: dept = st.text_input("Department")
-        with r5c3: location = st.text_input("Location")
-
-        # Row 6
-        r6c1, r6c2 = st.columns([1, 2])
-        with r6c1: office = st.text_input("Office")
-        with r6c2: notes = st.text_area("Notes", height=60)
-
-        pdf_file = st.file_uploader("Approval PDF (required for non-admin)", type=["pdf"], key="reg_pdf")
         submitted = st.form_submit_button("Save Device", type="primary")
-
-    # PDF Preview
-    if ss.get("reg_pdf"):
-        ss.reg_pdf_ref = ss.reg_pdf
-    if ss.get("reg_pdf_ref"):
-        st.caption("Preview: Approval PDF")
-        try:
-            pdf_viewer(input=ss.reg_pdf_ref.getvalue(), width=700, key="viewer_reg")
-        except Exception:
-            pass
 
     if not submitted:
         return
 
-    # === On submit ===
+    # === Validation ===
     if not serial.strip() or not device.strip():
         st.error("Serial Number and Device Type are required.")
         return
-
-    s_norm = normalize_serial(serial)
-    if not s_norm:
-        st.error("Serial Number cannot be blank after normalization.")
+    if pdf_file is None:
+        st.error("Signed PDF is required.")
         return
 
-    # Duplicate check
+    s_norm = normalize_serial(serial)
     inv = read_worksheet(INVENTORY_WS)
-    if not inv.empty:
-        inv["__snorm"] = inv["Serial Number"].astype(str).map(normalize_serial)
-        if s_norm in set(inv["__snorm"]):
-            existing = inv[inv["__snorm"] == s_norm].iloc[0]
-            st.error(f"Duplicate serial. Already exists as '{existing['Serial Number']}'")
-            return
-        near_mask = inv["__snorm"].apply(lambda x: levenshtein(s_norm, x, max_dist=1) <= 1)
-        near = inv[near_mask]
-        if not near.empty:
-            st.warning("Near-duplicate serials: " + ", ".join(near["Serial Number"].astype(str).unique()))
+    if not inv.empty and s_norm in set(inv["Serial Number"].astype(str).map(normalize_serial)):
+        st.error("Duplicate serial number already exists.")
+        return
 
     now_str = datetime.now().strftime(DATE_FMT)
     actor = st.session_state.get("username", "")
@@ -993,7 +964,7 @@ def register_device_tab():
         "Screen Size": screen.strip(),
         "Current user": assigned_to.strip(),
         "Previous User": "",
-        "TO": assigned_to.strip() if assigned_to.strip() != UNASSIGNED_LABEL else "",
+        "TO": assigned_to.strip() if assigned_to != UNASSIGNED_LABEL else "",
         "Department": dept.strip(),
         "Email Address": email.strip(),
         "Contact Number": contact.strip(),
@@ -1004,44 +975,31 @@ def register_device_tab():
         "Registered by": actor,
     }
 
-    is_admin = st.session_state.get("role") == "Admin"
-    if not is_admin and pdf_file is None:
-        st.error("Approval PDF is required for submission.")
-        return
-
-    # === Admin fast-path ===
-    if is_admin and pdf_file is None:
-        inv_fresh = read_worksheet(INVENTORY_WS)
-        inv_out = pd.concat([inv_fresh, pd.DataFrame([base_row])], ignore_index=True)
-        inv_out = reorder_columns(inv_out, INVENTORY_COLS)
-        write_worksheet(INVENTORY_WS, inv_out)
-        st.success("✅ Device registered and added to Inventory.")
-        return
-
-    # === Staff or admin with PDF → Pending queue ===
-    serial_norm = normalize_serial(serial)
+    # === Upload signed PDF directly ===
     project_code = project_code_from(dept or "HO")
     city_code = city_code_from(location or "RUH")
     order_number = get_next_order_number("REG")
     today_str = datetime.now().strftime("%Y%m%d")
-    prefix = f"{project_code}-{city_code}-REG-{serial_norm}-{order_number}-{today_str}"
+    prefix = f"{project_code}-{city_code}-REG-{s_norm}-{order_number}-{today_str}"
 
     pending_folder = ensure_folder_tree(project_code, city_code, "REG", "Pending")
     link, fid = upload_pdf_and_link(pdf_file, prefix=prefix, parent_folder_id=pending_folder)
     if not fid:
+        st.error("Failed to upload signed PDF.")
         return
 
     pending = {**base_row,
-        "Approval Status": "Pending",
-        "Approval PDF": link,
-        "Approval File ID": fid,
-        "Submitted by": actor,
-        "Submitted at": now_str,
-        "Approver": "",
-        "Decision at": "",
-    }
+               "Approval Status": "Pending",
+               "Approval PDF": link,
+               "Approval File ID": fid,
+               "Submitted by": actor,
+               "Submitted at": now_str,
+               "Approver": "",
+               "Decision at": ""}
+
     append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-    st.success("🕒 Submitted for admin approval.")
+    st.success("✅ Signed device registration submitted for admin approval.")
+
 
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
@@ -1054,66 +1012,35 @@ def transfer_tab():
     serial = st.selectbox("Serial Number", ["— Select —"] + serial_list)
     chosen_serial = None if serial == "— Select —" else serial
 
-    existing_users = sorted([u for u in inventory_df["Current user"].dropna().astype(str).tolist() if u.strip()])
+    existing_users = sorted([u for u in inventory_df["Current user"].dropna().astype(str) if u.strip()])
     new_owner_choice = st.selectbox("New Owner", ["— Select —"] + existing_users + ["Type a new name…"])
     if new_owner_choice == "Type a new name…":
         new_owner = st.text_input("Enter new owner name")
     else:
         new_owner = new_owner_choice if new_owner_choice != "— Select —" else ""
 
-    pdf_file = st.file_uploader("Approval PDF (required for non-admin)", type=["pdf"], key="transfer_pdf")
+    # === Required signed PDF upload ===
+    pdf_file = st.file_uploader("Upload Signed Transfer PDF *", type=["pdf"], key="transfer_pdf")
 
-    # Preview
-    if ss.get("transfer_pdf"):
-        ss.transfer_pdf_ref = ss.transfer_pdf
-    if ss.get("transfer_pdf_ref"):
-        st.caption("Preview: Approval PDF")
-        try:
-            pdf_viewer(input=ss.transfer_pdf_ref.getvalue(), width=700, key="viewer_trans")
-        except Exception:
-            pass
-
-    is_admin = st.session_state.get("role") == "Admin"
-    do_transfer = st.button("Transfer Now", type="primary", disabled=not (chosen_serial and new_owner.strip()))
+    do_transfer = st.button("Submit Transfer", type="primary", disabled=not (chosen_serial and new_owner.strip()))
     if not do_transfer:
+        return
+
+    if pdf_file is None:
+        st.error("Signed PDF is required.")
         return
 
     match = inventory_df[inventory_df["Serial Number"].astype(str) == chosen_serial]
     if match.empty:
         st.warning("Serial number not found.")
         return
+
     idx = match.index[0]
     prev_user = str(inventory_df.loc[idx, "Current user"] or "")
     now_str = datetime.now().strftime(DATE_FMT)
     actor = st.session_state.get("username", "")
 
-    if not is_admin and pdf_file is None:
-        st.error("Approval PDF is required for submission.")
-        return
-
-    # === Admin fast-path ===
-    if is_admin and pdf_file is None:
-        inventory_df.loc[idx, "Previous User"] = prev_user
-        inventory_df.loc[idx, "Current user"] = new_owner.strip()
-        inventory_df.loc[idx, "TO"] = new_owner.strip()
-        inventory_df.loc[idx, "Date issued"] = now_str
-        inventory_df.loc[idx, "Registered by"] = actor
-        inventory_df = reorder_columns(inventory_df, INVENTORY_COLS)
-        write_worksheet(INVENTORY_WS, inventory_df)
-
-        log_row = {
-            "Device Type": inventory_df.loc[idx, "Device Type"],
-            "Serial Number": chosen_serial,
-            "From owner": prev_user,
-            "To owner": new_owner.strip(),
-            "Date issued": now_str,
-            "Registered by": actor,
-        }
-        append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
-        st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
-        return
-
-    # === Staff (with PDF) → Pending queue ===
+    # === Upload signed transfer PDF ===
     serial_norm = normalize_serial(chosen_serial)
     dep_val = str(inventory_df.loc[idx, "Department"] or "")
     loc_val = str(inventory_df.loc[idx, "Location"] or "")
@@ -1126,6 +1053,7 @@ def transfer_tab():
     pending_folder = ensure_folder_tree(project_code, city_code, "TRF", "Pending")
     link, fid = upload_pdf_and_link(pdf_file, prefix=prefix, parent_folder_id=pending_folder)
     if not fid:
+        st.error("Failed to upload signed PDF.")
         return
 
     pend = {
@@ -1143,8 +1071,11 @@ def transfer_tab():
         "Approver": "",
         "Decision at": "",
     }
+
     append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pend]))
-    st.success("🕒 Transfer submitted for admin approval.")
+    st.success("✅ Signed transfer request submitted for admin approval.")
+
+
 
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
