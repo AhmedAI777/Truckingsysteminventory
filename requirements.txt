@@ -17,6 +17,9 @@ gspread-dataframe
 pydrive2
 streamlit_pdf_viewer
 pypdf>=4
+pypdf==4.3.1 
+reportlab==4.2.2
+streamlit-drawable-canvas==0.9.3
 
 
 
