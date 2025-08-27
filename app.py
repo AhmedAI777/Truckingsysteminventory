@@ -8,9 +8,7 @@ import hashlib
 import time
 import io
 from datetime import datetime, timedelta
-from io import BytesIO
-from pypdf import PdfReader, PdfWriter
-from pypdf.generic import NameObject, BooleanObject
+
 import pandas as pd
 import requests
 
@@ -30,8 +28,10 @@ from google.oauth2.credentials import Credentials as UserCredentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
+from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 from googleapiclient.errors import HttpError
+
+import zipfile
 
 # =============================================================================
 # CONFIG
@@ -643,92 +643,6 @@ def _fetch_public_pdf_bytes(file_id: str, link: str) -> bytes:
     except Exception:
         pass
     return b""
-
-from io import BytesIO
-from pypdf import PdfReader, PdfWriter
-from pypdf.generic import NameObject, BooleanObject
-
-# Configure once (template + field map)
-FORMS = {
-    "owner_request": {
-        # put the template in your repo or mount it in Streamlit files
-        "template_path": st.secrets.get("forms", {}).get("owner_template_path", "forms/ICT_Equipment_Form.pdf"),
-        # Map your app fields -> PDF field names in the template
-        # NOTE: update the right-hand side keys to match your form's field names
-        "field_map": {
-            # Person section
-            "Assigned To": "Name",          # human-readable field if your PDF uses readable names
-            "Email Address": "Email Address",
-            "Contact Number": "Mobile Number",
-            "Department": "Department",
-            "Project": "Project",
-            "Location": "Project Location",
-
-            # Device section
-            "Device Type": "Type",
-            "Brand": "Brand",
-            "Model": "Model",
-            "CPU": "Specifications",
-            "Serial Number": "Serial No.",
-        }
-    }
-}
-
-def _generate_owner_form_pdf(row: dict, *, form_key: str = "owner_request") -> tuple[bytes, str]:
-    """Return (pdf_bytes, suggested_filename) for the prefilled owner form."""
-    cfg = FORMS[form_key]
-    template_path = cfg["template_path"]
-    field_map = cfg["field_map"]
-
-    if not os.path.exists(template_path):
-        st.error(f"Owner form template not found at: {template_path}")
-        return b"", ""
-
-    reader = PdfReader(template_path)
-    writer = PdfWriter()
-    # copy all pages
-    for p in reader.pages:
-        writer.add_page(p)
-
-    # Build values dict: PDF field name -> value
-    values = {}
-    for app_key, pdf_field in field_map.items():
-        val = str(row.get(app_key, "") or "")
-        if pdf_field:
-            values[pdf_field] = val
-
-    # apply values on first page (or all pages—pypdf applies to the page you update)
-    writer.update_page_form_field_values(writer.pages[0], values)
-
-    # critical: ensure values render without re-opening in Acrobat
-    if "/AcroForm" in reader.trailer["/Root"]:
-        writer._root_object.update({
-            NameObject("/AcroForm"): reader.trailer["/Root"]["/AcroForm"]
-        })
-        writer._root_object["/AcroForm"].update({
-            NameObject("/NeedAppearances"): BooleanObject(True)
-        })
-
-    out = BytesIO()
-    writer.write(out)
-    out.seek(0)
-
-    # sensible filename for the unsigned, prefilled form
-    serial_norm = normalize_serial(row.get("Serial Number", ""))
-    dept_code   = project_code_from(row.get("Department", ""))
-    city_code   = city_code_from(row.get("Location", ""))
-    today_str   = datetime.now().strftime("%Y%m%d")
-    fname = f"{dept_code}-{city_code}-REG-{serial_norm}-owner-form-{today_str}.pdf"
-    return out.getvalue(), fname
-
-def _list_pdf_form_fields(template_path: str) -> dict:
-    """Optional: debug helper to print all field names from your template."""
-    reader = PdfReader(template_path)
-    fields = reader.get_form_text_fields()
-    return fields  # returns dict {field_name: current_value}
-
-
-
 
 # =============================================================================
 # SHEETS HELPERS
@@ -1561,7 +1475,7 @@ def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
 
 
 def _reject_row(ws_title: str, i: int, row: pd.Series):
-    # Move to Rejected folder (or call delete_drive_file to delete instead)
+    # Move to Rejected folder (do NOT delete)
     try:
         type_code = "REG" if ws_title == PENDING_DEVICE_WS else "TRF"
         dep = row.get("Department","") or ""
@@ -1569,16 +1483,104 @@ def _reject_row(ws_title: str, i: int, row: pd.Series):
         project_code = project_code_from(dep or "UNK")
         city_code    = city_code_from(loc or "UNK")
         dest_folder  = ensure_folder_tree(project_code, city_code, type_code, "Rejected")
-        move_drive_file(str(row.get("Approval File ID","")), dest_folder)
-    except Exception:
-        # fallback: delete to avoid clutter
-        delete_drive_file(row.get("Approval File ID", ""))
+
+        fid = str(row.get("Approval File ID",""))
+        if fid:
+            move_drive_file(fid, dest_folder)
+        else:
+            st.warning("No Approval File ID; cannot move PDF to Rejected folder (file left where it is).")
+    except Exception as e:
+        st.warning(f"Could not move PDF to Rejected folder: {e} (file left in place).")
+
     _mark_decision(ws_title, row, status="Rejected")
     st.info("❌ Request rejected and filed under Rejected.")
 
 # =============================================================================
 # Export
 # =============================================================================
+
+def _drive_list_tree_pdfs(root_folder_id: str) -> list[dict]:
+    """
+    Recursively list all PDFs under Approvals root.
+    Returns: [{"id","name","path","createdTime"}], where 'path' is the virtual
+    folder path like "Head Office (HO)/Riyadh (RUH)/Register/Approved".
+    """
+    cli = _get_drive_client_for_writes()
+    results = []
+    queue = [(root_folder_id, "")]  # (folder_id, path_prefix)
+
+    while queue:
+        parent_id, prefix = queue.pop(0)
+        page_token = None
+        while True:
+            resp = cli.files().list(
+                q=f"'{parent_id}' in parents and trashed=false",
+                fields="nextPageToken, files(id,name,mimeType,createdTime)",
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+                pageToken=page_token
+            ).execute()
+
+            for f in resp.get("files", []):
+                mime = f.get("mimeType", "")
+                name = f.get("name", "")
+                fid  = f.get("id", "")
+                if mime == "application/vnd.google-apps.folder":
+                    queue.append((fid, os.path.join(prefix, name)))
+                elif mime == "application/pdf":
+                    results.append({
+                        "id": fid,
+                        "name": name,
+                        "path": prefix,  # folder path inside ZIP
+                        "createdTime": f.get("createdTime", "")
+                    })
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+    return results
+
+
+def _filter_drive_pdfs(files: list[dict], *, type_filter: str, status_filter: str) -> list[dict]:
+    """
+    type_filter: "All" | "Register" | "Transfer"
+    status_filter: "All" | "Pending" | "Approved" | "Rejected"
+    """
+    out = []
+    for f in files:
+        path_parts = (f["path"] or "").split(os.sep)
+
+        # Type comes from folder path level ("Register" or "Transfer")
+        if type_filter != "All" and type_filter not in path_parts:
+            continue
+
+        # Status comes from the last level under type ("Pending"/"Approved"/"Rejected")
+        if status_filter != "All" and status_filter not in path_parts:
+            continue
+
+        out.append(f)
+    return out
+
+
+def _download_zip_from_drive(files: list[dict]) -> bytes:
+    """Download provided Drive PDFs and return a ZIP archive as bytes."""
+    cli = _get_drive_client_for_writes()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for f in files:
+            file_id = f["id"]
+            zname   = os.path.join(f["path"], f["name"]).lstrip("/")
+
+            req = cli.files().get_media(fileId=file_id)
+            tmp = io.BytesIO()
+            downloader = MediaIoBaseDownload(tmp, req)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+            tmp.seek(0)
+            zf.writestr(zname, tmp.read())
+    buf.seek(0)
+    return buf.getvalue()
+
 
 def export_tab():
     st.subheader("⬇️ Export (always fresh)")
@@ -1623,6 +1625,42 @@ def export_tab():
             )
         else:
             st.caption("No approved transfer submissions yet.")
+
+    # -------------------------------------------
+    # Export PDFs (ZIP) – includes Pending / Approved / Rejected
+    # -------------------------------------------
+    st.markdown("---")
+    with st.expander("📦 Export PDFs (ZIP)", expanded=False):
+        root_id = _approvals_root_id_from_secrets()
+        if not root_id:
+            st.error("Approvals root folder is not configured in secrets.")
+        else:
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                type_filter = st.selectbox("Type", ["All", "Register", "Transfer"])
+            with c2:
+                status_filter = st.selectbox("Status", ["All", "Pending", "Approved", "Rejected"])  # include Rejected
+            with c3:
+                zip_name = st.text_input("ZIP filename", value=f"approvals_{datetime.now().strftime('%Y%m%d')}.zip")
+
+            if st.button("Build ZIP"):
+                with st.spinner("Collecting files from Drive..."):
+                    all_pdfs = _drive_list_tree_pdfs(root_id)
+                    filtered = _filter_drive_pdfs(all_pdfs, type_filter=type_filter, status_filter=status_filter)
+
+                if not filtered:
+                    st.info("No PDFs matched your filters.")
+                else:
+                    with st.spinner(f"Downloading {len(filtered)} file(s) and building ZIP..."):
+                        zip_bytes = _download_zip_from_drive(filtered)
+                    st.success(f"Built ZIP with {len(filtered)} file(s).")
+                    st.download_button(
+                        "Download ZIP",
+                        data=zip_bytes,
+                        file_name=zip_name or "approvals.zip",
+                        mime="application/zip",
+                        use_container_width=True,
+                    )
 
 # =============================================================================
 # MAIN
