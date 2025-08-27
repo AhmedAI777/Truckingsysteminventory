@@ -467,22 +467,29 @@ def _ensure_child_folder(parent_id: str, name: str) -> str:
 
 def ensure_folder_tree(project_code: str, city_code: str, type_code: str, status: str) -> str:
     """
-    Returns the folder ID: ApprovalsRoot / <Project> / <City> / <Type> / <Status>
-    If root missing, falls back to single-folder secrets.
+    Returns: <ROOT>/ <Project> / <City> / <Type> / <Status>
+    Root can be any of: approvals_root_id, approvals_folder_id, approvals.
     """
-    root_id = st.secrets.get("drive", {}).get("approvals_root_id", "")
+    drive_cfg = st.secrets.get("drive", {})
+    root_id = (
+        drive_cfg.get("approvals_root_id")
+        or drive_cfg.get("approvals_folder_id")
+        or drive_cfg.get("approvals")   # ← your current key
+        or ""
+    )
     if not root_id:
-        return st.secrets.get("drive", {}).get("approvals_folder_id", "") or st.secrets.get("drive", {}).get("approvals", "")
+        return ""
 
-    # human names for Project/City folders (nice in Drive)
+    # pretty names in Drive
     project_names = {"HO": "Head Office", "ST": "Site", "FIN": "Finance", "IT": "IT"}
-    city_names = {"RUH": "Riyadh", "JED": "Jeddah", "TIF": "Taif", "MED": "Madinah"}
+    city_names    = {"RUH": "Riyadh", "JED": "Jeddah", "TIF": "Taif", "MED": "Madinah"}
 
     pid = _ensure_child_folder(root_id, project_names.get(project_code, project_code))
-    cid = _ensure_child_folder(pid, city_names.get(city_code, city_code))
-    tid = _ensure_child_folder(cid, "Register" if type_code == "REG" else "Transfer")
-    sid = _ensure_child_folder(tid, status)  # Pending / Approved / Rejected
+    cid = _ensure_child_folder(pid,    city_names.get(city_code,    city_code))
+    tid = _ensure_child_folder(cid,    "Register" if type_code == "REG" else "Transfer")
+    sid = _ensure_child_folder(tid,    status)  # Pending / Approved / Rejected
     return sid
+
 
 def move_drive_file(file_id: str, new_parent_id: str):
     if not file_id or not new_parent_id:
@@ -752,15 +759,49 @@ def select_with_other(label: str, base_options: list[str], existing_values: list
 
 # === File naming helpers ===
 
-def project_code_from(name: str) -> str:
-    if not name: return "UNK"
-    mapping = {"Head Office": "HO", "Site": "ST", "Finance": "FIN", "IT": "IT"}
-    return mapping.get(name.strip(), name.strip()[:2].upper())
+def project_code_from(text: str) -> str:
+    """
+    Derive HO/ST (or FIN/IT) from any messy input.
+    Defaults to HO to avoid 'UN' folders.
+    """
+    s = (text or "").strip().lower()
+    if not s:
+        return "HO"
 
-def city_code_from(name: str) -> str:
-    if not name: return "UNK"
-    mapping = {"Jeddah": "JED", "Taif": "TIF", "Madinah": "MED", "Riyadh": "RUH"}
-    return mapping.get(name.strip(), name.strip()[:3].upper())
+    # clear synonyms
+    if re.search(r"\b(ho|head\s*office|hq|head\s*quarters)\b", s):
+        return "HO"
+    if re.search(r"\b(st|site|field|project|yard)\b", s):
+        return "ST"
+    if "finance" in s:
+        return "FIN"
+    if re.fullmatch(r"(it|i\.t\.|information\s*technology)", s):
+        return "IT"
+
+    # last resort → HO (so we never get 'UN' / 'Q3' in names)
+    return "HO"
+
+
+def city_code_from(text: str) -> str:
+    """
+    Map any variant to RUH/JED/TIF/MED.
+    Defaults to RUH so we never get 'UN'.
+    """
+    s = (text or "").strip().lower()
+    if not s:
+        return "RUH"
+
+    pairs = [
+        (("riyadh", "ruh", "riyad"), "RUH"),
+        (("jeddah", "jed", "jdh", "jda"), "JED"),
+        (("taif", "tif"), "TIF"),
+        (("madinah", "medina", "med", "al madinah", "al-madinah"), "MED"),
+    ]
+    for keys, code in pairs:
+        if any(k in s for k in keys):
+            return code
+
+    return "RUH"
 
 def get_next_order_number(type_: str) -> str:
     """
@@ -965,14 +1006,16 @@ def register_device_tab():
 
     # Staff (or admin with PDF): upload PDF to Pending folder and go to pending sheet
     serial_norm = normalize_serial(serial)
-    project_code = project_code_from(dept or "UNK")
-    city_code    = city_code_from(location or "UNK")
+    project_code = project_code_from(dept or "HO")
+    city_code    = city_code_from(location or "RUH")
     order_number = get_next_order_number("REG")
     today_str    = datetime.now().strftime("%Y%m%d")
 
     prefix = f"{project_code}-{city_code}-REG-{serial_norm}-{order_number}-{today_str}"
+
     pending_folder = ensure_folder_tree(project_code, city_code, "REG", "Pending")
     link, fid = upload_pdf_and_link(pdf_file, prefix=prefix, parent_folder_id=pending_folder)
+
     if not fid:
         return
 
@@ -1063,20 +1106,22 @@ def transfer_tab():
 
     # Staff (or admin with PDF): upload to Pending folder and go to pending sheet
     serial_norm = normalize_serial(chosen_serial)
+
     dep_val = str(inventory_df.loc[idx, "Department"] or "")
     loc_val = str(inventory_df.loc[idx, "Location"] or "")
-    project_code = project_code_from(dep_val or "UNK")
-    city_code    = city_code_from(loc_val or "UNK")
+
+    project_code = project_code_from(dep_val or "HO")
+    city_code    = city_code_from(loc_val or "RUH")
     order_number = get_next_order_number("TRF")
     today_str    = datetime.now().strftime("%Y%m%d")
 
     prefix = f"{project_code}-{city_code}-TRF-{serial_norm}-{order_number}-{today_str}"
+
     pending_folder = ensure_folder_tree(project_code, city_code, "TRF", "Pending")
     link, fid = upload_pdf_and_link(pdf_file, prefix=prefix, parent_folder_id=pending_folder)
     if not fid:
         return
-
-    pend = {
+        pend = {
         "Device Type": inventory_df.loc[idx, "Device Type"],
         "Serial Number": chosen_serial,
         "From owner": prev_user,
@@ -1090,7 +1135,7 @@ def transfer_tab():
         "Submitted at": now_str,
         "Approver": "",
         "Decision at": "",
-    }
+        }
     append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pend]))
     st.success("🕒 Transfer submitted for admin approval.")
 
