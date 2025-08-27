@@ -8,7 +8,9 @@ import hashlib
 import time
 import io
 from datetime import datetime, timedelta
-
+from io import BytesIO
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import NameObject, BooleanObject
 import pandas as pd
 import requests
 
@@ -641,6 +643,92 @@ def _fetch_public_pdf_bytes(file_id: str, link: str) -> bytes:
     except Exception:
         pass
     return b""
+
+from io import BytesIO
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import NameObject, BooleanObject
+
+# Configure once (template + field map)
+FORMS = {
+    "owner_request": {
+        # put the template in your repo or mount it in Streamlit files
+        "template_path": st.secrets.get("forms", {}).get("owner_template_path", "forms/ICT_Equipment_Form.pdf"),
+        # Map your app fields -> PDF field names in the template
+        # NOTE: update the right-hand side keys to match your form's field names
+        "field_map": {
+            # Person section
+            "Assigned To": "Name",          # human-readable field if your PDF uses readable names
+            "Email Address": "Email Address",
+            "Contact Number": "Mobile Number",
+            "Department": "Department",
+            "Project": "Project",
+            "Location": "Project Location",
+
+            # Device section
+            "Device Type": "Type",
+            "Brand": "Brand",
+            "Model": "Model",
+            "CPU": "Specifications",
+            "Serial Number": "Serial No.",
+        }
+    }
+}
+
+def _generate_owner_form_pdf(row: dict, *, form_key: str = "owner_request") -> tuple[bytes, str]:
+    """Return (pdf_bytes, suggested_filename) for the prefilled owner form."""
+    cfg = FORMS[form_key]
+    template_path = cfg["template_path"]
+    field_map = cfg["field_map"]
+
+    if not os.path.exists(template_path):
+        st.error(f"Owner form template not found at: {template_path}")
+        return b"", ""
+
+    reader = PdfReader(template_path)
+    writer = PdfWriter()
+    # copy all pages
+    for p in reader.pages:
+        writer.add_page(p)
+
+    # Build values dict: PDF field name -> value
+    values = {}
+    for app_key, pdf_field in field_map.items():
+        val = str(row.get(app_key, "") or "")
+        if pdf_field:
+            values[pdf_field] = val
+
+    # apply values on first page (or all pages—pypdf applies to the page you update)
+    writer.update_page_form_field_values(writer.pages[0], values)
+
+    # critical: ensure values render without re-opening in Acrobat
+    if "/AcroForm" in reader.trailer["/Root"]:
+        writer._root_object.update({
+            NameObject("/AcroForm"): reader.trailer["/Root"]["/AcroForm"]
+        })
+        writer._root_object["/AcroForm"].update({
+            NameObject("/NeedAppearances"): BooleanObject(True)
+        })
+
+    out = BytesIO()
+    writer.write(out)
+    out.seek(0)
+
+    # sensible filename for the unsigned, prefilled form
+    serial_norm = normalize_serial(row.get("Serial Number", ""))
+    dept_code   = project_code_from(row.get("Department", ""))
+    city_code   = city_code_from(row.get("Location", ""))
+    today_str   = datetime.now().strftime("%Y%m%d")
+    fname = f"{dept_code}-{city_code}-REG-{serial_norm}-owner-form-{today_str}.pdf"
+    return out.getvalue(), fname
+
+def _list_pdf_form_fields(template_path: str) -> dict:
+    """Optional: debug helper to print all field names from your template."""
+    reader = PdfReader(template_path)
+    fields = reader.get_form_text_fields()
+    return fields  # returns dict {field_name: current_value}
+
+
+
 
 # =============================================================================
 # SHEETS HELPERS
