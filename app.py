@@ -458,7 +458,7 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
         return "", ""
 
     fname = f"{prefix}_{int(time.time())}.pdf"
-    folder_id = st.secrets.get("drive", {}).get("approvals_folder_id", "")
+    folder_id = st.secrets.get("drive", {}).get("approvals", "")
     metadata = {"name": fname}
     if folder_id:
         metadata["parents"] = [folder_id]
