@@ -1,12 +1,3 @@
-# app.py — Tracking Inventory Management System (Option B: My Drive via OAuth token)
-# - Google Sheets via Service Account (SA)
-# - Google Drive uploads: try SA → on 403 storageQuotaExceeded, fall back to OAuth **token from secrets**
-# - Streamlit Cloud safe (no interactive browser). Admin must review PDF inline before Approve.
-#
-# Requirements:
-#   pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas \
-#               google-auth google-api-python-client streamlit-pdf-viewer requests
-
 import os
 import re
 import glob
@@ -111,7 +102,6 @@ for k in ("reg_pdf_ref", "transfer_pdf_ref"):
 # =============================================================================
 # AUTH (users + cookie)
 # =============================================================================
-
 def _load_users_from_secrets():
     users_cfg = st.secrets.get("auth", {}).get("users", [])
     users = {}
@@ -121,28 +111,23 @@ def _load_users_from_secrets():
 
 USERS = _load_users_from_secrets()
 
-
 def _verify_password(raw: str, stored: str) -> bool:
     return hmac.compare_digest(str(stored), str(raw))
-
 
 def _cookie_keys() -> list[str]:
     keys = [st.secrets.get("auth", {}).get("cookie_key", "")]
     keys += st.secrets.get("auth", {}).get("legacy_cookie_keys", [])
     return [k for k in keys if k]
 
-
 def _sign(raw: bytes, *, key: str | None = None) -> str:
     use = key or st.secrets.get("auth", {}).get("cookie_key", "")
     return hmac.new(use.encode(), raw, hashlib.sha256).hexdigest()
-
 
 def _verify_sig(sig: str, raw: bytes) -> bool:
     for k in _cookie_keys():
         if hmac.compare_digest(sig, _sign(raw, key=k)):
             return True
     return False
-
 
 def _issue_session_cookie(username: str, role: str):
     iat = int(time.time())
@@ -155,7 +140,6 @@ def _issue_session_cookie(username: str, role: str):
         expires_at=(datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS)) if SESSION_TTL_SECONDS > 0 else None,
         secure=st.secrets.get("auth", {}).get("cookie_secure", True),
     )
-
 
 def _read_cookie():
     token = COOKIE_MGR.get(COOKIE_NAME)
@@ -178,7 +162,6 @@ def _read_cookie():
         COOKIE_MGR.delete(COOKIE_NAME)
         return None
 
-
 def do_login(username: str, role: str):
     st.session_state.authenticated = True
     st.session_state.username = username
@@ -187,7 +170,6 @@ def do_login(username: str, role: str):
     st.session_state.just_logged_out = False
     _issue_session_cookie(username, role)
     st.rerun()
-
 
 def do_logout():
     try:
@@ -200,17 +182,16 @@ def do_logout():
     st.session_state.just_logged_out = True
     st.rerun()
 
-
 if "cookie_bootstrapped" not in st.session_state:
     st.session_state.cookie_bootstrapped = True
     _ = COOKIE_MGR.get_all()
     st.rerun()
-
 # =============================================================================
 # STYLE
 # =============================================================================
 
 def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
+    """Embed a local .ttf/.otf font and apply it globally."""
     if not os.path.exists(font_path):
         return
     ext = os.path.splitext(font_path)[1].lower()
@@ -244,6 +225,7 @@ def _inject_font_css(font_path: str, family: str = "ACBrandFont"):
 
 
 def _font_candidates():
+    """Possible font file locations (local + /fonts folder + secrets)."""
     cands = []
     secrets_font = st.secrets.get("branding", {}).get("font_file")
     if secrets_font:
@@ -262,6 +244,7 @@ def _font_candidates():
 
 
 def _apply_brand_font():
+    """Apply the first available font candidate (or skip silently)."""
     fam = st.secrets.get("branding", {}).get("font_family", "ACBrandFont")
     for p in _font_candidates():
         if os.path.exists(p):
@@ -270,6 +253,7 @@ def _apply_brand_font():
 
 
 def render_header():
+    """Top header with logo, title, and user badge + logout."""
     _apply_brand_font()
     c_logo, c_title, c_user = st.columns([1.2, 6, 3], gap="small")
     with c_logo:
@@ -285,7 +269,12 @@ def render_header():
         username = st.session_state.get("username", "")
         role = st.session_state.get("role", "")
         st.markdown(
-            f"""<div style=\"display:flex; align-items:center; justify-content:flex-end; gap:1rem;\">\n                   <div>\n                     <div style=\"font-weight:600;\">Welcome, {username or '—'}</div>\n                     <div>Role: <b>{role or '—'}</b></div>\n                   </div>\n                 </div>""",
+            f"""<div style="display:flex; align-items:center; justify-content:flex-end; gap:1rem;">
+                   <div>
+                     <div style="font-weight:600;">Welcome, {username or '—'}</div>
+                     <div>Role: <b>{role or '—'}</b></div>
+                   </div>
+                 </div>""",
             unsafe_allow_html=True,
         )
         if st.session_state.get("authenticated") and st.button("Logout"):
@@ -294,6 +283,7 @@ def render_header():
 
 
 def hide_table_toolbar_for_non_admin():
+    """Hide the dataframe toolbar for non-admins to reduce accidental edits."""
     if st.session_state.get("role") != "Admin":
         st.markdown(
             """
@@ -307,17 +297,83 @@ def hide_table_toolbar_for_non_admin():
         )
 
 # =============================================================================
+# GENERAL HELPERS
+# =============================================================================
+
+def _norm_title(t: str) -> str:
+    return (t or "").strip().lower()
+
+def _norm_header(h: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
+
+def _canon_header(h: str) -> str:
+    """Map header to canonical name via HEADER_SYNONYMS (from Chunk 1)."""
+    key = _norm_header(h)
+    return HEADER_SYNONYMS.get(key, h.strip())
+
+def normalize_serial(s: str) -> str:
+    """Uppercase A-Z/0-9 only; remove all separators/spaces."""
+    return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
+
+def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
+    """
+    Fast Levenshtein with early-exit when distance exceeds max_dist.
+    Used to warn on near-duplicate serials.
+    """
+    if a == b:
+        return 0
+    la, lb = len(a), len(b)
+    if abs(la - lb) > max_dist:
+        return max_dist + 1
+    if la > lb:
+        a, b = b, a
+        la, lb = lb, la
+    prev = list(range(lb + 1))
+    for i in range(1, la + 1):
+        cur = [i] + [0] * lb
+        row_min = cur[0]
+        ai = a[i - 1]
+        for j in range(1, lb + 1):
+            cost = 0 if ai == b[j - 1] else 1
+            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
+            row_min = min(row_min, cur[j])
+        if row_min > max_dist:
+            return max_dist + 1
+        prev = cur
+    return prev[-1]
+
+def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
+    """Unique, trimmed, non-empty values of a column (safe on empty frames)."""
+    if df.empty or col not in df.columns:
+        return []
+    vals = [str(x).strip() for x in df[col].dropna().astype(str).tolist()]
+    return sorted({v for v in vals if v})
+
+def select_with_other(label: str, base_options: list[str], existing_values: list[str]) -> str:
+    """
+    Select box merged with existing values; returns '' for unselected,
+    or the free-text value if 'Other…' is chosen.
+    """
+    merged = [o for o in base_options if o]
+    for v in existing_values:
+        if v and v not in merged:
+            merged.append(v)
+    sel = st.selectbox(label, ["— Select —"] + merged + ["Other…"])
+    if sel == "Other…":
+        return st.text_input(f"{label} (Other)")
+    return "" if sel == "— Select —" else sel
+
+# =============================================================================
 # GOOGLE SHEETS & DRIVE (Service Account + OAuth token fallback)
 # =============================================================================
+
 SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive",
 ]
-OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]  # user upload to My Drive
-
-# Option B flag: allow OAuth fallback, but ONLY via token in secrets (no browser in cloud)
+# Option B: allow OAuth fallback for Drive uploads to user's My Drive (no browser on Streamlit Cloud)
+OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 ALLOW_OAUTH_FALLBACK = st.secrets.get("drive", {}).get("allow_oauth_fallback", True)
-
 
 def _load_sa_info() -> dict:
     raw = st.secrets.get("gcp_service_account", {})
@@ -357,9 +413,9 @@ def _get_drive():
 
 @st.cache_resource(show_spinner=False)
 def _get_user_creds():
-    """Get user OAuth creds STRICTLY from secrets.token_json in cloud.
-    If token_json is missing and LOCAL_OAUTH=1, allow interactive local auth.
-    Otherwise stop with a helpful error (prevents 'no runnable browser').
+    """
+    Get user OAuth creds STRICTLY from secrets.google_oauth.token_json when running in the cloud.
+    If token_json is missing and LOCAL_OAUTH=1, allow local interactive auth.
     """
     cfg = st.secrets.get("google_oauth", {})
     token_json = cfg.get("token_json")
@@ -373,12 +429,16 @@ def _get_user_creds():
             st.stop()
         creds = UserCredentials.from_authorized_user_info(info, OAUTH_SCOPES)
         if not creds.valid and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                st.error(f"OAuth token refresh failed: {e}")
+                st.stop()
         return creds
 
     # No token_json present
     if os.environ.get("LOCAL_OAUTH", "0") == "1":
-        # Local-only flow
+        # Local-only flow for developers
         client_id = cfg.get("client_id")
         client_secret = cfg.get("client_secret")
         if not client_id or not client_secret:
@@ -413,7 +473,6 @@ def _get_user_drive():
 def _get_sheet_url():
     return st.secrets.get("sheets", {}).get("url", SHEET_URL_DEFAULT)
 
-
 def get_sh():
     gc = _get_gc()
     url = _get_sheet_url()
@@ -427,7 +486,6 @@ def get_sh():
     st.error("Google Sheets API error while opening the spreadsheet.")
     raise last_exc
 
-
 def _drive_make_public(file_id: str, drive_client=None):
     try:
         cli = drive_client or _get_drive()
@@ -438,15 +496,18 @@ def _drive_make_public(file_id: str, drive_client=None):
             supportsAllDrives=True,
         ).execute()
     except Exception:
+        # being permissive here: if we can't make it public, we still proceed
         pass
-
 
 def _is_pdf_bytes(data: bytes) -> bool:
     return isinstance(data, (bytes, bytearray)) and data[:4] == b"%PDF"
 
-
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
-    """Upload PDF to Drive. Try SA first; on 403 storage quota, fall back to OAuth user (My Drive)."""
+    """
+    Upload PDF to Drive. Try Service Account first; on 403 storage quota exceeded,
+    fall back to OAuth user (My Drive).
+    Returns (webViewLink, file_id).
+    """
     if uploaded_file is None:
         return "", ""
     if getattr(uploaded_file, "type", "") not in ("application/pdf", "application/x-pdf", "binary/octet-stream"):
@@ -474,6 +535,7 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
             supportsAllDrives=True,
         ).execute()
     except HttpError as e:
+        # If SA quota exceeded, fallback to user OAuth upload to My Drive
         if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
             if not ALLOW_OAUTH_FALLBACK:
                 st.error(
@@ -496,37 +558,86 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
         _drive_make_public(file_id, drive_client=drive_cli)
     return link, file_id
 
-
-def _fetch_public_pdf_bytes(file_id: str, link: str) -> bytes:
-    """Fetch bytes for PDF preview (works when file is public)."""
+def _fetch_public_pdf_bytes(file_id: str, link: str = "") -> bytes:
+    """Fetch PDF bytes for preview when file is public (best-effort)."""
     try:
         if file_id:
             url = f"https://drive.google.com/uc?export=download&id={file_id}"
             r = requests.get(url, timeout=15)
             if r.ok and r.content[:4] == b"%PDF":
                 return r.content
+        # fallback to view link (won't usually return raw bytes)
     except Exception:
         pass
     return b""
+
+# ---- Template Form: download the immutable ICT form from Drive and serve it for download ----
+
+def _extract_drive_file_id(url_or_id: str) -> str:
+    """
+    Accepts a Drive file id OR a share URL; returns the file id.
+    Example URL: https://drive.google.com/file/d/<FILE_ID>/view?usp=...
+    """
+    if not url_or_id:
+        return ""
+    if "/" not in url_or_id and len(url_or_id) > 20:
+        return url_or_id  # already looks like an id
+    m = re.search(r"/d/([A-Za-z0-9_-]{20,})", url_or_id)
+    return m.group(1) if m else url_or_id
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def download_template_pdf_from_drive() -> bytes:
+    """
+    Download the canonical, non-editable ICT Equipment Form template from Drive.
+    Configure the id under:
+      st.secrets["drive"]["template_file_id"]  (preferred)  OR
+      st.secrets["drive"]["template_file_url"] (share link)
+    Make sure the Service Account has at least 'reader' access to that file.
+    """
+    file_id = st.secrets.get("drive", {}).get("template_file_id", "")
+    if not file_id:
+        url = st.secrets.get("drive", {}).get("template_file_url", "")
+        file_id = _extract_drive_file_id(url)
+    if not file_id:
+        # As a convenience, support env var too
+        file_id = _extract_drive_file_id(os.environ.get("ICT_TEMPLATE_FILE_ID", ""))
+
+    if not file_id:
+        st.error("Template form file id/url is not configured. Please set drive.template_file_id in secrets.")
+        return b""
+
+    drive_cli = _get_drive()
+    try:
+        req = drive_cli.files().get_media(fileId=file_id, supportsAllDrives=True)
+        fh = io.BytesIO()
+        downloader = googleapiclient.http.MediaIoBaseDownload(fh, req)
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+        fh.seek(0)
+        data = fh.read()
+        if _is_pdf_bytes(data):
+            return data
+        st.error("Downloaded template is not a valid PDF.")
+        return b""
+    except Exception as e:
+        st.error(f"Failed to download template form from Drive: {e}")
+        return b""
+
+# Helper to build enforced file names like: HO-JED-REG-<SERIAL>-0008-YYYYMMDD.pdf
+def make_form_filename(action: str, serial: str, counter: int = 1) -> str:
+    prefix = st.secrets.get("branding", {}).get("site_prefix", "HO-JED")
+    today = datetime.now().strftime("%Y%m%d")
+    return f"{prefix}-{action}-{serial}-{counter:04d}-{today}.pdf"
 
 # =============================================================================
 # SHEETS HELPERS
 # =============================================================================
 
-def _norm_title(t: str) -> str:
-    return (t or "").strip().lower()
-
-
-def _norm_header(h: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
-
-
-def _canon_header(h: str) -> str:
-    key = _norm_header(h)
-    return HEADER_SYNONYMS.get(key, h.strip())
-
+from gspread_dataframe import set_with_dataframe
 
 def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize inventory dataframe headers (Current user, Previous User, etc.)."""
     rename = {}
     drop_cols = []
     for c in df.columns:
@@ -543,24 +654,24 @@ def canon_inventory_columns(df: pd.DataFrame) -> pd.DataFrame:
         df = df.drop(columns=drop_cols)
     return df.astype(str)
 
-
 def reorder_columns(df: pd.DataFrame, desired: list[str]) -> pd.DataFrame:
+    """Reorder/extend columns in dataframe to match schema."""
     for c in desired:
         if c not in df.columns:
             df[c] = ""
     tail = [c for c in df.columns if c not in desired]
     return df[desired + tail]
 
-
 def get_or_create_ws(title, rows=500, cols=80):
+    """Get a worksheet by title, create it if not found."""
     sh = get_sh()
     try:
         return sh.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
-
 def get_employee_ws():
+    """Return the correct 'mainlists' worksheet, resolving duplicates."""
     sh = get_sh()
     wanted = EMPLOYEE_WS.strip().lower()
     matches = [ws for ws in sh.worksheets() if ws.title.strip().lower() == wanted]
@@ -578,9 +689,9 @@ def get_employee_ws():
         st.warning(f"Multiple worksheets named '{EMPLOYEE_WS}' found; using the first (all appear empty).")
     return matches[0]
 
-
 @st.cache_data(ttl=120, show_spinner=False)
 def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
+    """Read worksheet with schema enforcement."""
     if ws_title == PENDING_DEVICE_WS:
         ws = get_or_create_ws(PENDING_DEVICE_WS)
         df = pd.DataFrame(ws.get_all_records())
@@ -604,7 +715,6 @@ def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
         return reorder_columns(df, LOG_COLS)
     return df
 
-
 def read_worksheet(ws_title):
     try:
         return _read_worksheet_cached(ws_title)
@@ -617,8 +727,8 @@ def read_worksheet(ws_title):
         if ws_title == PENDING_TRANSFER_WS: return pd.DataFrame(columns=PENDING_TRANSFER_COLS)
         return pd.DataFrame()
 
-
 def write_worksheet(ws_title, df):
+    """Clear and write a dataframe into worksheet with schema enforcement."""
     if ws_title == INVENTORY_WS:
         df = canon_inventory_columns(df)
         df = reorder_columns(df, INVENTORY_COLS)
@@ -636,8 +746,8 @@ def write_worksheet(ws_title, df):
     set_with_dataframe(ws, df)
     st.cache_data.clear()
 
-
-def append_to_worksheet(ws_title, new_data):
+def append_to_worksheet(ws_title, new_data: pd.DataFrame):
+    """Append rows to worksheet (merge old + new)."""
     ws = get_or_create_ws(ws_title)
     df_existing = pd.DataFrame(ws.get_all_records())
     if ws_title == INVENTORY_WS:
@@ -650,55 +760,91 @@ def append_to_worksheet(ws_title, new_data):
     df_combined = pd.concat([df_existing, new_data], ignore_index=True)
     set_with_dataframe(ws, df_combined)
     st.cache_data.clear()
-
 # =============================================================================
-# HELPERS
+# PDF HELPERS (template download, filename policy, serial extraction)
 # =============================================================================
 
-def normalize_serial(s: str) -> str:
-    return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
+def generate_ict_form(device_row: dict) -> bytes:
+    """
+    Return the canonical ICT Equipment Form PDF (immutable).
+    We DO NOT pre-fill or modify the template to keep it uneditable as requested.
+    """
+    data = download_template_pdf_from_drive()
+    if not data:
+        st.error("ICT template form could not be downloaded. Check drive.template_file_id in secrets.")
+    return data
 
-
-def levenshtein(a: str, b: str, max_dist: int = 1) -> int:
-    if a == b:
-        return 0
-    la, lb = len(a), len(b)
-    if abs(la - lb) > max_dist:
-        return max_dist + 1
-    if la > lb:
-        a, b = b, a
-        la, lb = lb, la
-    prev = list(range(lb + 1))
-    for i in range(1, la + 1):
-        cur = [i] + [0] * lb
-        row_min = cur[0]
-        ai = a[i - 1]
-        for j in range(1, lb + 1):
-            cost = 0 if ai == b[j - 1] else 1
-            cur[j] = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost)
-            row_min = min(row_min, cur[j])
-        if row_min > max_dist:
-            return max_dist + 1
-        prev = cur
-    return prev[-1]
-
-
-def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
-    if df.empty or col not in df.columns:
+def extract_serials_from_pdf(file) -> list[str]:
+    """
+    Extract possible Serial Numbers from a signed ICT form PDF.
+    - Tries both text layer and AcroForm fields.
+    - Normalizes to uppercase alphanumeric (keeps dashes).
+    NOTE: Requires PyPDF2. Add `PyPDF2` to your requirements.
+    """
+    try:
+        # Import inside function to allow app to boot even if PyPDF2 not yet installed.
+        from PyPDF2 import PdfReader
+    except Exception:
+        st.error("PyPDF2 is required for serial detection. Please add `PyPDF2` to your requirements.")
         return []
-    vals = [str(x).strip() for x in df[col].dropna().astype(str).tolist()]
-    return sorted({v for v in vals if v})
 
+    serials: list[str] = []
+    try:
+        # PdfReader can take a file-like or bytes. If Streamlit UploadedFile, pass directly.
+        reader = PdfReader(file)
 
-def select_with_other(label: str, base_options: list[str], existing_values: list[str]) -> str:
-    merged = [o for o in base_options if o]
-    for v in existing_values:
-        if v and v not in merged:
-            merged.append(v)
-    sel = st.selectbox(label, ["— Select —"] + merged + ["Other…"])
-    if sel == "Other…":
-        return st.text_input(f"{label} (Other)")
-    return "" if sel == "— Select —" else sel
+        # 1) Try form fields first (if any)
+        try:
+            fields = reader.get_fields() or {}
+            for k, v in fields.items():
+                val = ""
+                if isinstance(v, dict):
+                    val = v.get("/V", "") or v.get("V", "")
+                elif hasattr(v, "get"):
+                    val = v.get("/V", "")
+                text_val = str(val or "").strip()
+                if text_val:
+                    # Try to detect serial-like strings from fields too
+                    m = re.findall(r"[A-Za-z0-9][A-Za-z0-9\-]{3,}", text_val)
+                    serials.extend(m)
+        except Exception:
+            pass
+
+        # 2) Extract page text
+        text = ""
+        for page in reader.pages:
+            try:
+                text += page.extract_text() or ""
+            except Exception:
+                continue
+
+        # Heuristics: lines with Serial No / Serial Number / SN:
+        patterns = [
+            r"(?:Serial\s*No\.?|Serial\s*Number|Serial|S\/N|SN)\s*[:#\-]?\s*([A-Za-z0-9][A-Za-z0-9\-]{3,})",
+            r"\b([A-Z0-9][A-Z0-9\-]{6,})\b",  # broad fallback for long alphanumerics (typical serials)
+        ]
+
+        for pat in patterns:
+            for s in re.findall(pat, text, flags=re.IGNORECASE):
+                serials.append(s)
+
+        # Normalize and dedupe
+        cleaned = []
+        seen = set()
+        for s in serials:
+            s = s.strip().upper()
+            # Keep dashes, strip other non A-Z/0-9/-
+            s = re.sub(r"[^A-Z0-9\-]", "", s)
+            if not s:
+                continue
+            if s not in seen:
+                seen.add(s)
+                cleaned.append(s)
+        return cleaned
+
+    except Exception as e:
+        st.error(f"Could not read PDF for serial detection: {e}")
+        return []
 
 # =============================================================================
 # VIEWS
@@ -719,7 +865,7 @@ def inventory_tab():
     if df.empty:
         st.warning("Inventory is empty.")
     else:
-        if st.session_state.role == "Admin":
+        if st.session_state.get("role") == "Admin":
             st.dataframe(df, use_container_width=True)
         else:
             st.dataframe(df, use_container_width=True, hide_index=True)
@@ -728,30 +874,36 @@ def inventory_tab():
 def register_device_tab():
     st.subheader("📝 Register New Device")
 
-    emp_df = read_worksheet(EMPLOYEE_WS)
-    emp_names = sorted({
-        *unique_nonempty(emp_df, "New Employeer"),
-        *unique_nonempty(emp_df, "Name"),
-    })
+    # Inline helper to live-offer the ICT template download once serial is typed
+    def render_template_download_area(current_serial: str):
+        s_norm_live = normalize_serial(current_serial)
+        with st.expander("📄 Download ICT Equipment Form (template)", expanded=False):
+            if s_norm_live:
+                tpl_bytes = generate_ict_form({})
+                fname = make_form_filename("REG", s_norm_live, counter=1)
+                st.download_button(
+                    "Download ICT Equipment Form",
+                    tpl_bytes,
+                    file_name=fname,
+                    mime="application/pdf",
+                    key=f"dl_tpl_{s_norm_live}",
+                )
+                st.caption("Download, print/sign, then upload the **signed** form below.")
+            else:
+                st.info("Enter a Serial Number above to enable the template download with the correct filename.")
 
     with st.form("register_device", clear_on_submit=True):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
             serial = st.text_input("Serial Number *")
         with r1c2:
-            assigned_choice = st.selectbox(
-                "Assigned to",
-                [UNASSIGNED_LABEL] + emp_names + ["Type a new name…"],
-                help="Choose 'Unassigned (Stock)' if the device has no owner yet."
-            )
-            if assigned_choice == "Type a new name…":
-                assigned_to = st.text_input("Name")
-            elif assigned_choice == UNASSIGNED_LABEL:
-                assigned_to = UNASSIGNED_LABEL
-            else:
-                assigned_to = assigned_choice
+            st.caption("Owner will be assigned only during **TRANSFER**, not on registration.")
+            assigned_to = UNASSIGNED_LABEL
         with r1c3:
             device = st.text_input("Device Type *")
+
+        # Offer template download inline (based on current serial)
+        render_template_download_area(serial)
 
         r2c1, r2c2, r2c3 = st.columns(3)
         with r2c1:
@@ -791,20 +943,23 @@ def register_device_tab():
         with r6c2:
             notes  = st.text_area("Notes", height=60)
 
-        pdf_file = st.file_uploader("Approval PDF (required for non-admin)", type=["pdf"], key="reg_pdf")
-        submitted = st.form_submit_button("Save Device", type="primary")
+        st.markdown("**Signed ICT Equipment Form (PDF) — required**")
+        pdf_file = st.file_uploader("Upload the signed ICT Equipment Form", type=["pdf"], key="reg_pdf")
 
-    # Optional live preview for staff
+        submitted = st.form_submit_button("Submit for Approval", type="primary")
+
+    # Optional live preview (user upload)
     if ss.get("reg_pdf"):
         ss.reg_pdf_ref = ss.reg_pdf
     if ss.reg_pdf_ref:
-        st.caption("Preview: Approval PDF")
+        st.caption("Preview: Signed ICT Form")
         try:
             pdf_viewer(input=ss.reg_pdf_ref.getvalue(), width=700, key="viewer_reg")
         except Exception:
             pass
 
     if submitted:
+        # Validate required fields
         if not serial.strip() or not device.strip():
             st.error("Serial Number and Device Type are required.")
             return
@@ -813,14 +968,15 @@ def register_device_tab():
             st.error("Serial Number cannot be blank after normalization.")
             return
 
+        # Inventory duplicate & near-duplicate checks
         inv = read_worksheet(INVENTORY_WS)
         if not inv.empty:
             inv["__snorm"] = inv["Serial Number"].astype(str).map(normalize_serial)
             if s_norm in set(inv["__snorm"]):
                 existing = inv[inv["__snorm"] == s_norm].iloc[0]
                 st.error(
-                    f"Duplicate serial. Already exists as '{existing['Serial Number']}' ("
-                    f"{existing.get('Device Type','')} {existing.get('Brand','')}/{existing.get('Model','')})."
+                    f"Duplicate serial. Already exists as '{existing['Serial Number']}' "
+                    f"({existing.get('Device Type','')} {existing.get('Brand','')}/{existing.get('Model','')})."
                 )
                 return
             near_mask = inv["__snorm"].apply(lambda x: levenshtein(s_norm, x, max_dist=1) <= 1)
@@ -829,9 +985,18 @@ def register_device_tab():
                 similar_list = near["Serial Number"].astype(str).unique().tolist()
                 st.warning("Near-duplicate serials: " + ", ".join(similar_list))
 
+        # Require signed PDF for ALL roles for registration
+        if pdf_file is None:
+            st.error("Signed ICT Equipment Form (PDF) is required.")
+            return
+        if not _is_pdf_bytes(pdf_file.getvalue()):
+            st.error("The uploaded file is not a valid PDF.")
+            return
+
         now_str = datetime.now().strftime(DATE_FMT)
         actor   = st.session_state.get("username", "")
 
+        # Construct device row (owner remains Unassigned)
         row = {
             "Serial Number": serial.strip(),
             "Device Type": device.strip(),
@@ -843,9 +1008,9 @@ def register_device_tab():
             "Memory": mem.strip(),
             "GPU": gpu.strip(),
             "Screen Size": screen.strip(),
-            "Current user": assigned_to.strip(),
+            "Current user": assigned_to.strip(),  # Unassigned (Stock)
             "Previous User": "",
-            "TO": assigned_to.strip() if assigned_to.strip() and assigned_to.strip() != UNASSIGNED_LABEL else "",
+            "TO": "",  # not used in registration
             "Department": dept.strip(),
             "Email Address": email.strip(),
             "Contact Number": contact.strip(),
@@ -856,74 +1021,83 @@ def register_device_tab():
             "Registered by": actor,
         }
 
-        is_admin = st.session_state.get("role") == "Admin"
-        if not is_admin and pdf_file is None:
-            st.error("Approval PDF is required for submission.")
+        # Upload signed PDF to Drive
+        link, fid = upload_pdf_and_link(pdf_file, prefix=f"device_{s_norm}")
+        if not fid:
             return
 
-        if is_admin and pdf_file is None:
-            inv_fresh = read_worksheet(INVENTORY_WS)
-            inv_out = pd.concat([
-                inv_fresh if not inv_fresh.empty else pd.DataFrame(columns=INVENTORY_COLS),
-                pd.DataFrame([row])
-            ], ignore_index=True)
-            inv_out = reorder_columns(inv_out, INVENTORY_COLS)
-            write_worksheet(INVENTORY_WS, inv_out)
-            st.success("✅ Device registered and added to Inventory.")
-        else:
-            link, fid = upload_pdf_and_link(pdf_file, prefix=f"device_{s_norm}")
-            if not fid:
-                return
-            pending = {**row,
-                "Approval Status": "Pending",
-                "Approval PDF": link,
-                "Approval File ID": fid,
-                "Submitted by": actor,
-                "Submitted at": now_str,
-                "Approver": "",
-                "Decision at": "",
-            }
-            append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-            st.success("🕒 Submitted for admin approval. You'll see it in Inventory once approved.")
+        pending = {
+            **row,
+            "Approval Status": "Pending",
+            "Approval PDF": link,
+            "Approval File ID": fid,
+            "Submitted by": actor,
+            "Submitted at": now_str,
+            "Approver": "",
+            "Decision at": "",
+        }
+        append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+        st.success("🕒 Submitted for admin approval. You'll see it in Inventory once approved.")
 
 
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
+
     inventory_df = read_worksheet(INVENTORY_WS)
     if inventory_df.empty:
         st.warning("Inventory is empty.")
         return
 
-    serial_list = sorted(inventory_df["Serial Number"].dropna().astype(str).unique().tolist())
-    serial = st.selectbox("Serial Number", ["— Select —"] + serial_list)
-    chosen_serial = None if serial == "— Select —" else serial
+    with st.form("transfer_device", clear_on_submit=True):
+        st.caption("Upload the **signed ICT Equipment Form**; the system will detect the Serial Number automatically.")
+        pdf_file = st.file_uploader("Signed ICT Form (PDF)", type=["pdf"], key="transfer_pdf")
 
-    existing_users = sorted([u for u in inventory_df["Current user"].dropna().astype(str).tolist() if u.strip()])
-    new_owner_choice = st.selectbox("New Owner", ["— Select —"] + existing_users + ["Type a new name…"])
-    if new_owner_choice == "Type a new name…":
-        new_owner = st.text_input("Enter new owner name")
-    else:
-        new_owner = new_owner_choice if new_owner_choice != "— Select —" else ""
+        # Preview the uploaded PDF
+        if pdf_file is not None:
+            try:
+                pdf_viewer(input=pdf_file.getvalue(), width=700, key="viewer_trans_upload")
+            except Exception:
+                pass
 
-    pdf_file = st.file_uploader("Approval PDF (required for non-admin)", type=["pdf"], key="transfer_pdf")
+        chosen_serial = None
+        if pdf_file is not None:
+            try:
+                # Use a fresh BytesIO so the UploadedFile can be re-used for Drive upload
+                serials = extract_serials_from_pdf(io.BytesIO(pdf_file.getvalue()))
+            except Exception as e:
+                serials = []
+                st.error(f"Error reading PDF: {e}")
+            if serials:
+                chosen_serial = serials[0]
+                st.success(f"Detected Serial Number: **{chosen_serial}**")
+            else:
+                st.error("No Serial Number detected in the uploaded form.")
 
-    # Optional live preview
-    if ss.get("transfer_pdf"):
-        ss.transfer_pdf_ref = ss.transfer_pdf
-    if ss.transfer_pdf_ref:
-        st.caption("Preview: Approval PDF")
-        try:
-            pdf_viewer(input=ss.transfer_pdf_ref.getvalue(), width=700, key="viewer_trans")
-        except Exception:
-            pass
+        existing_users = sorted([u for u in inventory_df["Current user"].dropna().astype(str).tolist() if u.strip()])
+        new_owner_choice = st.selectbox("New Owner", ["— Select —"] + existing_users + ["Type a new name…"])
+        if new_owner_choice == "Type a new name…":
+            new_owner = st.text_input("Enter new owner name")
+        else:
+            new_owner = new_owner_choice if new_owner_choice != "— Select —" else ""
 
-    is_admin = st.session_state.get("role") == "Admin"
-    do_transfer = st.button("Transfer Now", type="primary", disabled=not (chosen_serial and new_owner.strip()))
+        do_transfer = st.form_submit_button("Submit Transfer for Approval", type="primary",
+                                            disabled=not (pdf_file and chosen_serial and new_owner.strip()))
 
     if do_transfer:
+        if not pdf_file:
+            st.error("Signed ICT Equipment Form (PDF) is required.")
+            return
+        if not chosen_serial:
+            st.error("A valid Serial Number could not be detected in the PDF.")
+            return
+        if not new_owner.strip():
+            st.error("Please select or enter the new owner.")
+            return
+
+        # Validate serial exists
         match = inventory_df[inventory_df["Serial Number"].astype(str) == chosen_serial]
         if match.empty:
-            st.warning("Serial number not found.")
+            st.error("Serial number not found in Inventory.")
             return
 
         idx = match.index[0]
@@ -931,51 +1105,29 @@ def transfer_tab():
         now_str   = datetime.now().strftime(DATE_FMT)
         actor     = st.session_state.get("username", "")
 
-        if not is_admin and pdf_file is None:
-            st.error("Approval PDF is required for submission.")
+        # Upload signed PDF to Drive
+        link, fid = upload_pdf_and_link(pdf_file, prefix=f"transfer_{normalize_serial(chosen_serial)}")
+        if not fid:
             return
 
-        if is_admin and pdf_file is None:
-            inventory_df.loc[idx, "Previous User"] = prev_user
-            inventory_df.loc[idx, "Current user"]  = new_owner.strip()
-            inventory_df.loc[idx, "TO"]            = new_owner.strip()
-            inventory_df.loc[idx, "Date issued"]   = now_str
-            inventory_df.loc[idx, "Registered by"] = actor
-
-            inventory_df = reorder_columns(inventory_df, INVENTORY_COLS)
-            write_worksheet(INVENTORY_WS, inventory_df)
-
-            log_row = {
-                "Device Type": inventory_df.loc[idx, "Device Type"],
-                "Serial Number": chosen_serial,
-                "From owner": prev_user,
-                "To owner": new_owner.strip(),
-                "Date issued": now_str,
-                "Registered by": actor,
-            }
-            append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
-            st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
-        else:
-            link, fid = upload_pdf_and_link(pdf_file, prefix=f"transfer_{normalize_serial(chosen_serial)}")
-            if not fid:
-                return
-            pend = {
-                "Device Type": inventory_df.loc[idx, "Device Type"],
-                "Serial Number": chosen_serial,
-                "From owner": prev_user,
-                "To owner": new_owner.strip(),
-                "Date issued": now_str,
-                "Registered by": actor,
-                "Approval Status": "Pending",
-                "Approval PDF": link,
-                "Approval File ID": fid,
-                "Submitted by": actor,
-                "Submitted at": now_str,
-                "Approver": "",
-                "Decision at": "",
-            }
-            append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pend]))
-            st.success("🕒 Transfer submitted for admin approval.")
+        # Always go through approvals for transfers (for both Staff & Admin)
+        pend = {
+            "Device Type": inventory_df.loc[idx, "Device Type"],
+            "Serial Number": chosen_serial,
+            "From owner": prev_user,
+            "To owner": new_owner.strip(),
+            "Date issued": now_str,
+            "Registered by": actor,
+            "Approval Status": "Pending",
+            "Approval PDF": link,
+            "Approval File ID": fid,
+            "Submitted by": actor,
+            "Submitted at": now_str,
+            "Approver": "",
+            "Decision at": "",
+        }
+        append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pend]))
+        st.success("🕒 Transfer submitted for admin approval.")
 
 
 def history_tab():
@@ -1096,11 +1248,14 @@ def approvals_tab():
                     elif row.get("Approval PDF"):
                         st.markdown(f"[Open Approval PDF]({row['Approval PDF']})")
                 with c2:
+                    pdf_ok = bool(row.get("Approval File ID")) and bool(row.get("Approval PDF"))
+                    if not pdf_ok:
+                        st.error("⚠️ No signed ICT Equipment Form attached. Cannot approve.")
                     reviewed = True
                     if REQUIRE_REVIEW_CHECK:
                         reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_dev_{i}")
                     a_col, r_col = st.columns(2)
-                    if a_col.button("Approve", key=f"approve_dev_{i}", disabled=not reviewed):
+                    if a_col.button("Approve", key=f"approve_dev_{i}", disabled=not (reviewed and pdf_ok)):
                         _approve_device_row(row)
                     if r_col.button("Reject", key=f"reject_dev_{i}"):
                         _reject_row(PENDING_DEVICE_WS, i, row)
@@ -1127,15 +1282,22 @@ def approvals_tab():
                     elif row.get("Approval PDF"):
                         st.markdown(f"[Open Approval PDF]({row['Approval PDF']})")
                 with c2:
+                    pdf_ok = bool(row.get("Approval File ID")) and bool(row.get("Approval PDF"))
+                    if not pdf_ok:
+                        st.error("⚠️ No signed ICT Equipment Form attached. Cannot approve.")
                     reviewed = True
                     if REQUIRE_REVIEW_CHECK:
                         reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_tr_{i}")
                     a_col, r_col = st.columns(2)
-                    if a_col.button("Approve", key=f"approve_tr_{i}", disabled=not reviewed):
+                    if a_col.button("Approve", key=f"approve_tr_{i}", disabled=not (reviewed and pdf_ok)):
                         _approve_transfer_row(row)
                     if r_col.button("Reject", key=f"reject_tr_{i}"):
                         _reject_row(PENDING_TRANSFER_WS, i, row)
 
+
+# =============================================================================
+# APPROVAL ACTIONS
+# =============================================================================
 
 def _approve_device_row(row: pd.Series):
     inv = read_worksheet(INVENTORY_WS)
@@ -1154,7 +1316,6 @@ def _approve_device_row(row: pd.Series):
 
     _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
     st.success("✅ Device approved and added to Inventory.")
-
 
 def _approve_transfer_row(row: pd.Series):
     inv = read_worksheet(INVENTORY_WS)
@@ -1187,7 +1348,6 @@ def _approve_transfer_row(row: pd.Series):
     _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
     st.success("✅ Transfer approved and applied.")
 
-
 def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
     df = read_worksheet(ws_title)
     key_cols = [c for c in ["Serial Number", "Submitted at", "Submitted by", "To owner"] if c in df.columns]
@@ -1206,10 +1366,10 @@ def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
     df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
     write_worksheet(ws_title, df)
 
-
 def _reject_row(ws_title: str, i: int, row: pd.Series):
     _mark_decision(ws_title, row, status="Rejected")
     st.info("❌ Request rejected.")
+
 
 # =============================================================================
 # Export
@@ -1288,7 +1448,6 @@ def _config_check_ui():
         st.info("Share the sheet with the Service Account email above and try again.")
         st.stop()
 
-
 def run_app():
     render_header()
     hide_table_toolbar_for_non_admin()
@@ -1323,6 +1482,7 @@ def run_app():
 # =============================================================================
 # ENTRY
 # =============================================================================
+
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "just_logged_out" not in st.session_state:
