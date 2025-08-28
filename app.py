@@ -949,8 +949,63 @@ def register_device_tab():
             except Exception as e:
                 st.warning(f"Could not generate draft PDF: {e}")
 
+        # ✅ Submit button is required
         submitted = st.form_submit_button("Submit for Approval", type="primary")
 
+    # --- Handle submission ---
+    if submitted:
+        if not serial.strip() or not device.strip():
+            st.error("Serial Number and Device Type are required.")
+            return
+        if pdf_file is None:
+            st.error("Signed PDF is required.")
+            return
+
+        s_norm = normalize_serial(serial)
+        inv = read_worksheet(INVENTORY_WS)
+        if not inv.empty and s_norm in set(inv["Serial Number"].astype(str).map(normalize_serial)):
+            st.error("Duplicate serial number already exists.")
+            return
+
+        now_str = datetime.now().strftime(DATE_FMT)
+        actor = st.session_state.get("username", "")
+
+        base_row = {
+            "Serial Number": serial.strip(),
+            "Device Type": device.strip(),
+            "Brand": brand.strip(),
+            "Model": model.strip(),
+            "Current user": assigned_to.strip(),
+            "Previous User": "",
+            "TO": assigned_to.strip() if assigned_to != UNASSIGNED_LABEL else "",
+            "Date issued": now_str,
+            "Registered by": actor,
+        }
+
+        project_code = project_code_from("HO")
+        city_code = city_code_from("RUH")
+        order_number = get_next_order_number("REG")
+        today_str = datetime.now().strftime("%Y%m%d")
+        prefix = f"{project_code}-{city_code}-REG-{s_norm}-{order_number}-{today_str}"
+
+        pending_folder = ensure_folder_tree(project_code, city_code, "REG", "Pending")
+        link, fid = upload_pdf_and_link(pdf_file, prefix=prefix, parent_folder_id=pending_folder)
+        if not fid:
+            st.error("Failed to upload signed PDF.")
+            return
+
+        pending = {**base_row,
+                   "Approval Status": "Pending",
+                   "Approval PDF": link,
+                   "Approval File ID": fid,
+                   "Submitted by": actor,
+                   "Submitted at": now_str,
+                   "Approver": "",
+                   "Decision at": ""}
+
+        append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+        st.success("✅ Signed device registration submitted for admin approval.")
+        
     # --- Handle submission ---
     if submitted:
         if not serial.strip() or not device.strip():
