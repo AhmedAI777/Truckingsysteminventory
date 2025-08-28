@@ -1380,31 +1380,38 @@ def run_app():
 
     if st.session_state.role == "Admin":
         tabs = st.tabs([
-            "🧑‍💼 Employee Register",
-            "📇 View Employees",
-            "📝 Register Device",
-            "📄 Generate Prefilled PDF",
-            "📋 View Inventory",
-            "🔁 Transfer Device",
-            "📜 Transfer Log",
-            "✅ Approvals",
-            "⬇️ Export",
+            "🧑‍💼 Employee Register",      # tabs[0]
+            "📇 View Employees",          # tabs[1]
+            "📝 Register Device",         # tabs[2]
+            "📄 Generate Prefilled PDF",  # tabs[3]
+            "📋 View Inventory",          # tabs[4]
+            "🔁 Transfer Device",         # tabs[5]
+            "📜 Transfer Log",            # tabs[6]
+            "✅ Approvals",               # tabs[7]
+            "⬇️ Export",                  # tabs[8]
         ])
         with tabs[0]: employee_register_tab()
         with tabs[1]: employees_view_tab()
         with tabs[2]: register_device_tab()
-        with tabs[3]: prefill_pdf_tab()  # 👈 Match tab index!
-        with tabs[3]: inventory_tab()
-        with tabs[4]: transfer_tab()
-        with tabs[5]: history_tab()
-        with tabs[6]: approvals_tab()
-        with tabs[7]: export_tab()
+        with tabs[3]: prefill_pdf_tab()
+        with tabs[4]: inventory_tab()
+        with tabs[5]: transfer_tab()
+        with tabs[6]: history_tab()
+        with tabs[7]: approvals_tab()
+        with tabs[8]: export_tab()
+
     else:
-        tabs = st.tabs(["📝 Register Device", "🔁 Transfer Device", "📋 View Inventory", "📜 Transfer Log"])
+        tabs = st.tabs([
+            "📝 Register Device", 
+            "🔁 Transfer Device", 
+            "📋 View Inventory", 
+            "📜 Transfer Log"
+        ])
         with tabs[0]: register_device_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: inventory_tab()
         with tabs[3]: history_tab()
+
 
 # =============================================================================
 # ENTRY
