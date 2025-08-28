@@ -887,69 +887,48 @@ from PyPDF2 import PdfReader, PdfWriter
 # =============================================================================
 # REGISTER DEVICE TAB
 # =============================================================================
+# =============================================================================
+# REGISTER DEVICE TAB
+# =============================================================================
 def register_device_tab():
-    st.subheader("📝 Register New Device")
+    st.subheader("✏️ Register New Device")
 
-    emp_df = read_worksheet(EMPLOYEE_WS)
-    emp_names = sorted({
-        *unique_nonempty(emp_df, "New Employeer"),
-        *unique_nonempty(emp_df, "Name"),
-    })
-
-    # --- Form for inputs ---
-    with st.form("register_device", clear_on_submit=True):
-        r1c1, r1c2, r1c3 = st.columns(3)
-        with r1c1:
-            serial = st.text_input("Serial Number *")
-        with r1c2:
-            assigned_choice = st.selectbox(
-                "Assigned to",
-                [UNASSIGNED_LABEL] + emp_names + ["Type a new name…"]
-            )
-            if assigned_choice == "Type a new name…":
-                assigned_to = st.text_input("Name")
-            elif assigned_choice == UNASSIGNED_LABEL:
-                assigned_to = UNASSIGNED_LABEL
-            else:
-                assigned_to = assigned_choice
-        with r1c3:
-            device = st.text_input("Device Type *")
-
+    with st.form("register_device_form"):
+        serial = st.text_input("Serial Number *")
+        assigned_to = st.text_input("Assigned to (Employee Name)")
+        device = st.text_input("Device Type *")
         brand = st.text_input("Brand")
         model = st.text_input("Model")
-        specs = st.text_input("Specifications")
+        specs = st.text_area("Specifications")
         dept = st.text_input("Department")
         location = st.text_input("Project Location")
-        email = st.text_input("Employee Email")
-        phone = st.text_input("Employee Mobile")
-        today = datetime.now().strftime("%Y-%m-%d")
+        phone = st.text_input("Mobile")
+        email = st.text_input("Email")
+        today = datetime.today().strftime("%Y-%m-%d")
 
-        pdf_file = st.file_uploader("Upload signed Approval PDF", type=["pdf"], key="reg_signed_pdf")
+        uploaded_pdf = st.file_uploader("Upload signed Approval PDF", type="pdf")
 
-        submitted = st.form_submit_button("Submit for Approval", type="primary")
+        submitted = st.form_submit_button("Submit for Approval")
 
-    # --- Draft PDF (outside the form) ---
-    if serial.strip() and device.strip():
+    # Generate Draft PDF for registration
+    if serial and submitted:
         try:
-            template_path = "forms/Register and Transfer Device.pdf"
-            reader = PdfReader(template_path)
+            reader = PdfReader("forms/Register and Transfer Device.pdf")
             writer = PdfWriter()
-            page = reader.pages[0]
-            writer.add_page(page)
+            writer.add_page(reader.pages[0])
 
-            # 🔑 Map form fields here (adjust TextField numbers to your PDF!)
             draft_data = {
-                "TextField0": assigned_to,
-                "TextField1": phone,
-                "TextField2": email,
-                "TextField3": dept,
-                "TextField4": location,
-                "TextField5": today,
-                "TextField6": device,
-                "TextField7": brand,
-                "TextField8": model,
-                "TextField9": specs,
-                "TextField10": serial,
+                "Text Field0": assigned_to,
+                "Text Field1": phone,
+                "Text Field2": email,
+                "Text Field3": dept,
+                "Text Field4": location,
+                "Text Field5": today,
+                "Text Field6": device,
+                "Text Field7": brand,
+                "Text Field8": model,
+                "Text Field9": specs,
+                "Text Field10": serial,
             }
 
             writer.update_page_form_field_values(writer.pages[0], draft_data)
@@ -959,79 +938,47 @@ def register_device_tab():
             buf.seek(0)
 
             st.download_button(
-                "⬇️ Download Device Draft PDF",
+                "⬇️ Download Registration Draft PDF",
                 data=buf,
-                file_name=f"{serial.strip()}_draft.pdf",
+                file_name=f"{serial.strip()}_register_draft.pdf",
                 mime="application/pdf",
-                use_container_width=True
             )
-            st.caption("Download, print & sign before uploading the signed version above.")
+
         except Exception as e:
-            st.warning(f"Could not generate draft PDF: {e}")
-
-    # --- Handle submission ---
-    if submitted:
-        if not serial.strip() or not device.strip():
-            st.error("Serial Number and Device Type are required.")
-            return
-        if pdf_file is None:
-            st.error("Signed PDF is required.")
-            return
-        # (rest of your submission logic unchanged…)
-
+            st.error(f"Could not generate draft PDF: {e}")
 
 # =============================================================================
 # TRANSFER DEVICE TAB
 # =============================================================================
 def transfer_tab():
-    st.subheader("🔁 Transfer Device")
+    st.subheader("🔄 Transfer Device")
 
-    inv = read_worksheet(INVENTORY_WS)
-    if inv.empty:
-        st.info("No devices found in inventory.")
-        return
+    with st.form("transfer_device_form"):
+        chosen_serial = st.text_input("Serial Number *")
+        from_owner = st.text_input("From Owner")
+        to_owner = st.text_input("To Owner")
+        device = st.text_input("Device Type")
+        brand = st.text_input("Brand")
+        model = st.text_input("Model")
 
-    emp_df = read_worksheet(EMPLOYEE_WS)
-    emp_names = sorted({
-        *unique_nonempty(emp_df, "New Employeer"),
-        *unique_nonempty(emp_df, "Name"),
-    })
+        uploaded_pdf = st.file_uploader("Upload signed Transfer Approval PDF", type="pdf")
 
-    # --- Form for inputs ---
-    with st.form("transfer_device", clear_on_submit=True):
-        chosen_serial = st.selectbox("Serial Number", sorted(inv["Serial Number"].astype(str).unique()))
-        to_choice = st.selectbox("Transfer to", emp_names + ["Type a new name…"])
-        if to_choice == "Type a new name…":
-            to_owner = st.text_input("New Owner Name")
-        else:
-            to_owner = to_choice
-        pdf_file = st.file_uploader("Upload signed Transfer Approval PDF", type=["pdf"], key="transfer_signed_pdf")
+        submitted = st.form_submit_button("Submit Transfer")
 
-        submitted = st.form_submit_button("Submit Transfer", type="primary")
-
-    # --- Draft PDF (outside form) ---
-    if chosen_serial.strip():
+    # Generate Draft PDF for transfer
+    if chosen_serial and submitted:
         try:
-            device_row = inv[inv["Serial Number"].astype(str) == chosen_serial].iloc[0]
-            from_owner = device_row.get("Current user", "")
-            brand = device_row.get("Brand", "")
-            model = device_row.get("Model", "")
-            device = device_row.get("Device Type", "")
-
-            template_path = "forms/Register and Transfer Device.pdf"
-            reader = PdfReader(template_path)
+            reader = PdfReader("forms/Register and Transfer Device.pdf")
             writer = PdfWriter()
-            page = reader.pages[0]
-            writer.add_page(page)
+            writer.add_page(reader.pages[0])
 
-            # 🔑 Map transfer fields
             draft_data = {
-                "TextField10": chosen_serial,  # serial
-                "TextField6": device,          # type
-                "TextField7": brand,           # brand
-                "TextField8": model,           # model
-                "TextField20": from_owner,     # from
-                "TextField21": to_owner,       # to
+                "Text Field10": chosen_serial,
+                "Text Field6": device,
+                "Text Field7": brand,
+                "Text Field8": model,
+                "Text Field11": from_owner,
+                "Text Field12": to_owner,
             }
 
             writer.update_page_form_field_values(writer.pages[0], draft_data)
@@ -1045,25 +992,11 @@ def transfer_tab():
                 data=buf,
                 file_name=f"{chosen_serial.strip()}_transfer_draft.pdf",
                 mime="application/pdf",
-                use_container_width=True
             )
-            st.caption("Download, print & sign before uploading the signed version above.")
+
         except Exception as e:
-            st.warning(f"Could not generate draft PDF: {e}")
-
-    # --- Handle submission ---
-    if submitted:
-        if not chosen_serial.strip():
-            st.error("Serial number required.")
-            return
-        if not to_owner.strip():
-            st.error("New owner required.")
-            return
-        if pdf_file is None:
-            st.error("Signed transfer PDF required.")
-            return
-        # (rest of your submission logic unchanged…)
-
+            st.error(f"Could not generate draft PDF: {e}")
+            
 # =============================================================================
 # EMPLOYEE REGISTER TAB
 # =============================================================================
