@@ -1044,12 +1044,13 @@ def transfer_tab():
             buf.seek(0)
 
             st.download_button(
-                "⬇️ Download Transfer Draft PDF",
-                data=buf,
-                file_name=f\"{chosen_serial.strip()}_transfer_draft.pdf\",
-                mime=\"application/pdf\",
-                use_container_width=True
-            )
+    "⬇️ Download Transfer Draft PDF",
+    data=buf,
+    file_name=f"{chosen_serial.strip()}_transfer_draft.pdf",
+    mime="application/pdf",
+    use_container_width=True
+)
+
             st.caption(\"Download, print & sign this form. Then scan & upload as the signed Transfer PDF below.\")
         except Exception as e:
             st.warning(f\"Could not generate draft transfer PDF: {e}\")
