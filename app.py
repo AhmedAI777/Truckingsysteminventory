@@ -610,91 +610,112 @@ def approvals_tab():
         st.info("Only Admins can view approvals.")
         return
 
-    # Pending Device Registrations
-    pend_dev = read_worksheet(PENDING_DEVICE_WS)
+    # ---- Pending Devices ----
     st.markdown("### Pending Device Registrations")
-    df_dev = pend_dev[pend_dev.get("Approval Status","").astype(str).isin(["", "Pending"])] if not pend_dev.empty else pd.DataFrame()
+    pending_dev = read_worksheet(PENDING_DEVICE_WS)
+    df_dev = pending_dev[pending_dev["Approval Status"].isin(["", "Pending"])].reset_index(drop=True)
+
     if df_dev.empty:
         st.success("No pending device registrations.")
     else:
-        for i, r in df_dev.reset_index(drop=True).iterrows():
-            with st.expander(f"SN {r['Serial Number']} → {r.get('Current user','')}  (by {r.get('Submitted by','')})", expanded=False):
-                c1, c2 = st.columns([3,2])
+        for i, row in df_dev.iterrows():
+            with st.expander(f"📦 {row['Device Type']} — SN {row['Serial Number']} (by {row['Submitted by']})"):
+                c1, c2 = st.columns([3, 2])
+
                 with c1:
-                    st.json({k: r.get(k, "") for k in INVENTORY_COLS})
-                    # Inline PDF preview (best-effort)
-                    try:
-                        pdf_bytes = _fetch_public_pdf_bytes(r.get("Approval File ID",""), r.get("Approval PDF",""))
-                        if pdf_bytes:
-                            st.caption("Approval PDF Preview")
+                    info = {k: row.get(k, "") for k in INVENTORY_COLS}
+                    st.json(info)
+
+                    # Inline PDF preview
+                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID",""), row.get("Approval PDF",""))
+                    if pdf_bytes:
+                        st.caption("📄 Signed ICT Form Preview")
+                        try:
                             pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_dev_{i}")
-                        elif r.get("Approval PDF"):
-                            st.markdown(f"[Open Approval PDF]({r['Approval PDF']})")
-                    except Exception:
-                        pass
+                        except Exception:
+                            st.warning("Preview failed, open manually below.")
+                    if row.get("Approval PDF"):
+                        st.markdown(f"[🔗 Open ICT Form PDF]({row['Approval PDF']})")
+
                 with c2:
-                    pdf_ok = bool(r.get("Approval File ID")) and bool(r.get("Approval PDF"))
-                    if not pdf_ok:
-                        st.error("⚠️ No signed ICT Equipment Form attached. Cannot approve.")
-                    reviewed = True
-                    if REQUIRE_REVIEW_CHECK:
-                        reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_dev_{i}")
+                    reviewed = st.checkbox("I reviewed the ICT form", key=f"review_dev_{i}")
                     a_col, r_col = st.columns(2)
-                    if a_col.button("Approve", key=f"approve_dev_{i}", disabled=not (reviewed and pdf_ok)):
-                        _approve_device_row(r)
+                    if a_col.button("Approve", key=f"approve_dev_{i}", disabled=not reviewed):
+                        _approve_device_row(row)
                     if r_col.button("Reject", key=f"reject_dev_{i}"):
-                        _reject_row(PENDING_DEVICE_WS, r)
+                        _reject_row(PENDING_DEVICE_WS, i, row)
 
     st.markdown("---")
 
-    # Pending Transfers
-    pend_tr = read_worksheet(PENDING_TRANSFER_WS)
+    # ---- Pending Transfers ----
     st.markdown("### Pending Transfers")
-    df_tr = pend_tr[pend_tr.get("Approval Status","").astype(str).isin(["", "Pending"])] if not pend_tr.empty else pd.DataFrame()
+    pending_tr = read_worksheet(PENDING_TRANSFER_WS)
+    df_tr = pending_tr[pending_tr["Approval Status"].isin(["", "Pending"])].reset_index(drop=True)
+
     if df_tr.empty:
         st.success("No pending transfers.")
     else:
-        for i, r in df_tr.reset_index(drop=True).iterrows():
-            with st.expander(f"SN {r['Serial Number']}: {r.get('From owner','')} → {r.get('To owner','')} (by {r.get('Submitted by','')})", expanded=False):
-                c1, c2 = st.columns([3,2])
+        for i, row in df_tr.iterrows():
+            with st.expander(f"🔁 SN {row['Serial Number']}: {row['From owner']} → {row['To owner']} (by {row['Submitted by']})"):
+                c1, c2 = st.columns([3, 2])
+
                 with c1:
-                    st.json({k: r.get(k, "") for k in LOG_COLS})
-                    try:
-                        pdf_bytes = _fetch_public_pdf_bytes(r.get("Approval File ID",""), r.get("Approval PDF",""))
-                        if pdf_bytes:
-                            st.caption("Approval PDF Preview")
+                    info = {k: row.get(k, "") for k in LOG_COLS}
+                    st.json(info)
+
+                    # Inline PDF preview
+                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID",""), row.get("Approval PDF",""))
+                    if pdf_bytes:
+                        st.caption("📄 Signed ICT Form Preview")
+                        try:
                             pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_tr_{i}")
-                        elif r.get("Approval PDF"):
-                            st.markdown(f"[Open Approval PDF]({r['Approval PDF']})")
-                    except Exception:
-                        pass
+                        except Exception:
+                            st.warning("Preview failed, open manually below.")
+                    if row.get("Approval PDF"):
+                        st.markdown(f"[🔗 Open ICT Form PDF]({row['Approval PDF']})")
+
                 with c2:
-                    pdf_ok = bool(r.get("Approval File ID")) and bool(r.get("Approval PDF"))
-                    if not pdf_ok:
-                        st.error("⚠️ No signed ICT Equipment Form attached. Cannot approve.")
-                    reviewed = True
-                    if REQUIRE_REVIEW_CHECK:
-                        reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_tr_{i}")
+                    reviewed = st.checkbox("I reviewed the ICT form", key=f"review_tr_{i}")
                     a_col, r_col = st.columns(2)
-                    if a_col.button("Approve", key=f"approve_tr_{i}", disabled=not (reviewed and pdf_ok)):
-                        _approve_transfer_row(r)
+                    if a_col.button("Approve", key=f"approve_tr_{i}", disabled=not reviewed):
+                        _approve_transfer_row(row)
                     if r_col.button("Reject", key=f"reject_tr_{i}"):
-                        _reject_row(PENDING_TRANSFER_WS, r)
+                        _reject_row(PENDING_TRANSFER_WS, i, row)
+
 
 # ----------------------- Main runner & entry -----------------------
 
 def run_app():
-    st.markdown(f"### {APP_TITLE}"); st.caption(SUBTITLE)
+    st.markdown(f"### {APP_TITLE}")
+    st.caption(SUBTITLE)
 
-    tabs = st.tabs([
-        "📝 Register Device",
-        "🔁 Transfer Device",
-        "✅ Approvals",
-    ])
-    with tabs[0]: register_device_tab()
-    with tabs[1]: transfer_tab()
-    with tabs[2]: approvals_tab()
-
-# Entry
-if __name__ == "__main__" or True:
-    run_app()
+    if st.session_state.role == "Admin":
+        tabs = st.tabs([
+            "🧑‍💼 Employee Register",
+            "📇 View Employees",
+            "📝 Register Device",
+            "📋 View Inventory",
+            "🔁 Transfer Device",
+            "📜 Transfer Log",
+            "✅ Approvals",
+            "⬇️ Export",
+        ])
+        with tabs[0]: employee_register_tab()
+        with tabs[1]: employees_view_tab()
+        with tabs[2]: register_device_tab()
+        with tabs[3]: inventory_tab()
+        with tabs[4]: transfer_tab()
+        with tabs[5]: history_tab()
+        with tabs[6]: approvals_tab()
+        with tabs[7]: export_tab()
+    else:
+        tabs = st.tabs([
+            "📝 Register Device",
+            "🔁 Transfer Device",
+            "📋 View Inventory",
+            "📜 Transfer Log"
+        ])
+        with tabs[0]: register_device_tab()
+        with tabs[1]: transfer_tab()
+        with tabs[2]: inventory_tab()
+        with tabs[3]: history_tab()
