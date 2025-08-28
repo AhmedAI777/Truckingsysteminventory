@@ -917,6 +917,9 @@ from PyPDF2 import PdfReader, PdfWriter
 # =============================================================================
 # REGISTER DEVICE TAB
 # =============================================================================
+# =============================================================================
+# REGISTER DEVICE TAB
+# =============================================================================
 def register_device_tab():
     st.subheader("✏️ Register New Device")
 
@@ -936,10 +939,9 @@ def register_device_tab():
         uploaded_pdf = st.file_uploader("Upload signed Approval PDF", type="pdf")
         submitted = st.form_submit_button("Submit for Approval")
 
-    # --- Draft PDF Download ---
+    # --- Draft PDF download ---
     if serial.strip() and device.strip():
         draft_data = {
-            # 🔑 Adjust these once we confirm your field mapping!
             "Text Field0": assigned_to,
             "Text Field1": phone,
             "Text Field2": email,
@@ -957,15 +959,50 @@ def register_device_tab():
         st.download_button(
             "⬇️ Download Registration Draft PDF",
             data=buf,
-            file_name=f"{serial}_register_draft.pdf",
+            file_name=f"{serial.strip()}_draft.pdf",
             mime="application/pdf"
         )
 
-    # --- Handle Submission ---
+    # --- Submission workflow ---
     if uploaded_pdf and submitted:
-        # TODO: upload file to Drive + write row into Pending Devices sheet
-        st.success("✅ Submitted for approval. Admin will review in Approvals tab.")
+        project_code = project_code_from(dept or "UNK")
+        city_code = city_code_from(location or "UNK")
+        order_number = get_next_order_number("REG")
+        today_str = datetime.now().strftime("%Y%m%d")
+        serial_norm = normalize_serial(serial)
 
+        prefix = f"{project_code}-{city_code}-REG-{serial_norm}-{order_number}-{today_str}"
+        drive_filename = f"{prefix}.pdf"
+
+        # Upload to Drive → Pending folder
+        pending_folder = ensure_folder_tree(project_code, city_code, "REG", "Pending")
+        link, fid = upload_pdf_and_link(uploaded_pdf, drive_filename, parent_folder_id=pending_folder)
+
+        if not fid:
+            st.error("❌ Failed to upload signed PDF.")
+            return
+
+        # Write row to Pending Devices sheet
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        actor = st.session_state.get("username", "Unknown")
+
+        pending_row = {
+            "Serial Number": serial,
+            "Device Type": device,
+            "Brand": brand,
+            "Model": model,
+            "Current user": assigned_to,
+            "Department": dept,
+            "Location": location,
+            "Submitted by": actor,
+            "Submitted at": now_str,
+            "Approval Status": "Pending",
+            "Approval File ID": fid,
+            "Approval PDF": link,
+        }
+        append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending_row]))
+
+        st.success("✅ Signed registration submitted for admin approval.")
 
 # =============================================================================
 # TRANSFER DEVICE TAB
@@ -987,7 +1024,7 @@ def transfer_tab():
         uploaded_pdf = st.file_uploader("Upload signed Transfer Approval PDF", type="pdf")
         submitted = st.form_submit_button("Submit Transfer")
 
-    # --- Draft PDF Download ---
+    # --- Draft PDF download ---
     if chosen_serial.strip():
         draft_data = {
             "Text Field10": chosen_serial,
@@ -1002,14 +1039,49 @@ def transfer_tab():
         st.download_button(
             "⬇️ Download Transfer Draft PDF",
             data=buf,
-            file_name=f"{chosen_serial}_transfer_draft.pdf",
+            file_name=f"{chosen_serial.strip()}_transfer_draft.pdf",
             mime="application/pdf"
         )
 
-    # --- Handle Submission ---
+    # --- Submission workflow ---
     if uploaded_pdf and submitted:
-        # TODO: upload file to Drive + write row into Pending Transfers sheet
-        st.success("✅ Submitted for approval. Admin will review in Approvals tab.")
+        project_code = project_code_from("UNK")   # or from inventory dept
+        city_code = city_code_from("UNK")        # or from inventory location
+        order_number = get_next_order_number("TRF")
+        today_str = datetime.now().strftime("%Y%m%d")
+        serial_norm = normalize_serial(chosen_serial)
+
+        prefix = f"{project_code}-{city_code}-TRF-{serial_norm}-{order_number}-{today_str}"
+        drive_filename = f"{prefix}.pdf"
+
+        # Upload to Drive → Pending folder
+        pending_folder = ensure_folder_tree(project_code, city_code, "TRF", "Pending")
+        link, fid = upload_pdf_and_link(uploaded_pdf, drive_filename, parent_folder_id=pending_folder)
+
+        if not fid:
+            st.error("❌ Failed to upload signed transfer PDF.")
+            return
+
+        # Write row to Pending Transfers sheet
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        actor = st.session_state.get("username", "Unknown")
+
+        pending_row = {
+            "Serial Number": chosen_serial,
+            "Device Type": device,
+            "Brand": brand,
+            "Model": model,
+            "From owner": from_owner,
+            "To owner": to_owner,
+            "Submitted by": actor,
+            "Submitted at": now_str,
+            "Approval Status": "Pending",
+            "Approval File ID": fid,
+            "Approval PDF": link,
+        }
+        append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending_row]))
+
+        st.success("✅ Signed transfer submitted for admin approval.")
             
 # =============================================================================
 # EMPLOYEE REGISTER TAB
@@ -1056,6 +1128,9 @@ def employee_register_tab():
 # =============================================================================
 # APPROVALS (Admin)
 # =============================================================================
+# =============================================================================
+# APPROVALS (Admin)
+# =============================================================================
 def approvals_tab():
     st.subheader("✅ Approvals (Admin)")
     if st.session_state.get("role") != "Admin":
@@ -1065,30 +1140,31 @@ def approvals_tab():
     pending_dev = read_worksheet(PENDING_DEVICE_WS)
     pending_tr = read_worksheet(PENDING_TRANSFER_WS)
 
+    # -------------------------------------------------------------------------
     # Pending Devices
+    # -------------------------------------------------------------------------
     st.markdown("### Pending Device Registrations")
     df_dev = pending_dev[pending_dev["Approval Status"].isin(["", "Pending"])].reset_index(drop=True)
     if df_dev.empty:
         st.success("No pending device registrations.")
     else:
         for i, row in df_dev.iterrows():
-            with st.expander(f"{row['Device Type']} — SN {row['Serial Number']} (by {row['Submitted by']})"):
+            file_name = f"{row.get('Approval PDF','').split('/')[-2]}.pdf"
+            with st.expander(f"📦 {row['Device Type']} — SN {row['Serial Number']} (by {row['Submitted by']})"):
                 c1, c2 = st.columns([3, 2])
                 with c1:
                     info = {k: row.get(k, "") for k in INVENTORY_COLS}
                     st.json(info)
 
-                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID", ""), row.get("Approval PDF", ""))
-
-                    # Show only signed PDFs
+                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID",""), row.get("Approval PDF",""))
                     if pdf_bytes and b"/Sig" in pdf_bytes:
-                        st.caption("✅ Signed Approval PDF Preview")
+                        st.caption(f"✅ Signed Approval PDF Preview ({file_name})")
                         try:
                             pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_dev_{i}")
                         except Exception:
                             pass
                     elif row.get("Approval PDF"):
-                        st.warning("⚠️ The uploaded PDF might not be signed. Please double-check before approving.")
+                        st.warning("⚠️ Uploaded PDF might not be signed. Please double-check.")
                         st.markdown(f"[Open PDF Manually]({row['Approval PDF']})")
 
                 with c2:
@@ -1099,7 +1175,9 @@ def approvals_tab():
                     if r_col.button("Reject", key=f"reject_dev_{i}"):
                         _reject_row(PENDING_DEVICE_WS, i, row)
 
+    # -------------------------------------------------------------------------
     # Pending Transfers
+    # -------------------------------------------------------------------------
     st.markdown("---")
     st.markdown("### Pending Transfers")
     df_tr = pending_tr[pending_tr["Approval Status"].isin(["", "Pending"])].reset_index(drop=True)
@@ -1107,23 +1185,22 @@ def approvals_tab():
         st.success("No pending transfers.")
     else:
         for i, row in df_tr.iterrows():
-            with st.expander(f"SN {row['Serial Number']}: {row['From owner']} → {row['To owner']} (by {row['Submitted by']})"):
+            file_name = f"{row.get('Approval PDF','').split('/')[-2]}.pdf"
+            with st.expander(f"🔄 SN {row['Serial Number']}: {row['From owner']} → {row['To owner']} (by {row['Submitted by']})"):
                 c1, c2 = st.columns([3, 2])
                 with c1:
                     info = {k: row.get(k, "") for k in LOG_COLS}
                     st.json(info)
 
-                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID", ""), row.get("Approval PDF", ""))
-
-                    # Show only signed PDFs
+                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID",""), row.get("Approval PDF",""))
                     if pdf_bytes and b"/Sig" in pdf_bytes:
-                        st.caption("✅ Signed Approval PDF Preview")
+                        st.caption(f"✅ Signed Transfer PDF Preview ({file_name})")
                         try:
                             pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_tr_{i}")
                         except Exception:
                             pass
                     elif row.get("Approval PDF"):
-                        st.warning("⚠️ The uploaded PDF might not be signed. Please double-check before approving.")
+                        st.warning("⚠️ Uploaded PDF might not be signed. Please double-check.")
                         st.markdown(f"[Open PDF Manually]({row['Approval PDF']})")
 
                 with c2:
@@ -1135,13 +1212,14 @@ def approvals_tab():
                         _reject_row(PENDING_TRANSFER_WS, i, row)
 
 
+
 # --- Approve/Reject Helpers ---
 def _approve_device_row(row: pd.Series):
     inv = read_worksheet(INVENTORY_WS)
     now_str = datetime.now().strftime(DATE_FMT)
     approver = st.session_state.get("username", "")
 
-    # Add new row to inventory
+    # Add to Inventory
     new_row = {k: row.get(k, "") for k in INVENTORY_COLS}
     new_row["Registered by"] = approver or new_row.get("Registered by", "")
     new_row["Date issued"] = now_str
@@ -1152,11 +1230,13 @@ def _approve_device_row(row: pd.Series):
     )
     write_worksheet(INVENTORY_WS, inv_out)
 
-    # Move files to Drive folders
+    # Move file Pending → Approved
     try:
         project_code = project_code_from(row.get("Department", "") or "UNK")
         city_code = city_code_from(row.get("Location", "") or "UNK")
         approved_folder = ensure_folder_tree(project_code, city_code, "REG", "Approved")
+
+        # Move file, keep same structured filename
         move_drive_file(str(row.get("Approval File ID", "")), approved_folder)
     except Exception:
         pass
@@ -1182,6 +1262,7 @@ def _approve_transfer_row(row: pd.Series):
     approver = st.session_state.get("username", "")
     prev_user = str(inv.loc[idx, "Current user"] or "")
 
+    # Update Inventory
     inv.loc[idx, "Previous User"] = prev_user
     inv.loc[idx, "Current user"] = str(row.get("To owner", ""))
     inv.loc[idx, "TO"] = str(row.get("To owner", ""))
@@ -1189,23 +1270,27 @@ def _approve_transfer_row(row: pd.Series):
     inv.loc[idx, "Registered by"] = approver
     write_worksheet(INVENTORY_WS, inv)
 
+    # Log Transfer
     log_row = {k: row.get(k, "") for k in LOG_COLS}
     log_row["Date issued"] = now_str
     log_row["Registered by"] = approver
     append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
 
+    # Move file Pending → Approved
     try:
         dep = row.get("Department", "") or inv.loc[idx].get("Department", "")
         loc = row.get("Location", "") or inv.loc[idx].get("Location", "")
         project_code = project_code_from(dep or "UNK")
         city_code = city_code_from(loc or "UNK")
-        dest_folder = ensure_folder_tree(project_code, city_code, "TRF", "Approved")
-        move_drive_file(str(row.get("Approval File ID", "")), dest_folder)
+        approved_folder = ensure_folder_tree(project_code, city_code, "TRF", "Approved")
+
+        move_drive_file(str(row.get("Approval File ID", "")), approved_folder)
     except Exception:
         pass
 
     _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
     st.success("✅ Transfer approved and applied.")
+
 
 
 def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
@@ -1239,17 +1324,18 @@ def _reject_row(ws_title: str, i: int, row: pd.Series):
         loc = row.get("Location", "") or ""
         project_code = project_code_from(dep or "UNK")
         city_code = city_code_from(loc or "UNK")
-        dest_folder = ensure_folder_tree(project_code, city_code, type_code, "Rejected")
+        rejected_folder = ensure_folder_tree(project_code, city_code, type_code, "Rejected")
 
+        # Move file Pending → Rejected (keep filename)
         fid = str(row.get("Approval File ID", ""))
         if fid:
-            move_drive_file(fid, dest_folder)
+            move_drive_file(fid, rejected_folder)
         else:
             st.warning("No Approval File ID; cannot move PDF to Rejected folder.")
     except Exception as e:
         st.warning(f"Could not move PDF to Rejected folder: {e}")
 
-    # Mark decision in sheet
+    # Mark in sheet
     df = read_worksheet(ws_title)
     idxs = df[df["Serial Number"].astype(str) == str(row.get("Serial Number", ""))].index.tolist()
     if idxs:
@@ -1261,6 +1347,7 @@ def _reject_row(ws_title: str, i: int, row: pd.Series):
         write_worksheet(ws_title, df)
 
     st.info(f"❌ Request rejected. Reason: {reason or 'No reason provided'}.")
+
 
 
 
