@@ -188,13 +188,14 @@ def do_login(username: str, role: str):
 def do_logout():
     try:
         COOKIE_MGR.delete(COOKIE_NAME)
-        COOKIE_MGR.set(COOKIE_NAME, \"\", expires_at=datetime.utcnow() - timedelta(days=1))
+        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1))
     except Exception:
         pass
-    for k in [\"authenticated\", \"role\", \"username\", \"name\"]:
+    for k in ["authenticated", "role", "username", "name"]:
         st.session_state.pop(k, None)
     st.session_state.just_logged_out = True
     st.rerun()
+
 
 # =============================================================================
 # STYLE / BRANDING
