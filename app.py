@@ -1331,40 +1331,43 @@ def _config_check_ui():
 
 
 def run_app():
-    render_header()
-    hide_table_toolbar_for_non_admin()
-    _config_check_ui()
+    st.title("📦 Tracking Inventory Management System")
 
-    if st.session_state.role == "Admin":
-        tabs = st.tabs([
-            "🧑‍💼 Employee Register",
-            "📇 View Employees",
-            "📝 Register Device",
-            "📋 View Inventory",
-            "🔁 Transfer Device",
-            "📜 Transfer Log",
-            "✅ Approvals",
-            "⬇️ Export",
-        ])
-        with tabs[0]: employee_register_tab()
-        with tabs[1]: employees_view_tab()
-        with tabs[2]: register_device_tab()
-        with tabs[3]: inventory_tab()
-        with tabs[4]: transfer_tab()
-        with tabs[5]: history_tab()
-        with tabs[6]: approvals_tab()
-        with tabs[7]: export_tab()
-    else:
-        tabs = st.tabs([
-            "📝 Register Device",
-            "🔁 Transfer Device",
-            "📋 View Inventory",
-            "📜 Transfer Log"
-        ])
-        with tabs[0]: register_device_tab()
-        with tabs[1]: transfer_tab()
-        with tabs[2]: inventory_tab()
-        with tabs[3]: history_tab()
+    tabs = st.tabs([
+        "👷 Employee Register",
+        "📋 View Employees",
+        "🖊️ Register Device",
+        "📦 View Inventory",
+        "🔄 Transfer Device",
+        "📜 Transfer Log",
+        "✅ Approvals",
+        "📤 Export"
+    ])
+
+    with tabs[0]:
+        employee_register_tab()
+
+    with tabs[1]:
+        employees_view_tab()
+
+    with tabs[2]:
+        register_device_tab()   # ✅ updated with PDF generation
+
+    with tabs[3]:
+        inventory_tab()
+
+    with tabs[4]:
+        transfer_tab()          # ✅ updated with PDF generation
+
+    with tabs[5]:
+        history_tab()
+
+    with tabs[6]:
+        approvals_tab()         # ✅ updated with signed check + filename fix
+
+    with tabs[7]:
+        export_tab()
+
 
 
 # =============================================================================
