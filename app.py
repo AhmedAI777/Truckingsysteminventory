@@ -11,7 +11,7 @@ import hashlib
 import time
 import io
 from datetime import datetime, timedelta
-
+from PyPDF2 import PdfReader, PdfWriter
 import pandas as pd
 import requests
 import streamlit as st
