@@ -915,6 +915,43 @@ def register_device_tab():
 
         pdf_file = st.file_uploader("Upload signed Approval PDF", type=["pdf"], key="reg_signed_pdf")
 
+        # === Live draft PDF generation ===
+if serial.strip() and device.strip():
+    from io import BytesIO
+    from PyPDF2 import PdfReader, PdfWriter
+
+    draft_data = {
+        "SerialNumber": serial.strip(),
+        "DeviceType": device.strip(),
+        "Brand": brand.strip(),
+        "Model": model.strip(),
+        "AssignedTo": assigned_to.strip(),
+    }
+
+    try:
+        template_path = "forms/Register and Transfer Device.pdf"  # your template
+        reader = PdfReader(template_path)
+        writer = PdfWriter()
+        page = reader.pages[0]
+        writer.add_page(page)
+        writer.update_page_form_field_values(writer.pages[0], draft_data)
+
+        buf = BytesIO()
+        writer.write(buf)
+        buf.seek(0)
+
+        st.download_button(
+            "⬇️ Download Draft PDF",
+            data=buf,
+            file_name=f"{serial.strip()}_draft.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+        st.caption("Download, print & sign before uploading the signed version below.")
+    except Exception as e:
+        st.warning(f"Could not generate draft PDF: {e}")
+
+
         submitted = st.form_submit_button("Submit for Approval", type="primary")
 
     # --- Generate draft PDF for staff to download ---
@@ -1062,6 +1099,41 @@ def transfer_tab():
     pdf_file = st.file_uploader("Upload signed Transfer PDF", type=["pdf"], key="transfer_signed_pdf")
 
     do_transfer = st.button("Submit Transfer", type="primary", disabled=not (chosen_serial and new_owner.strip()))
+
+    # === Draft PDF for Transfer ===
+if chosen_serial and new_owner.strip():
+    from io import BytesIO
+    from PyPDF2 import PdfReader, PdfWriter
+
+    draft_data = {
+        "SerialNumber": chosen_serial.strip(),
+        "FromOwner": prev_user.strip(),
+        "ToOwner": new_owner.strip(),
+    }
+
+    try:
+        template_path = "forms/Register and Transfer Device.pdf"
+        reader = PdfReader(template_path)
+        writer = PdfWriter()
+        page = reader.pages[0]
+        writer.add_page(page)
+        writer.update_page_form_field_values(writer.pages[0], draft_data)
+
+        buf = BytesIO()
+        writer.write(buf)
+        buf.seek(0)
+
+        st.download_button(
+            "⬇️ Download Transfer Draft PDF",
+            data=buf,
+            file_name=f"{chosen_serial.strip()}_transfer_draft.pdf",
+            mime="application/pdf",
+            use_container_width=True
+        )
+        st.caption("Download, print & sign this form. Then scan & upload as the signed Transfer PDF below.")
+    except Exception as e:
+        st.warning(f"Could not generate draft transfer PDF: {e}")
+
 
     # --- Generate draft transfer PDF for staff ---
     if chosen_serial and new_owner:
