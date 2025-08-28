@@ -852,19 +852,18 @@ def get_next_order_number(type_: str) -> str:
     return str(current).zfill(4)
 
 def generate_filled_pdf(template_path: str, draft_data: dict):
-    """
-    Fill a PDF form with given data and flatten it (read-only).
-    """
+    """Fill PDF form fields and flatten (read-only)."""
     reader = PdfReader(template_path)
     writer = PdfWriter()
-
-    page = reader.pages[0]
-    writer.add_page(page)
+    writer.add_page(reader.pages[0])
     writer.update_page_form_field_values(writer.pages[0], draft_data)
 
-    # 🔒 flatten = burn values into the page so Acrobat can't edit
+    # flatten
     for pg in writer.pages:
-        pg.compress_content_streams()
+        try:
+            pg.compress_content_streams()
+        except Exception:
+            pass
     try:
         writer.remove_annotations()
     except Exception:
@@ -1300,42 +1299,14 @@ def export_tab():
             st.caption("No rejected transfer submissions yet.")
 
 # =============================================================================
-# CONFIG CHECK & MAIN RUNNER
+# MAIN TABS + RUN
 # =============================================================================
-def _config_check_ui():
-    """Fail fast with a clear message if SA config is missing."""
-    try:
-        sa = _load_sa_info()
-        sa_email = sa.get("client_email", "(unknown)")
-        st.caption(f"Service Account: {sa_email}")
-    except Exception as e:
-        st.error("Google Service Account credentials are missing.")
-        st.code(str(e))
-        st.markdown(
-            "- Put your Service Account JSON under `st.secrets['gcp_service_account']` "
-            "or env `GOOGLE_SERVICE_ACCOUNT_JSON`.\n"
-            "- Ensure it includes **private_key** and **client_email**.\n"
-            "- Share the Google Sheet URL in `st.secrets['sheets']['url']` with the SA email (Editor).\n"
-            "- For Drive uploads to **My Drive**, add `[google_oauth].token_json` to secrets (Option B)."
-        )
-        st.stop()
-
-    # Try opening the spreadsheet once so errors surface early
-    try:
-        _ = get_sh()
-    except Exception as e:
-        st.error("Cannot open the spreadsheet with the configured Service Account.")
-        st.code(str(e))
-        st.info("Share the sheet with the Service Account email above and try again.")
-        st.stop()
-
-
 def run_app():
     st.title("📦 Tracking Inventory Management System")
 
     tabs = st.tabs([
         "👷 Employee Register",
-        "📋 View Employees",
+        "📇 View Employees",
         "🖊️ Register Device",
         "📦 View Inventory",
         "🔄 Transfer Device",
@@ -1351,23 +1322,22 @@ def run_app():
         employees_view_tab()
 
     with tabs[2]:
-        register_device_tab()   # ✅ updated with PDF generation
+        register_device_tab()
 
     with tabs[3]:
         inventory_tab()
 
     with tabs[4]:
-        transfer_tab()          # ✅ updated with PDF generation
+        transfer_tab()
 
     with tabs[5]:
         history_tab()
 
     with tabs[6]:
-        approvals_tab()         # ✅ updated with signed check + filename fix
+        approvals_tab()
 
     with tabs[7]:
         export_tab()
-
 
 
 # =============================================================================
