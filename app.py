@@ -52,6 +52,204 @@ APPROVAL_META_COLS = [
 
 COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 
+
+# =============================================================================
+# GOOGLE AUTH + SHEETS / DRIVE CLIENTS + UPLOAD HELPERS
+# =============================================================================
+
+# Scopes
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+# user fallback scope (My Drive uploads)
+OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+
+# allow OAuth fallback (token in secrets) if SA quota is full
+ALLOW_OAUTH_FALLBACK = st.secrets.get("drive", {}).get("allow_oauth_fallback", True)
+
+def _load_sa_info() -> dict:
+    """Load Google Service Account JSON from secrets or env."""
+    raw = st.secrets.get("gcp_service_account", {})
+    sa: dict = {}
+    if isinstance(raw, dict):
+        sa = dict(raw)
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            sa = json.loads(raw)
+        except Exception:
+            sa = {}
+    if not sa:
+        env_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+        if env_json:
+            try:
+                sa = json.loads(env_json)
+            except Exception:
+                sa = {}
+    pk = sa.get("private_key", "")
+    if isinstance(pk, str) and "\\n" in pk:
+        sa["private_key"] = pk.replace("\\n", "\n")
+    if "private_key" not in sa:
+        raise RuntimeError("Service account JSON not found or missing 'private_key'.")
+    return sa
+
+@st.cache_resource(show_spinner=False)
+def _get_creds():
+    """Service Account credentials (Sheets + Drive)."""
+    return Credentials.from_service_account_info(_load_sa_info(), scopes=SCOPES)
+
+@st.cache_resource(show_spinner=False)
+def _get_gc():
+    """gspread client using Service Account."""
+    return gspread.authorize(_get_creds())
+
+@st.cache_resource(show_spinner=False)
+def _get_drive():
+    """Google Drive v3 client using Service Account."""
+    return build("drive", "v3", credentials=_get_creds())
+
+@st.cache_resource(show_spinner=False)
+def _get_user_creds():
+    """
+    OAuth user creds STRICTLY from secrets (for Streamlit Cloud).
+    secrets:
+      [google_oauth]
+      token_json = "<copied JSON from local OAuth flow>"
+    """
+    cfg = st.secrets.get("google_oauth", {})
+    token_json = cfg.get("token_json")
+    if token_json:
+        try:
+            info = json.loads(token_json)
+        except Exception:
+            info = None
+        if not info:
+            st.error("google_oauth.token_json is not valid JSON.")
+            st.stop()
+        creds = UserCredentials.from_authorized_user_info(info, OAUTH_SCOPES)
+        if not creds.valid and creds.refresh_token:
+            creds.refresh(Request())
+        return creds
+
+    # optional local dev flow
+    if os.environ.get("LOCAL_OAUTH", "0") == "1":
+        client_id = cfg.get("client_id")
+        client_secret = cfg.get("client_secret")
+        if not client_id or not client_secret:
+            st.error("[google_oauth] client_id/client_secret required for local OAuth.")
+            st.stop()
+        flow = InstalledAppFlow.from_client_config(
+            {
+                "installed": {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": ["http://localhost"],
+                }
+            },
+            scopes=OAUTH_SCOPES,
+        )
+        creds = flow.run_local_server(port=0)
+        return creds
+
+    st.error(
+        "OAuth token not configured. Add [google_oauth].token_json to secrets "
+        "(generated locally) if you want My Drive fallback."
+    )
+    st.stop()
+
+@st.cache_resource(show_spinner=False)
+def _get_user_drive():
+    """Drive client with user OAuth (for My Drive fallback)."""
+    return build("drive", "v3", credentials=_get_user_creds())
+
+def _drive_make_public(file_id: str, drive_client=None):
+    """Best-effort: make a Drive file public (anyone with link)."""
+    try:
+        cli = drive_client or _get_drive()
+        cli.permissions().create(
+            fileId=file_id,
+            body={"role": "reader", "type": "anyone"},
+            fields="id",
+            supportsAllDrives=True,
+        ).execute()
+    except Exception:
+        pass
+
+def _is_pdf_bytes(data: bytes) -> bool:
+    return isinstance(data, (bytes, bytearray)) and data[:4] == b"%PDF"
+
+def upload_pdf_and_link(uploaded_file, *, prefix: str) -> tuple[str, str]:
+    """
+    Upload PDF to Drive.
+    - Try Service Account first (Shared Drive or SA-owned folder).
+    - On 403 storageQuotaExceeded and if allowed, fall back to OAuth user (My Drive).
+    Returns (webViewLink, file_id).
+    """
+    if uploaded_file is None:
+        return "", ""
+    if getattr(uploaded_file, "type", "") not in ("application/pdf", "application/x-pdf", "binary/octet-stream"):
+        st.error("Only PDF files are allowed.")
+        return "", ""
+    data = uploaded_file.getvalue()
+    if not _is_pdf_bytes(data):
+        st.error("The uploaded file doesn't look like a real PDF.")
+        return "", ""
+
+    fname = f"{prefix}_{int(time.time())}.pdf"
+    folder_id = st.secrets.get("drive", {}).get("approvals", "")
+    metadata = {"name": fname}
+    if folder_id:
+        metadata["parents"] = [folder_id]
+
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
+    drive_cli = _get_drive()
+
+    try:
+        file = drive_cli.files().create(
+            body=metadata,
+            media_body=media,
+            fields="id, webViewLink",
+            supportsAllDrives=True,
+        ).execute()
+    except HttpError as e:
+        if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
+            if not ALLOW_OAUTH_FALLBACK:
+                st.error(
+                    "Service Account cannot upload to My Drive. Move folder to a Shared drive "
+                    "or enable OAuth token fallback in secrets."
+                )
+                st.stop()
+            drive_cli = _get_user_drive()
+            file = drive_cli.files().create(
+                body=metadata,
+                media_body=media,
+                fields="id, webViewLink",
+                supportsAllDrives=False,
+            ).execute()
+        else:
+            raise
+
+    file_id = file.get("id", "")
+    link = file.get("webViewLink", "")
+    if st.secrets.get("drive", {}).get("public", True) and file_id:
+        _drive_make_public(file_id, drive_client=drive_cli)
+    return link, file_id
+
+def _fetch_public_pdf_bytes(file_id: str, link: str) -> bytes:
+    """Fetch bytes for PDF preview (works when file is public)."""
+    try:
+        if file_id:
+            url = f"https://drive.google.com/uc?export=download&id={file_id}"
+            r = requests.get(url, timeout=15)
+            if r.ok and r.content[:4] == b"%PDF":
+                return r.content
+    except Exception:
+        pass
+    return b""
+
+
 def get_pdf_template_bytes() -> bytes:
     tpl_id = st.secrets.get("drive", {}).get("template_file_id", "")
     if not tpl_id:
