@@ -603,6 +603,15 @@ def _reject_row(ws_title: str, row: pd.Series):
 # ----------------------- Approvals UI -----------------------
 
 REQUIRE_REVIEW_CHECK = True  # keep gate in UI
+def approvals_tab():
+    st.subheader("✅ Approvals (Admin)")
+    if st.session_state.get("role") != "Admin":
+        st.info("Only Admins can view approvals.")
+        return
+
+    # Debugging
+    st.write("📊 Debug: Pending Device Rows", len(read_worksheet(PENDING_DEVICE_WS)))
+    st.write("📊 Debug: Pending Transfer Rows", len(read_worksheet(PENDING_TRANSFER_WS)))
 
 def approvals_tab():
     st.subheader("✅ Approvals (Admin)")
