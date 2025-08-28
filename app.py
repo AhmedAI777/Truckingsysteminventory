@@ -73,7 +73,7 @@ EMPLOYEE_CANON_COLS = [
     "Project","Microsoft Teams","Mobile Number"
 ]
 APPROVAL_META_COLS = [
-    "Approval Status","Approval PDF",approvals,
+    "Approvals Status","Approvals PDF",Approvals,
     "Submitted by","Submitted at","Approver","Decision at"
 ]
 PENDING_DEVICE_COLS   = INVENTORY_COLS + APPROVAL_META_COLS
