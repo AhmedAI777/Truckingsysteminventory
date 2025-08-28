@@ -10,7 +10,6 @@ import hmac
 import hashlib
 import time
 import io
-import zipfile
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -27,7 +26,7 @@ from google.oauth2.credentials import Credentials as UserCredentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseUpload
 from googleapiclient.errors import HttpError
 
 # --- Streamlit must call set_page_config first ---
@@ -80,7 +79,7 @@ PENDING_DEVICE_COLS = INVENTORY_COLS + APPROVAL_META_COLS
 PENDING_TRANSFER_COLS = LOG_COLS + APPROVAL_META_COLS
 
 UNASSIGNED_LABEL = "Unassigned (Stock)"
-REQUIRE_REVIEW_CHECK = True  # gate Approve behind a review checkbox
+REQUIRE_REVIEW_CHECK = True
 
 HEADER_SYNONYMS = {
     "new employee": "New Employeer",
@@ -189,10 +188,10 @@ def do_login(username: str, role: str):
 def do_logout():
     try:
         COOKIE_MGR.delete(COOKIE_NAME)
-        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1))
+        COOKIE_MGR.set(COOKIE_NAME, \"\", expires_at=datetime.utcnow() - timedelta(days=1))
     except Exception:
         pass
-    for k in ["authenticated", "role", "username", "name"]:
+    for k in [\"authenticated\", \"role\", \"username\", \"name\"]:
         st.session_state.pop(k, None)
     st.session_state.just_logged_out = True
     st.rerun()
@@ -440,7 +439,6 @@ def get_sh():
             time.sleep(0.6 * (attempt + 1))
     st.error("Google Sheets API error while opening the spreadsheet.")
     raise last_exc
-
 
 # =============================================================================
 # GOOGLE DRIVE HELPERS
@@ -816,7 +814,7 @@ def project_code_from(text: str) -> str:
         return "ST"
     if "finance" in s:
         return "FIN"
-    if re.fullmatch(r"(it|i\.t\.|information\s*technology)", s):
+    if re.fullmatch(r"(it|i\\.t\\.|information\\s*technology)", s):
         return "IT"
     return "HO"
 
@@ -915,172 +913,96 @@ def register_device_tab():
 
         pdf_file = st.file_uploader("Upload signed Approval PDF", type=["pdf"], key="reg_signed_pdf")
 
-        # === Live draft PDF generation ===
-if serial.strip() and device.strip():
-    from io import BytesIO
-    from PyPDF2 import PdfReader, PdfWriter
+        # --- Generate draft PDF ---
+        if serial.strip() and device.strip():
+            from io import BytesIO
+            from PyPDF2 import PdfReader, PdfWriter
 
-    draft_data = {
-        "SerialNumber": serial.strip(),
-        "DeviceType": device.strip(),
-        "Brand": brand.strip(),
-        "Model": model.strip(),
-        "AssignedTo": assigned_to.strip(),
-    }
+            draft_data = {
+                "SerialNumber": serial.strip(),
+                "DeviceType": device.strip(),
+                "Brand": brand.strip(),
+                "Model": model.strip(),
+                "AssignedTo": assigned_to.strip(),
+            }
+            try:
+                template_path = "forms/Register and Transfer Device.pdf"
+                reader = PdfReader(template_path)
+                writer = PdfWriter()
+                page = reader.pages[0]
+                writer.add_page(page)
+                writer.update_page_form_field_values(writer.pages[0], draft_data)
 
-    try:
-        template_path = "forms/Register and Transfer Device.pdf"  # your template
-        reader = PdfReader(template_path)
-        writer = PdfWriter()
-        page = reader.pages[0]
-        writer.add_page(page)
-        writer.update_page_form_field_values(writer.pages[0], draft_data)
+                buf = BytesIO()
+                writer.write(buf)
+                buf.seek(0)
 
-        buf = BytesIO()
-        writer.write(buf)
-        buf.seek(0)
-
-        st.download_button(
-            "⬇️ Download Draft PDF",
-            data=buf,
-            file_name=f"{serial.strip()}_draft.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
-        st.caption("Download, print & sign before uploading the signed version below.")
-    except Exception as e:
-        st.warning(f"Could not generate draft PDF: {e}")
-
+                st.download_button(
+                    "⬇️ Download Draft PDF",
+                    data=buf,
+                    file_name=f"{serial.strip()}_draft.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+                st.caption("Download, print & sign before uploading the signed version below.")
+            except Exception as e:
+                st.warning(f"Could not generate draft PDF: {e}")
 
         submitted = st.form_submit_button("Submit for Approval", type="primary")
 
-    # --- Generate draft PDF for staff to download ---
-    if serial and device:
-        draft_data = {
-            "Serial Number": serial,
-            "Device Type": device,
-            "Brand": brand,
-            "Model": model,
-            "Assigned To": assigned_to,
-        }
-        draft_pdf_path = f"tmp_register_{serial}.pdf"
-        fill_pdf_template("Register and Transfer Device.pdf", draft_pdf_path, draft_data)
-        with open(draft_pdf_path, "rb") as f:
-            st.download_button(
-                "⬇️ Download Draft Approval Form (Unsigned)",
-                f,
-                file_name=f"Register_{serial}.pdf",
-                mime="application/pdf"
-            )
-
     # --- Handle submission ---
-        if submitted:
-            if not serial.strip() or not device.strip():
-                st.error("Serial Number and Device Type are required.")
-                return
-
+    if submitted:
+        if not serial.strip() or not device.strip():
+            st.error("Serial Number and Device Type are required.")
+            return
         if pdf_file is None:
-            st.error("You must upload the signed PDF form.")
+            st.error("Signed PDF is required.")
             return
 
-        # Normal pending submission logic here (keep same as before)
-        # Upload signed PDF to Pending folder
-        project_code = project_code_from("HO")
-        city_code = city_code_from("RUH")
-        order_number = get_next_order_number("REG")
-        today_str = datetime.now().strftime("%Y%m%d")
-        prefix = f"{project_code}-{city_code}-REG-{normalize_serial(serial)}-{order_number}-{today_str}"
-        pending_folder = ensure_folder_tree(project_code, city_code, "REG", "Pending")
-
-        link, fid = upload_pdf_and_link(pdf_file, prefix=prefix, parent_folder_id=pending_folder)
-        if not fid:
+        s_norm = normalize_serial(serial)
+        inv = read_worksheet(INVENTORY_WS)
+        if not inv.empty and s_norm in set(inv["Serial Number"].astype(str).map(normalize_serial)):
+            st.error("Duplicate serial number already exists.")
             return
 
         now_str = datetime.now().strftime(DATE_FMT)
         actor = st.session_state.get("username", "")
-        pending = {
-            "Serial Number": serial,
-            "Device Type": device,
-            "Brand": brand,
-            "Model": model,
-            "Current user": assigned_to,
-            "Approval Status": "Pending",
-            "Approval PDF": link,
-            "Approval File ID": fid,
-            "Submitted by": actor,
-            "Submitted at": now_str,
-            "Approver": "",
-            "Decision at": "",
+
+        base_row = {
+            "Serial Number": serial.strip(),
+            "Device Type": device.strip(),
+            "Brand": brand.strip(),
+            "Model": model.strip(),
+            "Current user": assigned_to.strip(),
+            "Previous User": "",
+            "TO": assigned_to.strip() if assigned_to != UNASSIGNED_LABEL else "",
+            "Date issued": now_str,
+            "Registered by": actor,
         }
+
+        project_code = project_code_from("HO")
+        city_code = city_code_from("RUH")
+        order_number = get_next_order_number("REG")
+        today_str = datetime.now().strftime("%Y%m%d")
+        prefix = f"{project_code}-{city_code}-REG-{s_norm}-{order_number}-{today_str}"
+
+        pending_folder = ensure_folder_tree(project_code, city_code, "REG", "Pending")
+        link, fid = upload_pdf_and_link(pdf_file, prefix=prefix, parent_folder_id=pending_folder)
+        if not fid:
+            st.error("Failed to upload signed PDF.")
+            return
+
+        pending = {**base_row,
+                   "Approval Status": "Pending",
+                   "Approval PDF": link,
+                   "Approval File ID": fid,
+                   "Submitted by": actor,
+                   "Submitted at": now_str,
+                   "Approver": "",
+                   "Decision at": ""}
+
         append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-        st.success("🕒 Submitted for admin approval (signed form uploaded).")
-
-    # === Validation ===
-    if not serial.strip() or not device.strip():
-        st.error("Serial Number and Device Type are required.")
-        return
-    if pdf_file is None:
-        st.error("Signed PDF is required.")
-        return
-
-    s_norm = normalize_serial(serial)
-    inv = read_worksheet(INVENTORY_WS)
-    if not inv.empty and s_norm in set(inv["Serial Number"].astype(str).map(normalize_serial)):
-        st.error("Duplicate serial number already exists.")
-        return
-
-    now_str = datetime.now().strftime(DATE_FMT)
-    actor = st.session_state.get("username", "")
-
-    base_row = {
-        "Serial Number": serial.strip(),
-        "Device Type": device.strip(),
-        "Brand": brand.strip(),
-        "Model": model.strip(),
-        "CPU": cpu.strip(),
-        "Hard Drive 1": hdd1.strip(),
-        "Hard Drive 2": hdd2.strip(),
-        "Memory": mem.strip(),
-        "GPU": gpu.strip(),
-        "Screen Size": screen.strip(),
-        "Current user": assigned_to.strip(),
-        "Previous User": "",
-        "TO": assigned_to.strip() if assigned_to != UNASSIGNED_LABEL else "",
-        "Department": dept.strip(),
-        "Email Address": email.strip(),
-        "Contact Number": contact.strip(),
-        "Location": location.strip(),
-        "Office": office.strip(),
-        "Notes": notes.strip(),
-        "Date issued": now_str,
-        "Registered by": actor,
-    }
-
-    # === Upload signed PDF directly ===
-    project_code = project_code_from(dept or "HO")
-    city_code = city_code_from(location or "RUH")
-    order_number = get_next_order_number("REG")
-    today_str = datetime.now().strftime("%Y%m%d")
-    prefix = f"{project_code}-{city_code}-REG-{s_norm}-{order_number}-{today_str}"
-
-    pending_folder = ensure_folder_tree(project_code, city_code, "REG", "Pending")
-    link, fid = upload_pdf_and_link(pdf_file, prefix=prefix, parent_folder_id=pending_folder)
-    if not fid:
-        st.error("Failed to upload signed PDF.")
-        return
-
-    pending = {**base_row,
-               "Approval Status": "Pending",
-               "Approval PDF": link,
-               "Approval File ID": fid,
-               "Submitted by": actor,
-               "Submitted at": now_str,
-               "Approver": "",
-               "Decision at": ""}
-
-    append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-    st.success("✅ Signed device registration submitted for admin approval.")
-
+        st.success("✅ Signed device registration submitted for admin approval.")
 
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
@@ -1095,96 +1017,75 @@ def transfer_tab():
     chosen_serial = None if serial == "— Select —" else serial
 
     new_owner = st.text_input("New Owner *")
-
     pdf_file = st.file_uploader("Upload signed Transfer PDF", type=["pdf"], key="transfer_signed_pdf")
-
     do_transfer = st.button("Submit Transfer", type="primary", disabled=not (chosen_serial and new_owner.strip()))
 
-    # === Draft PDF for Transfer ===
-if chosen_serial and new_owner.strip():
-    from io import BytesIO
-    from PyPDF2 import PdfReader, PdfWriter
+    # --- Draft PDF ---
+    if chosen_serial and new_owner.strip():
+        from io import BytesIO
+        from PyPDF2 import PdfReader, PdfWriter
 
-    draft_data = {
-        "SerialNumber": chosen_serial.strip(),
-        "FromOwner": prev_user.strip(),
-        "ToOwner": new_owner.strip(),
-    }
-
-    try:
-        template_path = "forms/Register and Transfer Device.pdf"
-        reader = PdfReader(template_path)
-        writer = PdfWriter()
-        page = reader.pages[0]
-        writer.add_page(page)
-        writer.update_page_form_field_values(writer.pages[0], draft_data)
-
-        buf = BytesIO()
-        writer.write(buf)
-        buf.seek(0)
-
-        st.download_button(
-            "⬇️ Download Transfer Draft PDF",
-            data=buf,
-            file_name=f"{chosen_serial.strip()}_transfer_draft.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
-        st.caption("Download, print & sign this form. Then scan & upload as the signed Transfer PDF below.")
-    except Exception as e:
-        st.warning(f"Could not generate draft transfer PDF: {e}")
-
-
-    # --- Generate draft transfer PDF for staff ---
-    if chosen_serial and new_owner:
         draft_data = {
-            "Serial Number": chosen_serial,
-            "New Owner": new_owner,
+            "SerialNumber": chosen_serial.strip(),
+            "FromOwner": inventory_df[inventory_df["Serial Number"] == chosen_serial]["Current user"].values[0],
+            "ToOwner": new_owner.strip(),
         }
-        draft_pdf_path = f"tmp_transfer_{chosen_serial}.pdf"
-        fill_pdf_template("Register and Transfer Device.pdf", draft_pdf_path, draft_data)
-        with open(draft_pdf_path, "rb") as f:
+        try:
+            template_path = "forms/Register and Transfer Device.pdf"
+            reader = PdfReader(template_path)
+            writer = PdfWriter()
+            page = reader.pages[0]
+            writer.add_page(page)
+            writer.update_page_form_field_values(writer.pages[0], draft_data)
+
+            buf = BytesIO()
+            writer.write(buf)
+            buf.seek(0)
+
             st.download_button(
-                "⬇️ Download Draft Transfer Form (Unsigned)",
-                f,
-                file_name=f"Transfer_{chosen_serial}.pdf",
-                mime="application/pdf"
+                "⬇️ Download Transfer Draft PDF",
+                data=buf,
+                file_name=f\"{chosen_serial.strip()}_transfer_draft.pdf\",
+                mime=\"application/pdf\",
+                use_container_width=True
             )
+            st.caption(\"Download, print & sign this form. Then scan & upload as the signed Transfer PDF below.\")
+        except Exception as e:
+            st.warning(f\"Could not generate draft transfer PDF: {e}\")
 
     # --- Submission ---
     if do_transfer:
         if pdf_file is None:
-            st.error("You must upload the signed transfer PDF.")
+            st.error(\"You must upload the signed transfer PDF.\")
             return
 
-        project_code = project_code_from("HO")
-        city_code = city_code_from("RUH")
-        order_number = get_next_order_number("TRF")
-        today_str = datetime.now().strftime("%Y%m%d")
-        prefix = f"{project_code}-{city_code}-TRF-{normalize_serial(chosen_serial)}-{order_number}-{today_str}"
-        pending_folder = ensure_folder_tree(project_code, city_code, "TRF", "Pending")
+        project_code = project_code_from(\"HO\")
+        city_code = city_code_from(\"RUH\")
+        order_number = get_next_order_number(\"TRF\")
+        today_str = datetime.now().strftime(\"%Y%m%d\")
+        prefix = f\"{project_code}-{city_code}-TRF-{normalize_serial(chosen_serial)}-{order_number}-{today_str}\"
+        pending_folder = ensure_folder_tree(project_code, city_code, \"TRF\", \"Pending\")
 
         link, fid = upload_pdf_and_link(pdf_file, prefix=prefix, parent_folder_id=pending_folder)
         if not fid:
             return
 
         now_str = datetime.now().strftime(DATE_FMT)
-        actor = st.session_state.get("username", "")
+        actor = st.session_state.get(\"username\", \"\")
         pend = {
-            "Serial Number": chosen_serial,
-            "From owner": inventory_df[inventory_df["Serial Number"] == chosen_serial]["Current user"].values[0],
-            "To owner": new_owner.strip(),
-            "Approval Status": "Pending",
-            "Approval PDF": link,
-            "Approval File ID": fid,
-            "Submitted by": actor,
-            "Submitted at": now_str,
-            "Approver": "",
-            "Decision at": "",
+            \"Serial Number\": chosen_serial,
+            \"From owner\": inventory_df[inventory_df[\"Serial Number\"] == chosen_serial][\"Current user\"].values[0],
+            \"To owner\": new_owner.strip(),
+            \"Approval Status\": \"Pending\",
+            \"Approval PDF\": link,
+            \"Approval File ID\": fid,
+            \"Submitted by\": actor,
+            \"Submitted at\": now_str,
+            \"Approver\": \"\",
+            \"Decision at\": \"\",
         }
         append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pend]))
-        st.success("🕒 Transfer submitted for admin approval (signed form uploaded).")
-
+        st.success(\"🕒 Transfer submitted for admin approval.\")
 
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
@@ -1250,6 +1151,8 @@ def employee_register_tab():
         new_df = reorder_columns(new_df, EMPLOYEE_CANON_COLS)
         write_worksheet(EMPLOYEE_WS, new_df)
         st.success("✅ Employee saved to 'mainlists'.")
+
+
 # =============================================================================
 # APPROVALS (Admin)
 # =============================================================================
@@ -1274,15 +1177,16 @@ def approvals_tab():
                 with c1:
                     info = {k: row.get(k, "") for k in INVENTORY_COLS}
                     st.json(info)
-                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID", ""), row.get("Approval PDF", ""))
-                    if pdf_bytes:
-                        st.caption("Approval PDF Preview")
-                        try:
-                            pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_dev_{i}")
-                        except Exception:
-                            pass
-                    elif row.get("Approval PDF"):
-                        st.markdown(f"[Open Approval PDF]({row['Approval PDF']})")
+                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID",""), row.get("Approval PDF",""))
+if pdf_bytes:
+    st.caption("Approval PDF Preview")
+    try:
+        pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_dev_{i}")
+    except Exception:
+        pass
+elif row.get("Approval PDF"):
+    st.markdown(f"[Open Approval PDF]({row['Approval PDF']})")
+
 
                 with c2:
                     reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_dev_{i}") if REQUIRE_REVIEW_CHECK else True
@@ -1305,15 +1209,18 @@ def approvals_tab():
                 with c1:
                     info = {k: row.get(k, "") for k in LOG_COLS}
                     st.json(info)
-                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID", ""), row.get("Approval PDF", ""))
-                    if pdf_bytes:
-                        st.caption("Approval PDF Preview")
-                        try:
-                            pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_tr_{i}")
-                        except Exception:
-                            pass
-                    elif row.get("Approval PDF"):
-                        st.markdown(f"[Open Approval PDF]({row['Approval PDF']})")
+                   pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID",""), row.get("Approval PDF",""))
+
+# Show only signed PDFs
+if pdf_bytes and b"/Sig" in pdf_bytes:
+    st.caption("✅ Signed Approval PDF Preview")
+    try:
+        pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_{ws_title}_{i}")
+    except Exception:
+        pass
+elif row.get("Approval PDF"):
+    st.warning("⚠️ The uploaded PDF might not be signed. Please double-check before approving.")
+    st.markdown(f"[Open PDF Manually]({row['Approval PDF']})")
 
                 with c2:
                     reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_tr_{i}") if REQUIRE_REVIEW_CHECK else True
@@ -1340,38 +1247,17 @@ def _approve_device_row(row: pd.Series):
     )
     write_worksheet(INVENTORY_WS, inv_out)
 
-    # ==== FILE HANDLING ====
+    # Move files to Drive folders
     try:
         project_code = project_code_from(row.get("Department", "") or "UNK")
         city_code = city_code_from(row.get("Location", "") or "UNK")
         approved_folder = ensure_folder_tree(project_code, city_code, "REG", "Approved")
-        rejected_folder = ensure_folder_tree(project_code, city_code, "REG", "Rejected")
-
-        fid = str(row.get("Approval File ID", ""))
-        if fid:
-            signed_fid = _find_signed_version(fid)
-            if signed_fid:
-                # Move signed → Approved
-                move_drive_file(signed_fid, approved_folder)
-                # Move unsigned draft → Rejected (rename for clarity)
-                try:
-                    drive = _get_drive_client_for_writes()
-                    file = drive.files().get(fileId=fid, fields="name", supportsAllDrives=True).execute()
-                    draft_name = file["name"]
-                    if not draft_name.endswith("_unsigned.pdf"):
-                        new_name = draft_name.rsplit(".", 1)[0] + "_unsigned.pdf"
-                        _rename_in_drive(fid, new_name)
-                except Exception:
-                    pass
-                move_drive_file(fid, rejected_folder)
-            else:
-                # No signed version → fallback, move draft to Approved
-                move_drive_file(fid, approved_folder)
+        move_drive_file(str(row.get("Approval File ID", "")), approved_folder)
     except Exception:
         pass
 
     _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
-    st.success("✅ Device approved and added to Inventory. Signed copy archived; draft kept in Rejected.")
+    st.success("✅ Device approved and added to Inventory.")
 
 
 def _approve_transfer_row(row: pd.Series):
@@ -1416,6 +1302,7 @@ def _approve_transfer_row(row: pd.Series):
     _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
     st.success("✅ Transfer approved and applied.")
 
+
 def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
     df = read_worksheet(ws_title)
     key_cols = [c for c in ["Serial Number", "Submitted at", "Submitted by", "To owner"] if c in df.columns]
@@ -1433,8 +1320,8 @@ def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
     df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
     write_worksheet(ws_title, df)
 
+
 def _reject_row(ws_title: str, i: int, row: pd.Series):
-    # Ask for rejection reason
     reason = st.text_input(f"Reason for rejecting SN {row.get('Serial Number','')}", key=f"reason_{i}")
     confirm = st.button("Confirm Reject", key=f"confirm_reject_{i}")
 
@@ -1451,21 +1338,11 @@ def _reject_row(ws_title: str, i: int, row: pd.Series):
 
         fid = str(row.get("Approval File ID", ""))
         if fid:
-            try:
-                drive = _get_drive_client_for_writes()
-                file = drive.files().get(fileId=fid, fields="name", supportsAllDrives=True).execute()
-                draft_name = file["name"]
-                if not draft_name.endswith("_unsigned.pdf"):
-                    new_name = draft_name.rsplit(".", 1)[0] + "_unsigned.pdf"
-                    _rename_in_drive(fid, new_name)
-            except Exception:
-                pass
             move_drive_file(fid, dest_folder)
         else:
-            st.warning("No Approval File ID; cannot move PDF to Rejected folder (file left in place).")
-
+            st.warning("No Approval File ID; cannot move PDF to Rejected folder.")
     except Exception as e:
-        st.warning(f"Could not move PDF to Rejected folder: {e} (file left in place).")
+        st.warning(f"Could not move PDF to Rejected folder: {e}")
 
     # Mark decision in sheet
     df = read_worksheet(ws_title)
@@ -1478,7 +1355,8 @@ def _reject_row(ws_title: str, i: int, row: pd.Series):
         df.loc[idx, "Rejection Reason"] = reason.strip() if reason else "No reason provided"
         write_worksheet(ws_title, df)
 
-    st.info(f"❌ Request rejected. Reason: {reason or 'No reason provided'}. Filed under Rejected.")
+    st.info(f"❌ Request rejected. Reason: {reason or 'No reason provided'}.")
+
 
 # =============================================================================
 # EXPORT
@@ -1546,6 +1424,7 @@ def export_tab():
                                "rejected_transfer_submissions.csv", "text/csv")
         else:
             st.caption("No rejected transfer submissions yet.")
+
 # =============================================================================
 # CONFIG CHECK & MAIN RUNNER
 # =============================================================================
