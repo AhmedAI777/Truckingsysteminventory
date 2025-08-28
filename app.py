@@ -1177,16 +1177,19 @@ def approvals_tab():
                 with c1:
                     info = {k: row.get(k, "") for k in INVENTORY_COLS}
                     st.json(info)
-                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID",""), row.get("Approval PDF",""))
-if pdf_bytes:
-    st.caption("Approval PDF Preview")
-    try:
-        pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_dev_{i}")
-    except Exception:
-        pass
-elif row.get("Approval PDF"):
-    st.markdown(f"[Open Approval PDF]({row['Approval PDF']})")
 
+                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID", ""), row.get("Approval PDF", ""))
+
+                    # Show only signed PDFs
+                    if pdf_bytes and b"/Sig" in pdf_bytes:
+                        st.caption("✅ Signed Approval PDF Preview")
+                        try:
+                            pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_dev_{i}")
+                        except Exception:
+                            pass
+                    elif row.get("Approval PDF"):
+                        st.warning("⚠️ The uploaded PDF might not be signed. Please double-check before approving.")
+                        st.markdown(f"[Open PDF Manually]({row['Approval PDF']})")
 
                 with c2:
                     reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_dev_{i}") if REQUIRE_REVIEW_CHECK else True
@@ -1209,18 +1212,19 @@ elif row.get("Approval PDF"):
                 with c1:
                     info = {k: row.get(k, "") for k in LOG_COLS}
                     st.json(info)
-                   pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID",""), row.get("Approval PDF",""))
 
-# Show only signed PDFs
-if pdf_bytes and b"/Sig" in pdf_bytes:
-    st.caption("✅ Signed Approval PDF Preview")
-    try:
-        pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_{ws_title}_{i}")
-    except Exception:
-        pass
-elif row.get("Approval PDF"):
-    st.warning("⚠️ The uploaded PDF might not be signed. Please double-check before approving.")
-    st.markdown(f"[Open PDF Manually]({row['Approval PDF']})")
+                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID", ""), row.get("Approval PDF", ""))
+
+                    # Show only signed PDFs
+                    if pdf_bytes and b"/Sig" in pdf_bytes:
+                        st.caption("✅ Signed Approval PDF Preview")
+                        try:
+                            pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_tr_{i}")
+                        except Exception:
+                            pass
+                    elif row.get("Approval PDF"):
+                        st.warning("⚠️ The uploaded PDF might not be signed. Please double-check before approving.")
+                        st.markdown(f"[Open PDF Manually]({row['Approval PDF']})")
 
                 with c2:
                     reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_tr_{i}") if REQUIRE_REVIEW_CHECK else True
@@ -1229,6 +1233,7 @@ elif row.get("Approval PDF"):
                         _approve_transfer_row(row)
                     if r_col.button("Reject", key=f"reject_tr_{i}"):
                         _reject_row(PENDING_TRANSFER_WS, i, row)
+
 
 # --- Approve/Reject Helpers ---
 def _approve_device_row(row: pd.Series):
@@ -1356,6 +1361,7 @@ def _reject_row(ws_title: str, i: int, row: pd.Series):
         write_worksheet(ws_title, df)
 
     st.info(f"❌ Request rejected. Reason: {reason or 'No reason provided'}.")
+
 
 
 # =============================================================================
