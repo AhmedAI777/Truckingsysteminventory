@@ -1270,30 +1270,42 @@ def prefill_pdf_tab():
     inventory_df = read_worksheet("truckinventory")
     mainlist_df = read_worksheet("mainlists")
 
-    serial = st.text_input("Enter Serial Number (must exist in inventory):")
-    owner_name = st.text_input("Enter Employee Name (must exist in mainlists):")
+    # Step 1: Inputs
+    col1, col2 = st.columns(2)
+    with col1:
+        serial_input = st.text_input("Enter Serial Number (must exist in inventory):", key="serial_input")
+    with col2:
+        name_input = st.text_input("Enter Employee Name (must exist in mainlists):", key="name_input")
 
-    if serial and owner_name:
-        device_info = get_device_from_inventory(serial, inventory_df)
-        user_info = get_user_info(owner_name, mainlist_df)
+    # Step 2: Attempt match
+    device_info = get_device_from_inventory(serial_input, inventory_df) if serial_input else None
+    user_info = get_user_info(name_input, mainlist_df) if name_input else None
 
-        if not device_info:
-            st.error("❌ Serial number not found in inventory.")
-        elif not user_info:
-            st.error("❌ User not found in mainlists.")
-        else:
-            today = datetime.today().strftime("%Y%m%d")
-            seq = "0008"  # Optional: replace this with auto-increment logic if needed
-            filename = f"HO-JED-REG-{serial.upper()}-{seq}-{today}.pdf"
+    # Step 3: Show matched info
+    if device_info:
+        st.success(f"✅ Found device: {device_info['Device Type']} / {device_info['Brand']} / {device_info['Model']}")
+    else:
+        st.warning("🔍 Serial number not found.")
 
-            pdf_bytes = generate_prefilled_pdf([device_info], user_info, filename)
-            st.download_button(
-                label=f"⬇️ Download Prefilled PDF: {filename}",
-                data=pdf_bytes,
-                file_name=filename,
-                mime="application/pdf"
-            )
+    if user_info:
+        st.success(f"✅ Found employee: {user_info['Name']} from {user_info['Department']}")
+    else:
+        st.warning("🔍 Employee name not found.")
 
+    # Step 4: Generate and show download
+    if device_info and user_info:
+        today = datetime.today().strftime("%Y%m%d")
+        seq = "0008"  # Replace with dynamic logic if needed
+        serial_norm = device_info['Serial Number'].upper()
+        filename = f"HO-JED-REG-{serial_norm}-{seq}-{today}.pdf"
+
+        pdf_bytes = generate_prefilled_pdf([device_info], user_info, filename)
+        st.download_button(
+            label=f"⬇️ Download Prefilled PDF: {filename}",
+            data=pdf_bytes,
+            file_name=filename,
+            mime="application/pdf"
+        )
 
 # =============================================================================
 # Export
