@@ -7,6 +7,8 @@ import os, re, glob, base64, json, hmac, hashlib, time, io
 from datetime import datetime, timedelta
 import pandas as pd
 import requests
+from PyPDF2 import PdfReader, PdfWriter
+from PyPDF2.generic import NameObject, DictionaryObject, BooleanObject, ArrayObject
 
 import streamlit as st
 st.set_page_config(page_title="Tracking Inventory Management System", layout="wide")
@@ -501,22 +503,48 @@ def _make_specs(cpu, mem, h1, h2, gpu, screen) -> str:
     if screen: parts.append(f"Screen: {screen}")
     return " | ".join(parts)
 
-def fill_pdf_form(template_bytes: bytes, values: dict[str,str], *, flatten: bool=False) -> bytes:
-    reader=PdfReader(io.BytesIO(template_bytes)); writer=PdfWriter()
-    for p in reader.pages: writer.add_page(p)
-    try: writer.update_page_form_field_values(writer.pages[0], values)
-    except Exception: pass
+def fill_pdf_form(template_bytes: bytes, values: dict[str, str], *, flatten: bool = False) -> bytes:
+    reader = PdfReader(io.BytesIO(template_bytes))
+    writer = PdfWriter()
+    for p in reader.pages:
+        writer.add_page(p)
+
+    # Fill first page fields (extend if your form has fields on other pages)
+    try:
+        writer.update_page_form_field_values(writer.pages[0], values)
+    except Exception:
+        pass
+
+    # Ensure appearances are drawn so text shows everywhere
     if "/AcroForm" in reader.trailer["/Root"]:
-        writer._root_object.update({NameObject("/AcroForm"): DictionaryObject({NameObject("/NeedAppearances"): BooleanObject(True)})})
+        ac = reader.trailer["/Root"]["/AcroForm"]
+        writer._root_object.update({NameObject("/AcroForm"): ac})
+        writer._root_object["/AcroForm"].update({NameObject("/NeedAppearances"): BooleanObject(True)})
+    else:
+        writer._root_object.update({
+            NameObject("/AcroForm"): DictionaryObject({NameObject("/NeedAppearances"): BooleanObject(True)})
+        })
+
     if flatten:
-        for page in writer.pages:
-            annots=page.get("/Annots")
-            if not annots: continue
-            for a in annots:
-                obj=a.get_object()
-                if obj.get("/FT")==NameObject("/Tx"):
-                    flags=int(obj.get("/Ff",0)); obj.update({NameObject("/Ff"): flags | 1})
-    out=io.BytesIO(); writer.write(out); out.seek(0); return out.read()
+        # 1) Mark all text fields as read-only
+        try:
+            fields = writer._root_object["/AcroForm"].get("/Fields")
+            if fields:
+                for f in fields:
+                    obj = f.get_object()
+                    if obj.get("/FT") == NameObject("/Tx"):
+                        flags = int(obj.get("/Ff", 0))
+                        obj.update({NameObject("/Ff"): flags | 1})  # ReadOnly bit
+            # 2) Clear the field list (most viewers then treat it as non-editable content)
+            writer._root_object["/AcroForm"].update({NameObject("/Fields"): ArrayObject()})
+        except Exception:
+            pass
+
+    out = io.BytesIO()
+    writer.write(out)
+    out.seek(0)
+    return out.read()
+
 
 def make_form_filename(kind: str, serial: str, counter: int=1) -> str:
     s_norm=normalize_serial(serial); today=datetime.now().strftime("%Y%m%d")
