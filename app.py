@@ -46,7 +46,7 @@ INVENTORY_COLS = [
 ]
 LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 APPROVAL_META_COLS = [
-    "Approval Status","Approval PDF","Approval File ID",
+    "Approval Status","Approval PDF","approvals",
     "Submitted by","Submitted at","Approver","Decision at"
 ]
 
@@ -402,7 +402,7 @@ def register_device_tab():
         pending = {**row,
             "Approval Status": "Pending",
             "Approval PDF": link,
-            "Approval File ID": fid,
+            "approvals": fid,
             "Submitted by": actor,
             "Submitted at": now_str,
             "Approver": "",
@@ -506,7 +506,7 @@ def transfer_tab():
             "Registered by": actor,
             "Approval Status": "Pending",
             "Approval PDF": link,
-            "Approval File ID": fid,
+            "approvals": fid,
             "Submitted by": actor,
             "Submitted at": now_str,
             "Approver": "",
@@ -627,7 +627,7 @@ def approvals_tab():
                     st.json(info)
 
                     # Inline PDF preview
-                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID",""), row.get("Approval PDF",""))
+                    pdf_bytes = _fetch_public_pdf_bytes(row.get("approvals",""), row.get("Approval PDF",""))
                     if pdf_bytes:
                         st.caption("📄 Signed ICT Form Preview")
                         try:
@@ -664,7 +664,7 @@ def approvals_tab():
                     st.json(info)
 
                     # Inline PDF preview
-                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID",""), row.get("Approval PDF",""))
+                    pdf_bytes = _fetch_public_pdf_bytes(row.get("approvals",""), row.get("Approval PDF",""))
                     if pdf_bytes:
                         st.caption("📄 Signed ICT Form Preview")
                         try:
