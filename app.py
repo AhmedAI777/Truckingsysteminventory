@@ -875,7 +875,7 @@ def generate_filled_pdf(template_path: str, draft_data: dict):
     return buf
 
 # =============================================================================
-# VIEWS
+# EMPLOYEE REGISTER TAB
 # =============================================================================
 def employee_register_tab():
     st.subheader("👷 Employee Register")
@@ -907,23 +907,14 @@ def employee_register_tab():
         st.success("✅ Employee registered successfully!")
 
 
-
-def inventory_tab():
-    st.subheader("📋 Inventory")
-    df = read_worksheet(INVENTORY_WS)
+# =============================================================================
+# VIEW EMPLOYEES TAB
+# =============================================================================
+def employees_view_tab():
+    st.subheader("📇 Employees")
+    df = read_worksheet(EMPLOYEE_WS)
     if df.empty:
-        st.warning("Inventory is empty.")
-    else:
-        if st.session_state.role == "Admin":
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.dataframe(df, use_container_width=True, hide_index=True)
-
-def history_tab():
-    st.subheader("📜 Transfer Log")
-    df = read_worksheet(TRANSFERLOG_WS)
-    if df.empty:
-        st.info("No transfer history found.")
+        st.info("No employee data found.")
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
@@ -958,6 +949,19 @@ def register_device_tab():
         write_worksheet(INVENTORY_WS, df)
         st.success("✅ Device registered successfully.")
 
+
+# =============================================================================
+# VIEW INVENTORY TAB
+# =============================================================================
+def inventory_tab():
+    st.subheader("📦 Inventory")
+    df = read_worksheet(INVENTORY_WS)
+    if df.empty:
+        st.warning("Inventory is empty.")
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
 # =============================================================================
 # TRANSFER DEVICE TAB
 # =============================================================================
@@ -965,331 +969,70 @@ def transfer_tab():
     st.subheader("🔄 Transfer Device")
 
     with st.form("transfer_form"):
-        serial_tr = st.text_input("Serial Number")
-        to_owner = st.text_input("Transfer to")
-        device_type_tr = st.text_input("Device Type")
+        serial = st.text_input("Serial Number")
+        to_user = st.text_input("Transfer to")
+        submit = st.form_submit_button("Transfer")
 
-        submit_tr = st.form_submit_button("Submit Transfer")
+    if submit:
+        df = read_worksheet(INVENTORY_WS)
+        idx = df[df["Serial Number"] == serial].index
 
-    if submit_tr:
-        draft_data = {
-            "Text Field0": serial_tr,
-            "Text Field2": device_type_tr,
-            "Text Field8": to_owner,
-            "Text Field10": datetime.now().strftime("%Y-%m-%d"),
-        }
-        pdf_buf_tr = generate_filled_pdf("forms/Register and Transfer Device.pdf", draft_data)
-
-        st.success("✅ Transfer Draft PDF generated. Please download, sign, and re-upload.")
-        st.download_button(
-            "⬇️ Download Transfer Draft PDF",
-            data=pdf_buf_tr,
-            file_name=f"{serial_tr.strip()}_transfer_draft.pdf",
-            mime="application/pdf"
-        )
+        if not idx.empty:
+            i = idx[0]
+            df.at[i, "Previous User"] = df.at[i, "Current user"]
+            df.at[i, "Current user"] = to_user
+            df.at[i, "TO"] = to_user
+            df.at[i, "Date issued"] = datetime.now().strftime(DATE_FMT)
+            df.at[i, "Registered by"] = st.session_state.get("username", "")
+            write_worksheet(INVENTORY_WS, df)
+            st.success(f"✅ Device {serial} transferred to {to_user}.")
+        else:
+            st.error(f"❌ Serial number {serial} not found.")
 
 
 # =============================================================================
-# APPROVALS (Admin)
+# TRANSFER LOG TAB
+# =============================================================================
+def history_tab():
+    st.subheader("📜 Transfer Log")
+    df = read_worksheet(TRANSFERLOG_WS)
+    if df.empty:
+        st.info("No transfer history found.")
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+# =============================================================================
+# APPROVALS TAB (Placeholder)
 # =============================================================================
 def approvals_tab():
-    st.subheader("✅ Approvals (Admin)")
-    if st.session_state.get("role") != "Admin":
-        st.info("Only Admins can view approvals.")
-        return
-
-    pending_dev = read_worksheet(PENDING_DEVICE_WS)
-    pending_tr = read_worksheet(PENDING_TRANSFER_WS)
-
-    # ----------------- Pending Devices -----------------
-    st.markdown("### Pending Device Registrations")
-    df_dev = pending_dev[pending_dev["Approval Status"].isin(["", "Pending"])].reset_index(drop=True)
-    if df_dev.empty:
-        st.success("No pending device registrations.")
-    else:
-        for i, row in df_dev.iterrows():
-            with st.expander(f"{row['Device Type']} — SN {row['Serial Number']} (by {row['Submitted by']})"):
-                c1, c2 = st.columns([3, 2])
-                with c1:
-                    info = {k: row.get(k, "") for k in INVENTORY_COLS}
-                    st.json(info)
-
-                    pdf_bytes = _fetch_public_pdf_bytes(
-                        row.get("Approval File ID", ""),
-                        row.get("Approval PDF", "")
-                    )
-                    if pdf_bytes:
-                        file_name = f"{row['Serial Number']}_register_draft.pdf"
-                        if b"/Sig" in pdf_bytes:
-                            st.caption(f"✅ Signed Approval PDF Preview — {file_name}")
-                            try:
-                                pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_dev_{i}")
-                            except Exception:
-                                pass
-                        else:
-                            st.warning("⚠️ The uploaded PDF might not be signed. Please double-check before approving.")
-                            st.markdown(f"[Open PDF Manually]({row['Approval PDF']})")
-                    elif row.get("Approval PDF"):
-                        st.markdown(f"[Open Approval PDF]({row['Approval PDF']})")
-
-                with c2:
-                    reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_dev_{i}") if REQUIRE_REVIEW_CHECK else True
-                    a_col, r_col = st.columns(2)
-                    if a_col.button("Approve", key=f"approve_dev_{i}", disabled=not reviewed):
-                        _approve_device_row(row)
-                    if r_col.button("Reject", key=f"reject_dev_{i}"):
-                        _reject_row(PENDING_DEVICE_WS, i, row)
-
-    # ----------------- Pending Transfers -----------------
-    st.markdown("---")
-    st.markdown("### Pending Transfers")
-    df_tr = pending_tr[pending_tr["Approval Status"].isin(["", "Pending"])].reset_index(drop=True)
-    if df_tr.empty:
-        st.success("No pending transfers.")
-    else:
-        for i, row in df_tr.iterrows():
-            with st.expander(f"SN {row['Serial Number']}: {row['From owner']} → {row['To owner']} (by {row['Submitted by']})"):
-                c1, c2 = st.columns([3, 2])
-                with c1:
-                    info = {k: row.get(k, "") for k in LOG_COLS}
-                    st.json(info)
-
-                    pdf_bytes = _fetch_public_pdf_bytes(
-                        row.get("Approval File ID", ""),
-                        row.get("Approval PDF", "")
-                    )
-                    if pdf_bytes:
-                        file_name = f"{row['Serial Number']}_transfer_draft.pdf"
-                        if b"/Sig" in pdf_bytes:
-                            st.caption(f"✅ Signed Transfer PDF Preview — {file_name}")
-                            try:
-                                pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_tr_{i}")
-                            except Exception:
-                                pass
-                        else:
-                            st.warning("⚠️ The uploaded PDF might not be signed. Please double-check before approving.")
-                            st.markdown(f"[Open PDF Manually]({row['Approval PDF']})")
-                    elif row.get("Approval PDF"):
-                        st.markdown(f"[Open Approval PDF]({row['Approval PDF']})")
-
-                with c2:
-                    reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_tr_{i}") if REQUIRE_REVIEW_CHECK else True
-                    a_col, r_col = st.columns(2)
-                    if a_col.button("Approve", key=f"approve_tr_{i}", disabled=not reviewed):
-                        _approve_transfer_row(row)
-                    if r_col.button("Reject", key=f"reject_tr_{i}"):
-                        _reject_row(PENDING_TRANSFER_WS, i, row)
-
-
-
-
-# --- Approve/Reject Helpers ---
-def _approve_device_row(row: pd.Series):
-    inv = read_worksheet(INVENTORY_WS)
-    now_str = datetime.now().strftime(DATE_FMT)
-    approver = st.session_state.get("username", "")
-
-    # Add to Inventory
-    new_row = {k: row.get(k, "") for k in INVENTORY_COLS}
-    new_row["Registered by"] = approver or new_row.get("Registered by", "")
-    new_row["Date issued"] = now_str
-    inv_out = pd.concat(
-        [inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS),
-         pd.DataFrame([new_row])],
-        ignore_index=True
-    )
-    write_worksheet(INVENTORY_WS, inv_out)
-
-    # Move file Pending → Approved
-    try:
-        project_code = project_code_from(row.get("Department", "") or "UNK")
-        city_code = city_code_from(row.get("Location", "") or "UNK")
-        approved_folder = ensure_folder_tree(project_code, city_code, "REG", "Approved")
-
-        # Move file, keep same structured filename
-        move_drive_file(str(row.get("Approval File ID", "")), approved_folder)
-    except Exception:
-        pass
-
-    _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
-    st.success("✅ Device approved and added to Inventory.")
-
-
-def _approve_transfer_row(row: pd.Series):
-    inv = read_worksheet(INVENTORY_WS)
-    if inv.empty:
-        st.error("Inventory is empty; cannot apply transfer.")
-        return
-
-    sn = str(row.get("Serial Number", ""))
-    match = inv[inv["Serial Number"].astype(str) == sn]
-    if match.empty:
-        st.error("Serial not found in Inventory.")
-        return
-    idx = match.index[0]
-
-    now_str = datetime.now().strftime(DATE_FMT)
-    approver = st.session_state.get("username", "")
-    prev_user = str(inv.loc[idx, "Current user"] or "")
-
-    # Update Inventory
-    inv.loc[idx, "Previous User"] = prev_user
-    inv.loc[idx, "Current user"] = str(row.get("To owner", ""))
-    inv.loc[idx, "TO"] = str(row.get("To owner", ""))
-    inv.loc[idx, "Date issued"] = now_str
-    inv.loc[idx, "Registered by"] = approver
-    write_worksheet(INVENTORY_WS, inv)
-
-    # Log Transfer
-    log_row = {k: row.get(k, "") for k in LOG_COLS}
-    log_row["Date issued"] = now_str
-    log_row["Registered by"] = approver
-    append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
-
-    # Move file Pending → Approved
-    try:
-        dep = row.get("Department", "") or inv.loc[idx].get("Department", "")
-        loc = row.get("Location", "") or inv.loc[idx].get("Location", "")
-        project_code = project_code_from(dep or "UNK")
-        city_code = city_code_from(loc or "UNK")
-        approved_folder = ensure_folder_tree(project_code, city_code, "TRF", "Approved")
-
-        move_drive_file(str(row.get("Approval File ID", "")), approved_folder)
-    except Exception:
-        pass
-
-    _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
-    st.success("✅ Transfer approved and applied.")
-
-
-
-def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
-    df = read_worksheet(ws_title)
-    key_cols = [c for c in ["Serial Number", "Submitted at", "Submitted by", "To owner"] if c in df.columns]
-    mask = pd.Series([True] * len(df))
-    for c in key_cols:
-        mask &= df[c].astype(str) == str(row.get(c, ""))
-    idxs = df[mask].index.tolist()
-    if not idxs and "Serial Number" in df.columns:
-        idxs = df[df["Serial Number"].astype(str) == str(row.get("Serial Number", ""))].index.tolist()
-    if not idxs:
-        return
-    idx = idxs[0]
-    df.loc[idx, "Approval Status"] = status
-    df.loc[idx, "Approver"] = st.session_state.get("username", "")
-    df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
-    write_worksheet(ws_title, df)
-
-
-def _reject_row(ws_title: str, i: int, row: pd.Series):
-    reason = st.text_input(f"Reason for rejecting SN {row.get('Serial Number','')}", key=f"reason_{i}")
-    confirm = st.button("Confirm Reject", key=f"confirm_reject_{i}")
-
-    if not confirm:
-        return
-
-    try:
-        type_code = "REG" if ws_title == PENDING_DEVICE_WS else "TRF"
-        dep = row.get("Department", "") or ""
-        loc = row.get("Location", "") or ""
-        project_code = project_code_from(dep or "UNK")
-        city_code = city_code_from(loc or "UNK")
-        rejected_folder = ensure_folder_tree(project_code, city_code, type_code, "Rejected")
-
-        # Move file Pending → Rejected (keep filename)
-        fid = str(row.get("Approval File ID", ""))
-        if fid:
-            move_drive_file(fid, rejected_folder)
-        else:
-            st.warning("No Approval File ID; cannot move PDF to Rejected folder.")
-    except Exception as e:
-        st.warning(f"Could not move PDF to Rejected folder: {e}")
-
-    # Mark in sheet
-    df = read_worksheet(ws_title)
-    idxs = df[df["Serial Number"].astype(str) == str(row.get("Serial Number", ""))].index.tolist()
-    if idxs:
-        idx = idxs[0]
-        df.loc[idx, "Approval Status"] = "Rejected"
-        df.loc[idx, "Approver"] = st.session_state.get("username", "")
-        df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
-        df.loc[idx, "Rejection Reason"] = reason.strip() if reason else "No reason provided"
-        write_worksheet(ws_title, df)
-
-    st.info(f"❌ Request rejected. Reason: {reason or 'No reason provided'}.")
-
-
+    st.subheader("✅ Approvals")
+    st.info("Approval features are not enabled in this simplified version.")
 
 
 # =============================================================================
-# EXPORT
+# EXPORT TAB
 # =============================================================================
 def export_tab():
-    st.subheader("⬇️ Export (always fresh)")
-
+    st.subheader("📤 Export Data")
     inv = read_worksheet(INVENTORY_WS)
-    log = read_worksheet(TRANSFERLOG_WS)
     emp = read_worksheet(EMPLOYEE_WS)
 
-    st.caption(f"Last fetched: {datetime.now().strftime(DATE_FMT)}")
-
-    # Normal exports
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     with c1:
-        st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"),
-                           "inventory.csv", "text/csv")
+        st.download_button("📦 Download Inventory CSV",
+                           inv.to_csv(index=False).encode("utf-8"),
+                           file_name="inventory.csv",
+                           mime="text/csv")
     with c2:
-        st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"),
-                           "transfer_log.csv", "text/csv")
-    with c3:
-        st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"),
-                           "employees.csv", "text/csv")
+        st.download_button("👷 Download Employees CSV",
+                           emp.to_csv(index=False).encode("utf-8"),
+                           file_name="employees.csv",
+                           mime="text/csv")
 
-    st.markdown("---")
-    st.markdown("**Approvals (Accepted / Rejected)**")
-
-    dev_df = read_worksheet(PENDING_DEVICE_WS)
-    trf_df = read_worksheet(PENDING_TRANSFER_WS)
-
-    approved_dev = dev_df[dev_df.get("Approval Status", "").astype(str) == "Approved"]
-    rejected_dev = dev_df[dev_df.get("Approval Status", "").astype(str) == "Rejected"]
-
-    approved_trf = trf_df[trf_df.get("Approval Status", "").astype(str) == "Approved"]
-    rejected_trf = trf_df[trf_df.get("Approval Status", "").astype(str) == "Rejected"]
-
-    c4, c5 = st.columns(2)
-    with c4:
-        if not approved_dev.empty:
-            st.download_button("Approved Device Submissions CSV",
-                               approved_dev.to_csv(index=False).encode("utf-8"),
-                               "approved_device_submissions.csv", "text/csv")
-        else:
-            st.caption("No approved device submissions yet.")
-
-        if not rejected_dev.empty:
-            st.download_button("❌ Rejected Device Submissions CSV",
-                               rejected_dev.to_csv(index=False).encode("utf-8"),
-                               "rejected_device_submissions.csv", "text/csv")
-        else:
-            st.caption("No rejected device submissions yet.")
-
-    with c5:
-        if not approved_trf.empty:
-            st.download_button("Approved Transfer Submissions CSV",
-                               approved_trf.to_csv(index=False).encode("utf-8"),
-                               "approved_transfer_submissions.csv", "text/csv")
-        else:
-            st.caption("No approved transfer submissions yet.")
-
-        if not rejected_trf.empty:
-            st.download_button("❌ Rejected Transfer Submissions CSV",
-                               rejected_trf.to_csv(index=False).encode("utf-8"),
-                               "rejected_transfer_submissions.csv", "text/csv")
-        else:
-            st.caption("No rejected transfer submissions yet.")
 
 # =============================================================================
-# MAIN TABS + RUN
+# MAIN RUNNER
 # =============================================================================
 def run_app():
     st.title("📦 Tracking Inventory Management System")
@@ -1307,25 +1050,18 @@ def run_app():
 
     with tabs[0]:
         employee_register_tab()
-
     with tabs[1]:
         employees_view_tab()
-
     with tabs[2]:
         register_device_tab()
-
     with tabs[3]:
         inventory_tab()
-
     with tabs[4]:
         transfer_tab()
-
     with tabs[5]:
         history_tab()
-
     with tabs[6]:
         approvals_tab()
-
     with tabs[7]:
         export_tab()
 
