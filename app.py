@@ -905,161 +905,101 @@ def history_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-from io import BytesIO
-from PyPDF2 import PdfReader, PdfWriter
-
-# =============================================================================
-# REGISTER DEVICE TAB
-# =============================================================================
-# =============================================================================
-# REGISTER DEVICE TAB
-# =============================================================================
-# =============================================================================
-# REGISTER DEVICE TAB
-# =============================================================================
-# =============================================================================
-# REGISTER DEVICE TAB
-# =============================================================================
 import streamlit as st
 from io import BytesIO
 from PyPDF2 import PdfReader, PdfWriter
 from datetime import datetime
+import pandas as pd
 
-def generate_register_pdf(serial, assigned_to, device_type, brand, model):
-    # Load template
-    reader = PdfReader("forms/Register and Transfer Device.pdf")
+# =============================================================================
+# HELPER: Generate filled PDF (flattened)
+# =============================================================================
+def generate_filled_pdf(template_path: str, draft_data: dict):
+    reader = PdfReader(template_path)
     writer = PdfWriter()
     writer.add_page(reader.pages[0])
-
-    # Fill form fields (later we’ll map all 32 properly)
-    draft_data = {
-        "Text Field0": serial,
-        "Text Field1": assigned_to,
-        "Text Field2": device_type,
-        "Text Field3": brand,
-        "Text Field4": model,
-        "Text Field10": datetime.now().strftime("%Y-%m-%d"),
-    }
     writer.update_page_form_field_values(writer.pages[0], draft_data)
 
-    # Save buffer
-    buf = BytesIO()
-    writer.write(buf)
-    buf.seek(0)
-    return buf
-
-# ---- UI ----
-st.subheader("📋 Register New Device")
-
-with st.form("register_form"):
-    serial = st.text_input("Serial Number *")
-    assigned_to = st.text_input("Assigned to", "Unassigned (Stock)")
-    device_type = st.text_input("Device Type *")
-    brand = st.text_input("Brand")
-    model = st.text_input("Model")
-
-    submit_reg = st.form_submit_button("Submit for Approval")
-
-if submit_reg:
-    pdf_buf = generate_register_pdf(serial, assigned_to, device_type, brand, model)
-    st.success("✅ Draft PDF generated. Please download, sign, and re-upload.")
-    st.download_button(
-        "⬇️ Download Register Draft PDF",
-        data=pdf_buf,
-        file_name=f"{serial.strip()}_register_draft.pdf",
-        mime="application/pdf"
-    )
-
-# =============================================================================
-# TRANSFER DEVICE TAB
-# =============================================================================
-# =============================================================================
-# TRANSFER DEVICE TAB
-# =============================================================================
-def generate_transfer_pdf(serial, to_owner, device_type):
-    reader = PdfReader("forms/Register and Transfer Device.pdf")
-    writer = PdfWriter()
-    writer.add_page(reader.pages[0])
-
-    draft_data = {
-        "Text Field0": serial,
-        "Text Field2": device_type,
-        "Text Field8": to_owner,  # map to correct "To Owner" later
-        "Text Field10": datetime.now().strftime("%Y-%m-%d"),
-    }
-    writer.update_page_form_field_values(writer.pages[0], draft_data)
+    # Flatten (make read-only)
+    for pg in writer.pages:
+        pg.compress_content_streams()
+    try:
+        writer.remove_annotations()
+    except Exception:
+        pass
 
     buf = BytesIO()
     writer.write(buf)
     buf.seek(0)
     return buf
 
-st.subheader("🔄 Transfer Device")
 
-with st.form("transfer_form"):
-    serial_tr = st.text_input("Serial Number")
-    to_owner = st.text_input("Transfer to")
-    device_type_tr = st.text_input("Device Type")
-
-    submit_tr = st.form_submit_button("Submit Transfer")
-
-if submit_tr:
-    pdf_buf_tr = generate_transfer_pdf(serial_tr, to_owner, device_type_tr)
-    st.success("✅ Transfer Draft PDF generated. Please download, sign, and re-upload.")
-    st.download_button(
-        "⬇️ Download Transfer Draft PDF",
-        data=pdf_buf_tr,
-        file_name=f"{serial_tr.strip()}_transfer_draft.pdf",
-        mime="application/pdf"
-    )
 # =============================================================================
-# EMPLOYEE REGISTER TAB
+# REGISTER DEVICE TAB
 # =============================================================================
-def employee_register_tab():
-    st.subheader("🧑‍💼 Register New Employee")
+def register_device_tab():
+    st.subheader("📋 Register New Device")
 
-    # --- Form for inputs ---
-    with st.form("employee_register", clear_on_submit=True):
-        col1, col2 = st.columns(2)
-        with col1:
-            name = st.text_input("Employee Name *")
-        with col2:
-            department = st.text_input("Department *")
+    with st.form("register_form"):
+        serial = st.text_input("Serial Number *")
+        assigned_to = st.text_input("Assigned to", "Unassigned (Stock)")
+        device_type = st.text_input("Device Type *")
+        brand = st.text_input("Brand")
+        model = st.text_input("Model")
 
-        location = st.text_input("Location")
-        email = st.text_input("Email")
-        phone = st.text_input("Phone")
+        submit_reg = st.form_submit_button("Submit for Approval")
 
-        submitted = st.form_submit_button("Register Employee", type="primary")
-
-    # --- Handle submission ---
-    if submitted:
-        if not name.strip() or not department.strip():
-            st.error("Name and Department are required.")
-            return
-
-        now_str = datetime.now().strftime(DATE_FMT)
-        actor = st.session_state.get("username", "")
-
-        new_row = {
-            "Name": name.strip(),
-            "Department": department.strip(),
-            "Location": location.strip(),
-            "Email": email.strip(),
-            "Phone": phone.strip(),
-            "Registered by": actor,
-            "Registered at": now_str
+    if submit_reg:
+        draft_data = {
+            "Text Field0": serial,
+            "Text Field1": assigned_to,
+            "Text Field2": device_type,
+            "Text Field3": brand,
+            "Text Field4": model,
+            "Text Field10": datetime.now().strftime("%Y-%m-%d"),
         }
+        pdf_buf = generate_filled_pdf("forms/Register and Transfer Device.pdf", draft_data)
 
-        append_to_worksheet(EMPLOYEE_WS, pd.DataFrame([new_row]))
-        st.success(f"✅ Employee '{name.strip()}' registered successfully.")
+        st.success("✅ Draft PDF generated. Please download, sign, and re-upload.")
+        st.download_button(
+            "⬇️ Download Register Draft PDF",
+            data=pdf_buf,
+            file_name=f"{serial.strip()}_register_draft.pdf",
+            mime="application/pdf"
+        )
+
 
 # =============================================================================
-# APPROVALS (Admin)
+# TRANSFER DEVICE TAB
 # =============================================================================
-# =============================================================================
-# APPROVALS (Admin)
-# =============================================================================
+def transfer_tab():
+    st.subheader("🔄 Transfer Device")
+
+    with st.form("transfer_form"):
+        serial_tr = st.text_input("Serial Number")
+        to_owner = st.text_input("Transfer to")
+        device_type_tr = st.text_input("Device Type")
+
+        submit_tr = st.form_submit_button("Submit Transfer")
+
+    if submit_tr:
+        draft_data = {
+            "Text Field0": serial_tr,
+            "Text Field2": device_type_tr,
+            "Text Field8": to_owner,
+            "Text Field10": datetime.now().strftime("%Y-%m-%d"),
+        }
+        pdf_buf_tr = generate_filled_pdf("forms/Register and Transfer Device.pdf", draft_data)
+
+        st.success("✅ Transfer Draft PDF generated. Please download, sign, and re-upload.")
+        st.download_button(
+            "⬇️ Download Transfer Draft PDF",
+            data=pdf_buf_tr,
+            file_name=f"{serial_tr.strip()}_transfer_draft.pdf",
+            mime="application/pdf"
+        )
+
+
 # =============================================================================
 # APPROVALS (Admin)
 # =============================================================================
@@ -1086,7 +1026,7 @@ def approvals_tab():
                     st.json(info)
 
                     pdf_bytes = _fetch_public_pdf_bytes(
-                        row.get("Approval File ID", ""), 
+                        row.get("Approval File ID", ""),
                         row.get("Approval PDF", "")
                     )
                     if pdf_bytes:
@@ -1126,7 +1066,7 @@ def approvals_tab():
                     st.json(info)
 
                     pdf_bytes = _fetch_public_pdf_bytes(
-                        row.get("Approval File ID", ""), 
+                        row.get("Approval File ID", ""),
                         row.get("Approval PDF", "")
                     )
                     if pdf_bytes:
@@ -1150,6 +1090,7 @@ def approvals_tab():
                         _approve_transfer_row(row)
                     if r_col.button("Reject", key=f"reject_tr_{i}"):
                         _reject_row(PENDING_TRANSFER_WS, i, row)
+
 
 
 
