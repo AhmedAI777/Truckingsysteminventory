@@ -1051,43 +1051,43 @@ def transfer_tab():
     use_container_width=True
 )
 
-            st.caption(\"Download, print & sign this form. Then scan & upload as the signed Transfer PDF below.\")
+            st.caption("Download, print & sign this form. Then scan & upload as the signed Transfer PDF below.")
         except Exception as e:
-            st.warning(f\"Could not generate draft transfer PDF: {e}\")
+            st.warning(f"Could not generate draft transfer PDF: {e}")
 
     # --- Submission ---
     if do_transfer:
         if pdf_file is None:
-            st.error(\"You must upload the signed transfer PDF.\")
+            st.error("You must upload the signed transfer PDF.")
             return
 
-        project_code = project_code_from(\"HO\")
-        city_code = city_code_from(\"RUH\")
-        order_number = get_next_order_number(\"TRF\")
-        today_str = datetime.now().strftime(\"%Y%m%d\")
-        prefix = f\"{project_code}-{city_code}-TRF-{normalize_serial(chosen_serial)}-{order_number}-{today_str}\"
-        pending_folder = ensure_folder_tree(project_code, city_code, \"TRF\", \"Pending\")
+        project_code = project_code_from("HO")
+        city_code = city_code_from("RUH")
+        order_number = get_next_order_number("TRF")
+        today_str = datetime.now().strftime("%Y%m%d")
+        prefix = f"{project_code}-{city_code}-TRF-{normalize_serial(chosen_serial)}-{order_number}-{today_str}"
+        pending_folder = ensure_folder_tree(project_code, city_code, "TRF", "Pending")
 
         link, fid = upload_pdf_and_link(pdf_file, prefix=prefix, parent_folder_id=pending_folder)
         if not fid:
             return
 
         now_str = datetime.now().strftime(DATE_FMT)
-        actor = st.session_state.get(\"username\", \"\")
+        actor = st.session_state.get("username", "")
         pend = {
-            \"Serial Number\": chosen_serial,
-            \"From owner\": inventory_df[inventory_df[\"Serial Number\"] == chosen_serial][\"Current user\"].values[0],
-            \"To owner\": new_owner.strip(),
-            \"Approval Status\": \"Pending\",
-            \"Approval PDF\": link,
-            \"Approval File ID\": fid,
-            \"Submitted by\": actor,
-            \"Submitted at\": now_str,
-            \"Approver\": \"\",
-            \"Decision at\": \"\",
+            "Serial Number": chosen_serial,
+            "From owner": inventory_df[inventory_df["Serial Number"] == chosen_serial]["Current user"].values[0],
+            "To owner": new_owner.strip(),
+            "Approval Status": "Pending",
+            "Approval PDF": link,
+            "Approval File ID": fid,
+            "Submitted by": actor,
+            "Submitted at": now_str,
+            "Approver": "",
+            "Decision at": "",
         }
         append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pend]))
-        st.success(\"🕒 Transfer submitted for admin approval.\")
+        st.success("🕒 Transfer submitted for admin approval.")
 
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee (mainlists)")
