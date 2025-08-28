@@ -18,6 +18,7 @@ streamlit_pdf_viewer
 reportlab==4.2.2
 streamlit-drawable-canvas==0.9.3
 PyPDF2
+reportlab
 
 
 
