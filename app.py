@@ -974,10 +974,10 @@ if serial.strip() and device.strip():
             )
 
     # --- Handle submission ---
-    if submitted:
-        if not serial.strip() or not device.strip():
-            st.error("Serial Number and Device Type are required.")
-            return
+        if submitted:
+            if not serial.strip() or not device.strip():
+                st.error("Serial Number and Device Type are required.")
+                return
 
         if pdf_file is None:
             st.error("You must upload the signed PDF form.")
