@@ -881,6 +881,9 @@ def history_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
+# =============================================================================
+# REGISTER DEVICE TAB
+# =============================================================================
 def register_device_tab():
     st.subheader("📝 Register New Device")
 
@@ -911,14 +914,12 @@ def register_device_tab():
 
         brand = st.text_input("Brand")
         model = st.text_input("Model")
-
         pdf_file = st.file_uploader("Upload signed Approval PDF", type=["pdf"], key="reg_signed_pdf")
 
-        # --- Generate draft PDF ---
+        # --- Draft PDF ---
         if serial.strip() and device.strip():
             from io import BytesIO
             from PyPDF2 import PdfReader, PdfWriter
-
             draft_data = {
                 "SerialNumber": serial.strip(),
                 "DeviceType": device.strip(),
@@ -933,11 +934,9 @@ def register_device_tab():
                 page = reader.pages[0]
                 writer.add_page(page)
                 writer.update_page_form_field_values(writer.pages[0], draft_data)
-
                 buf = BytesIO()
                 writer.write(buf)
                 buf.seek(0)
-
                 st.download_button(
                     "⬇️ Download Draft PDF",
                     data=buf,
@@ -949,64 +948,8 @@ def register_device_tab():
             except Exception as e:
                 st.warning(f"Could not generate draft PDF: {e}")
 
-        # ✅ Submit button is required
         submitted = st.form_submit_button("Submit for Approval", type="primary")
 
-    # --- Handle submission ---
-    if submitted:
-        if not serial.strip() or not device.strip():
-            st.error("Serial Number and Device Type are required.")
-            return
-        if pdf_file is None:
-            st.error("Signed PDF is required.")
-            return
-
-        s_norm = normalize_serial(serial)
-        inv = read_worksheet(INVENTORY_WS)
-        if not inv.empty and s_norm in set(inv["Serial Number"].astype(str).map(normalize_serial)):
-            st.error("Duplicate serial number already exists.")
-            return
-
-        now_str = datetime.now().strftime(DATE_FMT)
-        actor = st.session_state.get("username", "")
-
-        base_row = {
-            "Serial Number": serial.strip(),
-            "Device Type": device.strip(),
-            "Brand": brand.strip(),
-            "Model": model.strip(),
-            "Current user": assigned_to.strip(),
-            "Previous User": "",
-            "TO": assigned_to.strip() if assigned_to != UNASSIGNED_LABEL else "",
-            "Date issued": now_str,
-            "Registered by": actor,
-        }
-
-        project_code = project_code_from("HO")
-        city_code = city_code_from("RUH")
-        order_number = get_next_order_number("REG")
-        today_str = datetime.now().strftime("%Y%m%d")
-        prefix = f"{project_code}-{city_code}-REG-{s_norm}-{order_number}-{today_str}"
-
-        pending_folder = ensure_folder_tree(project_code, city_code, "REG", "Pending")
-        link, fid = upload_pdf_and_link(pdf_file, prefix=prefix, parent_folder_id=pending_folder)
-        if not fid:
-            st.error("Failed to upload signed PDF.")
-            return
-
-        pending = {**base_row,
-                   "Approval Status": "Pending",
-                   "Approval PDF": link,
-                   "Approval File ID": fid,
-                   "Submitted by": actor,
-                   "Submitted at": now_str,
-                   "Approver": "",
-                   "Decision at": ""}
-
-        append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-        st.success("✅ Signed device registration submitted for admin approval.")
-        
-    # --- Handle submission ---
     if submitted:
         if not serial.strip() or not device.strip():
             st.error("Serial Number and Device Type are required.")
@@ -1060,154 +1003,147 @@ def register_device_tab():
         append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
         st.success("✅ Signed device registration submitted for admin approval.")
 
+
+# =============================================================================
+# TRANSFER DEVICE TAB
+# =============================================================================
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
 
-    inventory_df = read_worksheet(INVENTORY_WS)
-    if inventory_df.empty:
-        st.warning("Inventory is empty.")
+    inv = read_worksheet(INVENTORY_WS)
+    if inv.empty:
+        st.info("No devices found in inventory.")
         return
 
-    serial_list = sorted(inventory_df["Serial Number"].dropna().astype(str).unique().tolist())
-    serial = st.selectbox("Serial Number", ["— Select —"] + serial_list)
-    chosen_serial = None if serial == "— Select —" else serial
+    emp_df = read_worksheet(EMPLOYEE_WS)
+    emp_names = sorted({
+        *unique_nonempty(emp_df, "New Employeer"),
+        *unique_nonempty(emp_df, "Name"),
+    })
 
-    new_owner = st.text_input("New Owner *")
-    pdf_file = st.file_uploader("Upload signed Transfer PDF", type=["pdf"], key="transfer_signed_pdf")
-    do_transfer = st.button("Submit Transfer", type="primary", disabled=not (chosen_serial and new_owner.strip()))
+    with st.form("transfer_device", clear_on_submit=True):
+        chosen_serial = st.selectbox("Serial Number", sorted(inv["Serial Number"].astype(str).unique()))
+        to_choice = st.selectbox("Transfer to", emp_names + ["Type a new name…"])
+        if to_choice == "Type a new name…":
+            to_owner = st.text_input("New Owner Name")
+        else:
+            to_owner = to_choice
+        pdf_file = st.file_uploader("Upload signed Transfer Approval PDF", type=["pdf"], key="transfer_signed_pdf")
 
-    # --- Draft PDF ---
-    if chosen_serial and new_owner.strip():
-        from io import BytesIO
-        from PyPDF2 import PdfReader, PdfWriter
+        # --- Draft PDF ---
+        if chosen_serial.strip():
+            from io import BytesIO
+            from PyPDF2 import PdfReader, PdfWriter
+            draft_data = {"SerialNumber": chosen_serial.strip(), "ToOwner": to_owner.strip()}
+            try:
+                template_path = "forms/Register and Transfer Device.pdf"
+                reader = PdfReader(template_path)
+                writer = PdfWriter()
+                page = reader.pages[0]
+                writer.add_page(page)
+                writer.update_page_form_field_values(writer.pages[0], draft_data)
+                buf = BytesIO()
+                writer.write(buf)
+                buf.seek(0)
+                st.download_button(
+                    "⬇️ Download Transfer Draft PDF",
+                    data=buf,
+                    file_name=f"{chosen_serial.strip()}_transfer_draft.pdf",
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+                st.caption("Download, print & sign before uploading the signed version below.")
+            except Exception as e:
+                st.warning(f"Could not generate draft PDF: {e}")
 
-        draft_data = {
-            "SerialNumber": chosen_serial.strip(),
-            "FromOwner": inventory_df[inventory_df["Serial Number"] == chosen_serial]["Current user"].values[0],
-            "ToOwner": new_owner.strip(),
-        }
-        try:
-            template_path = "forms/Register and Transfer Device.pdf"
-            reader = PdfReader(template_path)
-            writer = PdfWriter()
-            page = reader.pages[0]
-            writer.add_page(page)
-            writer.update_page_form_field_values(writer.pages[0], draft_data)
+        submitted = st.form_submit_button("Submit Transfer", type="primary")
 
-            buf = BytesIO()
-            writer.write(buf)
-            buf.seek(0)
-
-            st.download_button(
-    "⬇️ Download Transfer Draft PDF",
-    data=buf,
-    file_name=f"{chosen_serial.strip()}_transfer_draft.pdf",
-    mime="application/pdf",
-    use_container_width=True
-)
-
-            st.caption("Download, print & sign this form. Then scan & upload as the signed Transfer PDF below.")
-        except Exception as e:
-            st.warning(f"Could not generate draft transfer PDF: {e}")
-
-    # --- Submission ---
-    if do_transfer:
-        if pdf_file is None:
-            st.error("You must upload the signed transfer PDF.")
+    if submitted:
+        if not chosen_serial.strip():
+            st.error("Serial number required.")
             return
+        if not to_owner.strip():
+            st.error("New owner required.")
+            return
+        if pdf_file is None:
+            st.error("Signed transfer PDF required.")
+            return
+
+        now_str = datetime.now().strftime(DATE_FMT)
+        actor = st.session_state.get("username", "")
+
+        base_row = {
+            "Serial Number": chosen_serial.strip(),
+            "From owner": str(inv.loc[inv["Serial Number"].astype(str) == chosen_serial, "Current user"].values[0]),
+            "To owner": to_owner.strip(),
+            "Date issued": now_str,
+            "Submitted by": actor,
+            "Registered by": "",
+        }
 
         project_code = project_code_from("HO")
         city_code = city_code_from("RUH")
         order_number = get_next_order_number("TRF")
         today_str = datetime.now().strftime("%Y%m%d")
-        prefix = f"{project_code}-{city_code}-TRF-{normalize_serial(chosen_serial)}-{order_number}-{today_str}"
-        pending_folder = ensure_folder_tree(project_code, city_code, "TRF", "Pending")
+        prefix = f"{project_code}-{city_code}-TRF-{chosen_serial.strip()}-{order_number}-{today_str}"
 
+        pending_folder = ensure_folder_tree(project_code, city_code, "TRF", "Pending")
         link, fid = upload_pdf_and_link(pdf_file, prefix=prefix, parent_folder_id=pending_folder)
         if not fid:
+            st.error("Failed to upload signed PDF.")
+            return
+
+        pending = {**base_row,
+                   "Approval Status": "Pending",
+                   "Approval PDF": link,
+                   "Approval File ID": fid,
+                   "Submitted at": now_str,
+                   "Approver": "",
+                   "Decision at": ""}
+
+        append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
+        st.success("✅ Transfer submitted for admin approval.")
+
+# =============================================================================
+# EMPLOYEE REGISTER TAB
+# =============================================================================
+def employee_register_tab():
+    st.subheader("🧑‍💼 Register New Employee")
+
+    with st.form("employee_register", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            name = st.text_input("Employee Name *")
+        with col2:
+            department = st.text_input("Department *")
+
+        location = st.text_input("Location")
+        email = st.text_input("Email")
+        phone = st.text_input("Phone")
+
+        # ✅ Submit button is required in forms
+        submitted = st.form_submit_button("Register Employee", type="primary")
+
+    if submitted:
+        if not name.strip() or not department.strip():
+            st.error("Name and Department are required.")
             return
 
         now_str = datetime.now().strftime(DATE_FMT)
         actor = st.session_state.get("username", "")
-        pend = {
-            "Serial Number": chosen_serial,
-            "From owner": inventory_df[inventory_df["Serial Number"] == chosen_serial]["Current user"].values[0],
-            "To owner": new_owner.strip(),
-            "Approval Status": "Pending",
-            "Approval PDF": link,
-            "Approval File ID": fid,
-            "Submitted by": actor,
-            "Submitted at": now_str,
-            "Approver": "",
-            "Decision at": "",
-        }
-        append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pend]))
-        st.success("🕒 Transfer submitted for admin approval.")
 
-def employee_register_tab():
-    st.subheader("🧑‍💼 Register New Employee (mainlists)")
-    emp_df = read_worksheet(EMPLOYEE_WS)
-    try:
-        ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
-        next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
-    except Exception:
-        next_id_suggestion = str(len(emp_df) + 1)
-
-    dept_existing = unique_nonempty(emp_df, "Department")
-    pos_existing = unique_nonempty(emp_df, "Position")
-    proj_existing = unique_nonempty(emp_df, "Project")
-    loc_existing = unique_nonempty(emp_df, "Location (KSA)")
-    ksa_cities = ["Riyadh","Jeddah","Dammam","Khobar","Dhahran","Jubail","Mecca","Medina","Abha","Tabuk","Hail","Buraidah"]
-
-    with st.form("register_employee", clear_on_submit=True):
-        r1c1, r1c2, r1c3 = st.columns(3)
-        with r1c1: emp_name = st.text_input("New Employeer *")
-        with r1c2: emp_id = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
-        with r1c3: new_sig = st.selectbox("New Signature", ["— Select —", "Yes", "No", "Requested"])
-
-        r2c1, r2c2 = st.columns(2)
-        with r2c1: Email = st.text_input("Email")
-        with r2c2: active = st.selectbox("Active", ["Active", "Inactive", "Onboarding", "Resigned"])
-
-        r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1: position = select_with_other("Position", ["Engineer","Technician","Manager","Coordinator"], pos_existing)
-        with r3c2: department = select_with_other("Department", ["IT","HR","Finance","Operations","Procurement"], dept_existing)
-        with r3c3: location_ksa = select_with_other("Location (KSA)", ksa_cities, loc_existing)
-
-        r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1: project = select_with_other("Project", ["Head Office", "Site"], proj_existing)
-        with r4c2: teams = st.selectbox("Microsoft Teams", ["— Select —", "Yes", "No", "Requested"])
-        with r4c3: mobile = st.text_input("Mobile Number")
-
-        submitted = st.form_submit_button("Save Employee", type="primary")
-
-    if submitted:
-        if not emp_name.strip():
-            st.error("New Employeer is required.")
-            return
-        if emp_id.strip() and not emp_df.empty and emp_id.strip() in emp_df["Employee ID"].astype(str).values:
-            st.error(f"Employee ID '{emp_id}' already exists.")
-            return
-
-        row = {
-            "New Employeer": emp_name.strip(),
-            "Name": emp_name.strip(),
-            "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
-            "New Signature": new_sig if new_sig != "— Select —" else "",
-            "Email": Email.strip(),
-            "Active": active.strip(),
-            "Position": position.strip(),
+        new_row = {
+            "Name": name.strip(),
             "Department": department.strip(),
-            "Location (KSA)": location_ksa.strip(),
-            "Project": project.strip(),
-            "Microsoft Teams": teams if teams != "— Select —" else "",
-            "Mobile Number": mobile.strip(),
+            "Location": location.strip(),
+            "Email": email.strip(),
+            "Phone": phone.strip(),
+            "Registered by": actor,
+            "Registered at": now_str
         }
 
-        new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True) if not emp_df.empty else pd.DataFrame([row])
-        new_df = reorder_columns(new_df, EMPLOYEE_CANON_COLS)
-        write_worksheet(EMPLOYEE_WS, new_df)
-        st.success("✅ Employee saved to 'mainlists'.")
+        append_to_worksheet(EMPLOYEE_WS, pd.DataFrame([new_row]))
+        st.success(f"✅ Employee '{name.strip()}' registered successfully.")
 
 
 # =============================================================================
