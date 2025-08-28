@@ -893,6 +893,7 @@ def register_device_tab():
         *unique_nonempty(emp_df, "Name"),
     })
 
+    # --- Form for inputs ---
     with st.form("register_device", clear_on_submit=True):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1:
@@ -900,8 +901,7 @@ def register_device_tab():
         with r1c2:
             assigned_choice = st.selectbox(
                 "Assigned to",
-                [UNASSIGNED_LABEL] + emp_names + ["Type a new name…"],
-                help="Choose 'Unassigned (Stock)' if the device has no owner yet."
+                [UNASSIGNED_LABEL] + emp_names + ["Type a new name…"]
             )
             if assigned_choice == "Type a new name…":
                 assigned_to = st.text_input("Name")
@@ -916,40 +916,44 @@ def register_device_tab():
         model = st.text_input("Model")
         pdf_file = st.file_uploader("Upload signed Approval PDF", type=["pdf"], key="reg_signed_pdf")
 
-        # --- Draft PDF ---
-        if serial.strip() and device.strip():
-            from io import BytesIO
-            from PyPDF2 import PdfReader, PdfWriter
-            draft_data = {
-                "SerialNumber": serial.strip(),
-                "DeviceType": device.strip(),
-                "Brand": brand.strip(),
-                "Model": model.strip(),
-                "AssignedTo": assigned_to.strip(),
-            }
-            try:
-                template_path = "forms/Register and Transfer Device.pdf"
-                reader = PdfReader(template_path)
-                writer = PdfWriter()
-                page = reader.pages[0]
-                writer.add_page(page)
-                writer.update_page_form_field_values(writer.pages[0], draft_data)
-                buf = BytesIO()
-                writer.write(buf)
-                buf.seek(0)
-                st.download_button(
-                    "⬇️ Download Draft PDF",
-                    data=buf,
-                    file_name=f"{serial.strip()}_draft.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-                st.caption("Download, print & sign before uploading the signed version below.")
-            except Exception as e:
-                st.warning(f"Could not generate draft PDF: {e}")
-
         submitted = st.form_submit_button("Submit for Approval", type="primary")
 
+    # --- Draft PDF (outside the form) ---
+    if serial.strip() and device.strip():
+        from io import BytesIO
+        from PyPDF2 import PdfReader, PdfWriter
+
+        draft_data = {
+            "SerialNumber": serial.strip(),
+            "DeviceType": device.strip(),
+            "Brand": brand.strip(),
+            "Model": model.strip(),
+            "AssignedTo": assigned_to.strip(),
+        }
+        try:
+            template_path = "forms/Register and Transfer Device.pdf"
+            reader = PdfReader(template_path)
+            writer = PdfWriter()
+            page = reader.pages[0]
+            writer.add_page(page)
+            writer.update_page_form_field_values(writer.pages[0], draft_data)
+
+            buf = BytesIO()
+            writer.write(buf)
+            buf.seek(0)
+
+            st.download_button(
+                "⬇️ Download Draft PDF",
+                data=buf,
+                file_name=f"{serial.strip()}_draft.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+            st.caption("Download, print & sign before uploading the signed version above.")
+        except Exception as e:
+            st.warning(f"Could not generate draft PDF: {e}")
+
+    # --- Handle submit ---
     if submitted:
         if not serial.strip() or not device.strip():
             st.error("Serial Number and Device Type are required.")
@@ -1021,6 +1025,7 @@ def transfer_tab():
         *unique_nonempty(emp_df, "Name"),
     })
 
+    # --- Form for inputs ---
     with st.form("transfer_device", clear_on_submit=True):
         chosen_serial = st.selectbox("Serial Number", sorted(inv["Serial Number"].astype(str).unique()))
         to_choice = st.selectbox("Transfer to", emp_names + ["Type a new name…"])
@@ -1030,34 +1035,38 @@ def transfer_tab():
             to_owner = to_choice
         pdf_file = st.file_uploader("Upload signed Transfer Approval PDF", type=["pdf"], key="transfer_signed_pdf")
 
-        # --- Draft PDF ---
-        if chosen_serial.strip():
-            from io import BytesIO
-            from PyPDF2 import PdfReader, PdfWriter
-            draft_data = {"SerialNumber": chosen_serial.strip(), "ToOwner": to_owner.strip()}
-            try:
-                template_path = "forms/Register and Transfer Device.pdf"
-                reader = PdfReader(template_path)
-                writer = PdfWriter()
-                page = reader.pages[0]
-                writer.add_page(page)
-                writer.update_page_form_field_values(writer.pages[0], draft_data)
-                buf = BytesIO()
-                writer.write(buf)
-                buf.seek(0)
-                st.download_button(
-                    "⬇️ Download Transfer Draft PDF",
-                    data=buf,
-                    file_name=f"{chosen_serial.strip()}_transfer_draft.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-                st.caption("Download, print & sign before uploading the signed version below.")
-            except Exception as e:
-                st.warning(f"Could not generate draft PDF: {e}")
-
         submitted = st.form_submit_button("Submit Transfer", type="primary")
 
+    # --- Draft PDF (outside the form) ---
+    if chosen_serial.strip():
+        from io import BytesIO
+        from PyPDF2 import PdfReader, PdfWriter
+
+        draft_data = {"SerialNumber": chosen_serial.strip(), "ToOwner": to_owner.strip()}
+        try:
+            template_path = "forms/Register and Transfer Device.pdf"
+            reader = PdfReader(template_path)
+            writer = PdfWriter()
+            page = reader.pages[0]
+            writer.add_page(page)
+            writer.update_page_form_field_values(writer.pages[0], draft_data)
+
+            buf = BytesIO()
+            writer.write(buf)
+            buf.seek(0)
+
+            st.download_button(
+                "⬇️ Download Transfer Draft PDF",
+                data=buf,
+                file_name=f"{chosen_serial.strip()}_transfer_draft.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+            st.caption("Download, print & sign before uploading the signed version above.")
+        except Exception as e:
+            st.warning(f"Could not generate draft PDF: {e}")
+
+    # --- Handle submit ---
     if submitted:
         if not chosen_serial.strip():
             st.error("Serial number required.")
@@ -1110,6 +1119,7 @@ def transfer_tab():
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee")
 
+    # --- Form for inputs ---
     with st.form("employee_register", clear_on_submit=True):
         col1, col2 = st.columns(2)
         with col1:
@@ -1121,9 +1131,9 @@ def employee_register_tab():
         email = st.text_input("Email")
         phone = st.text_input("Phone")
 
-        # ✅ Submit button is required in forms
         submitted = st.form_submit_button("Register Employee", type="primary")
 
+    # --- Handle submission ---
     if submitted:
         if not name.strip() or not department.strip():
             st.error("Name and Department are required.")
@@ -1144,7 +1154,6 @@ def employee_register_tab():
 
         append_to_worksheet(EMPLOYEE_WS, pd.DataFrame([new_row]))
         st.success(f"✅ Employee '{name.strip()}' registered successfully.")
-
 
 # =============================================================================
 # APPROVALS (Admin)
