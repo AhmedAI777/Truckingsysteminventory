@@ -877,13 +877,36 @@ def generate_filled_pdf(template_path: str, draft_data: dict):
 # =============================================================================
 # VIEWS
 # =============================================================================
-def employees_view_tab():
-    st.subheader("📇 Employees (mainlists)")
-    df = read_worksheet(EMPLOYEE_WS)
-    if df.empty:
-        st.info("No employees found in 'mainlists'.")
-    else:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+def employee_register_tab():
+    st.subheader("👷 Employee Register")
+
+    with st.form("register_employee_form"):
+        name = st.text_input("Full Name")
+        emp_id = st.text_input("Employee ID")
+        position = st.text_input("Position")
+        department = st.text_input("Department")
+        location = st.text_input("Location (KSA)")
+        active = st.selectbox("Active", ["Yes", "No"])
+        mobile = st.text_input("Mobile Number")
+
+        submitted = st.form_submit_button("Register Employee")
+
+    if submitted:
+        df = read_worksheet(EMPLOYEE_WS)
+        new_row = {
+            "New Employeer": name,
+            "Employee ID": emp_id,
+            "Position": position,
+            "Department": department,
+            "Location (KSA)": location,
+            "Active": active,
+            "Mobile Number": mobile,
+        }
+        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        write_worksheet(EMPLOYEE_WS, df)
+        st.success("✅ Employee registered successfully!")
+
+
 
 def inventory_tab():
     st.subheader("📋 Inventory")
@@ -904,69 +927,36 @@ def history_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-import streamlit as st
-from io import BytesIO
-from PyPDF2 import PdfReader, PdfWriter
-from datetime import datetime
-import pandas as pd
-
-# =============================================================================
-# HELPER: Generate filled PDF (flattened)
-# =============================================================================
-def generate_filled_pdf(template_path: str, draft_data: dict):
-    reader = PdfReader(template_path)
-    writer = PdfWriter()
-    writer.add_page(reader.pages[0])
-    writer.update_page_form_field_values(writer.pages[0], draft_data)
-
-    # Flatten (make read-only)
-    for pg in writer.pages:
-        pg.compress_content_streams()
-    try:
-        writer.remove_annotations()
-    except Exception:
-        pass
-
-    buf = BytesIO()
-    writer.write(buf)
-    buf.seek(0)
-    return buf
-
 
 # =============================================================================
 # REGISTER DEVICE TAB
 # =============================================================================
 def register_device_tab():
-    st.subheader("📋 Register New Device")
+    st.subheader("🖊️ Register Device")
 
-    with st.form("register_form"):
-        serial = st.text_input("Serial Number *")
-        assigned_to = st.text_input("Assigned to", "Unassigned (Stock)")
-        device_type = st.text_input("Device Type *")
+    with st.form("register_device_form"):
+        serial = st.text_input("Serial Number")
+        device_type = st.text_input("Device Type")
         brand = st.text_input("Brand")
         model = st.text_input("Model")
+        owner = st.text_input("Current user", value="Unassigned (Stock)")
 
-        submit_reg = st.form_submit_button("Submit for Approval")
+        submitted = st.form_submit_button("Submit Device")
 
-    if submit_reg:
-        draft_data = {
-            "Text Field0": serial,
-            "Text Field1": assigned_to,
-            "Text Field2": device_type,
-            "Text Field3": brand,
-            "Text Field4": model,
-            "Text Field10": datetime.now().strftime("%Y-%m-%d"),
+    if submitted:
+        df = read_worksheet(INVENTORY_WS)
+        new_row = {
+            "Serial Number": serial,
+            "Device Type": device_type,
+            "Brand": brand,
+            "Model": model,
+            "Current user": owner,
+            "Date issued": datetime.now().strftime(DATE_FMT),
+            "Registered by": st.session_state.get("username", ""),
         }
-        pdf_buf = generate_filled_pdf("forms/Register and Transfer Device.pdf", draft_data)
-
-        st.success("✅ Draft PDF generated. Please download, sign, and re-upload.")
-        st.download_button(
-            "⬇️ Download Register Draft PDF",
-            data=pdf_buf,
-            file_name=f"{serial.strip()}_register_draft.pdf",
-            mime="application/pdf"
-        )
-
+        df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        write_worksheet(INVENTORY_WS, df)
+        st.success("✅ Device registered successfully.")
 
 # =============================================================================
 # TRANSFER DEVICE TAB
