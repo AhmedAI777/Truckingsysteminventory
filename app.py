@@ -431,7 +431,7 @@ def select_with_other(label: str, base_options: list[str], existing_values: list
 # =============================================================================
 # DEVICE CATALOG + EMPLOYEES
 # =============================================================================
-DEVICE_CATALOG_WS = st.secrets.get("sheets", {}).get("catalog_ws", "inventorytracking")
+DEVICE_CATALOG_WS = st.secrets.get("sheets", {}).get("catalog_ws", ""truckinventory")
 DEVICE_CATALOG_COLS = ["Serial Number","Device Type","Brand","Model","CPU","Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size"]
 
 @st.cache_data(ttl=120, show_spinner=False)
