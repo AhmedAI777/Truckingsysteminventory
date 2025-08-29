@@ -301,8 +301,8 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
     fname = f"{prefix}_{int(time.time())}.pdf"
     folder_id = st.secrets.get("drive", {}).get("approvals", "")
     metadata = {"name": fname}
-if folder_id:
-    metadata["parents"] = [folder_id]
+    if folder_id:
+        metadata["parents"] = [folder_id]
 
     media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
 
