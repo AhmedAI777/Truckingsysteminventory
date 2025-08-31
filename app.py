@@ -538,19 +538,26 @@ def fill_pdf_form(template_bytes: bytes, values: dict[str,str], *, flatten: bool
         except Exception: pass
     out = io.BytesIO(); writer.write(out); out.seek(0); return out.read()
 
-def _find_emp_row_by_name(emp_df: pd.DataFrame, name: str):
-    if emp_df is None or emp_df.empty or not name:
-        return None
-    cand = emp_df[
-        (emp_df.get("New Employeer", "").astype(str).str.strip() == name.strip()) |
-        (emp_df.get("Name", "").astype(str).str.strip() == name.strip())
-    ]
-    return cand.iloc[0] if not cand.empty else None
+# =========================
+# Helpers (put near others)
+# =========================
 
-# --- helpers (place near your other helpers, e.g., under _find_emp_row_by_name)
+def _find_emp_row_by_name(emp_df: pd.DataFrame, name: str) -> pd.Series | None:
+    """Return first matching employee row by New Employeer or Name."""
+    try:
+        if emp_df is None or emp_df.empty or not str(name).strip():
+            return None
+        name = str(name).strip()
+        cand = emp_df[
+            (emp_df.get("New Employeer", "").astype(str).str.strip() == name) |
+            (emp_df.get("Name", "").astype(str).str.strip() == name)
+        ]
+        return cand.iloc[0] if not cand.empty else None
+    except Exception:
+        return None
 
 def _get_emp_value(row: pd.Series, *aliases: str) -> str:
-    """Return first non-empty value among the given alias columns."""
+    """Return first non-empty value among alias columns."""
     if row is None:
         return ""
     for col in aliases:
@@ -570,15 +577,13 @@ def _owner_changed(emp_df: pd.DataFrame):
             st.session_state["reg_email"]    = _get_emp_value(r, "Email", "E-mail")
             st.session_state["reg_dept"]     = _get_emp_value(r, "Department", "Dept")
             st.session_state["reg_location"] = _get_emp_value(r, "Location (KSA)", "Location", "City")
-            # Office accepts Project/Site as alias
             st.session_state["reg_office"]   = _get_emp_value(r, "Office", "Project", "Site")
             return
-    # clear if unassigned or not found
     for k in keys:
         st.session_state[k] = ""
 
 def _download_template_bytes_or_public(file_id: str) -> bytes:
-    """Try SA download → OAuth (if configured) → public link."""
+    """Try SA → OAuth (if configured) → public GET."""
     # 1) Service Account
     try:
         data = _drive_download_bytes(file_id)
@@ -607,9 +612,9 @@ def build_registration_values(
     actor_name: str,
     emp_df: pd.DataFrame | None = None
 ) -> dict[str, str]:
+    """Build field map values for the registration PDF (TO kept blank)."""
     fm = _registration_field_map()
 
-    # defaults from the form row
     curr_owner    = str(device_row.get("Current user", "") or "").strip()
     is_unassigned = (not curr_owner) or (curr_owner == UNASSIGNED_LABEL)
 
@@ -619,7 +624,6 @@ def build_registration_values(
     from_dept     = str(device_row.get("Department","") or "")
     from_location = str(device_row.get("Location","") or "")
 
-    # enrich from Employees
     if not is_unassigned and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
         r = _find_emp_row_by_name(emp_df, curr_owner)
         if r is not None:
@@ -636,19 +640,29 @@ def build_registration_values(
         fm["from_date"]:       datetime.now().strftime("%Y-%m-%d"),
         fm["from_location"]:   from_location,
 
-        # TO stays blank for registration
         fm["to_name"]: "", fm["to_mobile"]: "", fm["to_email"]: "",
         fm["to_department"]: "", fm["to_date"]: "", fm["to_location"]: "",
     }
 
-    # Equipment block #1 (include Office text in specs)
+    # Specs (include Office; if empty, try Project/Site alias)
     specs = []
-    for label in ["CPU","Memory","GPU","Hard Drive 1","Hard Drive 2","Screen Size","Office","Notes"]:
-        v = str(device_row.get(label, "")).strip()
-        if not v and label == "Office" and not is_unassigned and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
-            r = _find_emp_row_by_name(emp_df, curr_owner)
-            if r is not None:
-                v = _get_emp_value(r, "Office", "Project", "Site")
+    office_val = str(device_row.get("Office", "")).strip()
+    if not office_val and not is_unassigned and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
+        r = _find_emp_row_by_name(emp_df, curr_owner)
+        if r is not None:
+            office_val = _get_emp_value(r, "Office", "Project", "Site")
+
+    for label, v in [
+        ("CPU", device_row.get("CPU","")),
+        ("Memory", device_row.get("Memory","")),
+        ("GPU", device_row.get("GPU","")),
+        ("Hard Drive 1", device_row.get("Hard Drive 1","")),
+        ("Hard Drive 2", device_row.get("Hard Drive 2","")),
+        ("Screen Size", device_row.get("Screen Size","")),
+        ("Office", office_val),
+        ("Notes", device_row.get("Notes","")),
+    ]:
+        v = str(v).strip()
         if v:
             specs.append(f"{label}: {v}")
     specs_txt = " | ".join(specs)
@@ -662,71 +676,6 @@ def build_registration_values(
     })
     return values
 
-
-    
-def _owner_changed(emp_df: pd.DataFrame):
-    """Auto-fill contact/email/department/location/office when owner changes."""
-    owner = st.session_state.get("current_owner", UNASSIGNED_LABEL)
-    if owner and owner != UNASSIGNED_LABEL and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
-        r = _find_emp_row_by_name(emp_df, owner)
-        if r is not None:
-            st.session_state["reg_contact"]  = _get_emp_value(r, "Mobile Number", "Phone", "Mobile")
-            st.session_state["reg_email"]    = _get_emp_value(r, "Email", "E-mail")
-            st.session_state["reg_dept"]     = _get_emp_value(r, "Department", "Dept")
-            st.session_state["reg_location"] = _get_emp_value(r, "Location (KSA)", "Location", "City")
-            # Office ← accepts Project as an alias
-            st.session_state["reg_office"]   = _get_emp_value(r, "Office", "Project", "Site")
-            return
-    # If unassigned / not found: clear
-    for key in ("reg_contact","reg_email","reg_dept","reg_location","reg_office"):
-        st.session_state[key] = ""
-
-def build_transfer_values(inv_row: pd.Series, new_owner: str, *, emp_df: pd.DataFrame) -> dict[str, str]:
-    fm = _registration_field_map()
-    values = {
-        fm["from_name"]:       str(inv_row.get("Current user", "")),
-        fm["from_mobile"]:     str(inv_row.get("Contact Number", "")),
-        fm["from_email"]:      str(inv_row.get("Email", "")),
-        fm["from_department"]: str(inv_row.get("Department", "")),
-        fm["from_date"]:       datetime.now().strftime("%Y-%m-%d"),
-        fm["from_location"]:   str(inv_row.get("Location", "")),
-    }
-    to_mobile = to_email = to_dept = to_loc = ""
-    try:
-        if not emp_df.empty:
-            cand = emp_df[
-                (emp_df.get("New Employeer", "").astype(str).str.strip() == new_owner.strip()) |
-                (emp_df.get("Name", "").astype(str).str.strip() == new_owner.strip())
-            ]
-            if not cand.empty:
-                r = cand.iloc[0]
-                to_mobile = str(r.get("Mobile Number", "") or "")
-                to_email  = str(r.get("Email", "") or "")
-                to_dept   = str(r.get("Department", "") or "")
-                to_loc    = str(r.get("Location (KSA)", "") or "")
-    except Exception:
-        pass
-    values.update({
-        fm["to_name"]:       new_owner.strip(),
-        fm["to_mobile"]:     to_mobile,
-        fm["to_email"]:      to_email,
-        fm["to_department"]: to_dept,
-        fm["to_date"]:       datetime.now().strftime("%Y-%m-%d"),
-        fm["to_location"]:   to_loc,
-    })
-    specs = []
-    for label in ["CPU","Memory","GPU","Hard Drive 1","Hard Drive 2","Screen Size","Office","Notes"]:
-        val = str(inv_row.get(label, "")).strip()
-        if val: specs.append(f"{label}: {val}")
-    specs_txt = " | ".join(specs)
-    values.update({
-        fm["eq_type"]:   str(inv_row.get("Device Type","")),
-        fm["eq_brand"]:  str(inv_row.get("Brand","")),
-        fm["eq_model"]:  str(inv_row.get("Model","")),
-        fm["eq_specs"]:  specs_txt,
-        fm["eq_serial"]: str(inv_row.get("Serial Number","")),
-    })
-    return values
 
 # =============================================================================
 # UI
@@ -757,6 +706,9 @@ def inventory_tab():
 
 # --- FULL register_device_tab (drop-in replacement)
 
+# =========================
+# Full register_device_tab
+# =========================
 def register_device_tab():
     st.subheader("📝 Register New Device")
 
@@ -768,7 +720,7 @@ def register_device_tab():
     st.session_state.setdefault("reg_office", "")
     st.session_state.setdefault("current_owner", UNASSIGNED_LABEL)
 
-    # Employees -> owner options
+    # Employees → owner options
     emp_df = read_worksheet(EMPLOYEE_WS)
     employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
     owner_options = [UNASSIGNED_LABEL] + employee_names
@@ -821,6 +773,20 @@ def register_device_tab():
         pdf_file = st.file_uploader("Drag & drop signed PDF here", type=["pdf"], key="reg_pdf")
         submitted = st.form_submit_button("Save Device", type="primary", use_container_width=True)
 
+    # ---- Optional preview of uploaded PDF (opt-in to avoid UI lag with large files)
+    preview_pdf = st.checkbox("Preview uploaded PDF (may be slow for large files)", value=False)
+    if preview_pdf and ss.get("reg_pdf"):
+        ss.reg_pdf_ref = ss.reg_pdf
+        try:
+            # Guard: don't try to render >8MB to keep UI snappy
+            if getattr(ss.reg_pdf_ref, "size", 0) and ss.reg_pdf_ref.size > 8 * 1024 * 1024:
+                st.info("PDF is large; preview disabled to avoid lag. You can still submit.")
+            else:
+                st.caption("Preview: Uploaded signed PDF")
+                pdf_viewer(input=ss.reg_pdf_ref.getvalue(), width=700, key="viewer_reg")
+        except Exception as e:
+            st.warning(f"Preview failed: {e}")
+
     # --- Generate pre-filled PDF (TO blank)
     if c_download:
         if not serial.strip() or not device.strip():
@@ -854,7 +820,6 @@ def register_device_tab():
                         f"Template not reachable. Share file ID {ICT_TEMPLATE_FILE_ID} with {sa_email}, "
                         "or enable public access / OAuth fallback."
                     )
-
                 reg_vals  = build_registration_values(row, actor_name=actor, emp_df=emp_df)
                 filled    = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
                 st.success("Registration form generated. Sign it and upload below, then click Save Device.")
@@ -866,89 +831,97 @@ def register_device_tab():
                 st.error("Could not generate the registration PDF.")
                 st.caption(str(e))
 
-    # Optional live preview
-if ss.get("reg_pdf"): ss.reg_pdf_ref = ss.reg_pdf
-if ss.reg_pdf_ref:
-    st.caption("Preview: Uploaded signed PDF")
-    try: pdf_viewer(input=ss.reg_pdf_ref.getvalue(), width=700, key="viewer_reg")
-    except Exception: pass
-
     # --- Save (PDF required for all roles)
-   if submitted:
-    # Basic validations
-    if not serial.strip() or not device.strip():
-        st.error("Serial Number and Device Type are required.")
-    elif pdf_file is None:
-        st.error("Signed ICT Registration PDF is required for submission.")
-    else:
+    if submitted:
+        if not serial.strip() or not device.strip():
+            st.error("Serial Number and Device Type are required.")
+            return
+        if pdf_file is None:
+            st.error("Signed ICT Registration PDF is required for submission.")
+            return
+
         s_norm = normalize_serial(serial)
         if not s_norm:
             st.error("Serial Number cannot be blank after normalization.")
-        else:
-            now_str = datetime.now().strftime(DATE_FMT)
-            actor   = st.session_state.get("username", "")
-            row = {
-                "Serial Number": serial.strip(),
-                "Device Type": device.strip(),
-                "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
-                "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
-                "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
-                "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-                "Previous User": "", "TO": "",
-                "Department": st.session_state.get("reg_dept","").strip(),
-                "Email Address": st.session_state.get("reg_email","").strip(),
-                "Contact Number": st.session_state.get("reg_contact","").strip(),
-                "Location": st.session_state.get("reg_location","").strip(),
-                "Office": st.session_state.get("reg_office","").strip(),
-                "Notes": notes.strip(),
-                "Date issued": now_str, "Registered by": actor,
-            }
+            return
 
-            is_admin = st.session_state.get("role") == "Admin"
+        now_str = datetime.now().strftime(DATE_FMT)
+        actor   = st.session_state.get("username", "")
+        row = {
+            "Serial Number": serial.strip(),
+            "Device Type": device.strip(),
+            "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
+            "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
+            "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
+            "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
+            "Previous User": "", "TO": "",
+            "Department": st.session_state.get("reg_dept","").strip(),
+            "Email Address": st.session_state.get("reg_email","").strip(),
+            "Contact Number": st.session_state.get("reg_contact","").strip(),
+            "Location": st.session_state.get("reg_location","").strip(),
+            "Office": st.session_state.get("reg_office","").strip(),
+            "Notes": notes.strip(),
+            "Date issued": now_str, "Registered by": actor,
+        }
 
-            with st.status("Uploading signed PDF…", expanded=True) as status:
-                try:
-                    status.write("Validating file...")
-                    # quick sanity: 200MB hard cap already by Streamlit, but we can add a soft cap
-                    if getattr(pdf_file, "size", 0) > 50 * 1024 * 1024:
-                        st.error("PDF is larger than 50MB; please compress before uploading.")
-                        status.update(label="Upload aborted", state="error")
-                    else:
-                        status.write("Sending to Google Drive…")
-                        link, fid = upload_pdf_and_link(pdf_file, prefix=f"device_{s_norm}")
-                        if not fid:
-                            status.update(label="Upload failed", state="error")
-                            st.error("Upload failed. Please check your Drive settings and try again.")
-                        else:
-                            status.write("Upload complete. Writing to Sheets…")
-                            if is_admin:
-                                inv = read_worksheet(INVENTORY_WS)
-                                inv_out = pd.concat(
-                                    [inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS), pd.DataFrame([row])],
-                                    ignore_index=True
-                                )
-                                inv_out = reorder_columns(inv_out, INVENTORY_COLS)
-                                write_worksheet(INVENTORY_WS, inv_out)
+        with st.status("Uploading signed PDF…", expanded=True) as status:
+            try:
+                status.write("Validating file...")
+                if getattr(pdf_file, "size", 0) > 50 * 1024 * 1024:
+                    st.error("PDF is larger than 50MB; please compress before uploading.")
+                    status.update(label="Upload aborted", state="error")
+                    return
 
-                                pending = {
-                                    **row, "Approval Status": "Approved", "Approval PDF": link, "Approval File ID": fid,
-                                    "Submitted by": actor, "Submitted at": now_str, "Approver": actor, "Decision at": now_str,
-                                }
-                                append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-                                status.update(label="Saved to Sheets", state="complete")
-                                st.success("✅ Device registered and added to Inventory. Signed PDF stored.")
-                            else:
-                                pending = {
-                                    **row, "Approval Status": "Pending", "Approval PDF": link, "Approval File ID": fid,
-                                    "Submitted by": actor, "Submitted at": now_str, "Approver": "", "Decision at": "",
-                                }
-                                append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-                                status.update(label="Submitted for approval", state="complete")
-                                st.success("🕒 Submitted for admin approval. You'll see it in Inventory once approved.")
-                except Exception as e:
-                    status.update(label="Error during upload/save", state="error")
-                    st.error("An error occurred while uploading or saving.")
-                    st.caption(str(e))
+                status.write("Sending to Google Drive…")
+                link, fid = upload_pdf_and_link(pdf_file, prefix=f"device_{s_norm}")
+                if not fid:
+                    status.update(label="Upload failed", state="error")
+                    st.error("Upload failed. Please check your Drive settings and try again.")
+                    return
+
+                status.write("Upload complete. Writing to Sheets…")
+                is_admin = st.session_state.get("role") == "Admin"
+                if is_admin:
+                    inv = read_worksheet(INVENTORY_WS)
+                    inv_out = pd.concat(
+                        [inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS), pd.DataFrame([row])],
+                        ignore_index=True
+                    )
+                    inv_out = reorder_columns(inv_out, INVENTORY_COLS)
+                    write_worksheet(INVENTORY_WS, inv_out)
+
+                    pending = {
+                        **row,
+                        "Approval Status": "Approved",
+                        "Approval PDF": link,
+                        "Approval File ID": fid,
+                        "Submitted by": actor,
+                        "Submitted at": now_str,
+                        "Approver": actor,
+                        "Decision at": now_str,
+                    }
+                    append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+                    status.update(label="Saved to Sheets", state="complete")
+                    st.success("✅ Device registered and added to Inventory. Signed PDF stored.")
+                else:
+                    pending = {
+                        **row,
+                        "Approval Status": "Pending",
+                        "Approval PDF": link,
+                        "Approval File ID": fid,
+                        "Submitted by": actor,
+                        "Submitted at": now_str,
+                        "Approver": "",
+                        "Decision at": "",
+                    }
+                    append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+                    status.update(label="Submitted for approval", state="complete")
+                    st.success("🕒 Submitted for admin approval. You'll see it in Inventory once approved.")
+            except Exception as e:
+                status.update(label="Error during upload/save", state="error")
+                st.error("An error occurred while uploading or saving.")
+                st.caption(str(e))
+
 
 
 
