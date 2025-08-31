@@ -887,7 +887,7 @@ def register_device_tab():
             st.error("Serial Number and Device Type are required.")
             return
             # Prefer the widget variable, fall back to session_state to be safe
-pdf_file_obj = pdf_file or ss.get("reg_pdf")
+ pdf_file_obj = pdf_file or ss.get("reg_pdf")
 if pdf_file_obj is None:
     st.error("Signed ICT Registration PDF is required for submission.")
     return
