@@ -680,6 +680,14 @@ def inventory_tab():
 
 def register_device_tab():
     st.subheader("📝 Register New Device")
+    st.session_state.setdefault("reg_email", "")
+    st.session_state.setdefault("reg_contact", "")
+    st.session_state.setdefault("reg_dept", "")
+    st.session_state.setdefault("reg_location", "")
+    st.session_state.setdefault("reg_office", "")
+    st.session_state.setdefault("current_owner", UNASSIGNED_LABEL)
+    st.session_state.setdefault("current_owner_prev", UNASSIGNED_LABEL)
+
 
     # Ensure session keys exist for auto-filled fields
     for k in ("reg_email","reg_contact","reg_dept","reg_location","reg_office","current_owner","current_owner_prev"):
@@ -709,20 +717,21 @@ def register_device_tab():
     )
 
     # If owner changed, auto-fill fields from Employees sheet
-    if st.session_state["current_owner"] != st.session_state.get("current_owner_prev"):
-        owner = st.session_state["current_owner"]
-        if owner and owner != UNASSIGNED_LABEL:
-            r = _find_emp_row_by_name(emp_df, owner)
-            if r is not None:
-                st.session_state["reg_contact"]  = str(r.get("Mobile Number", "") or "")
-                st.session_state["reg_email"]    = str(r.get("Email", "") or "")
-                st.session_state["reg_dept"]     = str(r.get("Department", "") or "")
-                st.session_state["reg_location"] = str(r.get("Location (KSA)", "") or "")
-                st.seesion_state["reg_office"] = str(r.get("Office","" or "")
-        else:
-            for key in ("reg_contact","reg_email","reg_dept","reg_location", "reg_office"):
-                st.session_state[key] = ""
-        st.session_state["current_owner_prev"] = st.session_state["current_owner"]
+    # --- after: owner = st.session_state["current_owner"]
+if st.session_state["current_owner"] != st.session_state.get("current_owner_prev"):
+    owner = st.session_state["current_owner"]
+    if owner and owner != UNASSIGNED_LABEL:
+        r = _find_emp_row_by_name(emp_df, owner)
+        if r is not None:
+            st.session_state["reg_contact"]  = str(r.get("Mobile Number", "") or "")
+            st.session_state["reg_email"]    = str(r.get("Email", "") or "")
+            st.session_state["reg_dept"]     = str(r.get("Department", "") or "")
+            st.session_state["reg_location"] = str(r.get("Location (KSA)", "") or "")
+            st.session_state["reg_office"]   = str(r.get("Office", "") or "")    # <-- fixed
+    else:
+        for key in ("reg_contact","reg_email","reg_dept","reg_location","reg_office"):
+            st.session_state[key] = ""
+    st.session_state["current_owner_prev"] = st.session_state["current_owner"]
 
     # --- UI form (kept so the two submit buttons work together)
     with st.form("register_device", clear_on_submit=False):
@@ -749,7 +758,7 @@ def register_device_tab():
         r5c1, r5c2, r5c3 = st.columns(3)
         with r5c1: dept     = st.text_input("Department", key="reg_dept")
         with r5c2: location = st.text_input("Location", key="reg_location")
-        with r6c1: st.text_input("Office", key="reg_Office")
+        with r5c3: office = st.text_input("Office", key="reg_office")
 
         notes = st.text_area("Notes", height=80)
 
