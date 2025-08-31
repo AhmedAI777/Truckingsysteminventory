@@ -1052,6 +1052,46 @@ def approvals_tab():
                     st.markdown(f"[View PDF]({row['Approval PDF']})")
                 c1, c2 = st
 
+def export_tab():
+    st.subheader("⬇️ Export Data")
+
+    sheets = {
+        "Inventory": INVENTORY_WS,
+        "Employees": EMPLOYEE_WS,
+        "Transfer Log": TRANSFERLOG_WS,
+        "Pending Device Registrations": PENDING_DEVICE_WS,
+        "Pending Transfers": PENDING_TRANSFER_WS,
+    }
+
+    choice = st.selectbox("Select sheet to export", list(sheets.keys()))
+
+    if choice:
+        df = read_worksheet(sheets[choice])
+        if df.empty:
+            st.info("No data available to export.")
+            return
+
+        # CSV Export
+        csv = df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label=f"📥 Download {choice} as CSV",
+            data=csv,
+            file_name=f"{choice.replace(' ', '_').lower()}_{datetime.now().strftime('%Y%m%d')}.csv",
+            mime="text/csv",
+        )
+
+        # Excel Export
+        excel_buf = io.BytesIO()
+        with pd.ExcelWriter(excel_buf, engine="xlsxwriter") as writer:
+            df.to_excel(writer, sheet_name=choice[:30], index=False)
+        st.download_button(
+            label=f"📥 Download {choice} as Excel",
+            data=excel_buf.getvalue(),
+            file_name=f"{choice.replace(' ', '_').lower()}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+
 def _approve_device_row(row: pd.Series):
     """Admin approves a device registration → add to Inventory + move PDF → Approved/Register."""
     inv = read_worksheet(INVENTORY_WS)
