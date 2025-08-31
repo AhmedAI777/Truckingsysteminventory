@@ -716,7 +716,7 @@ st.session_state.setdefault("current_owner_prev", UNASSIGNED_LABEL)
                 st.session_state["reg_location"] = str(r.get("Location (KSA)", "") or "")
                 st.seesion_state["reg_Office"] = str(r.get("Office","" or "")
         else:
-            for key in ("reg_contact","reg_email","reg_dept","reg_location", reg_Office):
+            for key in ("reg_contact","reg_email","reg_dept","reg_location", "reg_Office"):
                 st.session_state[key] = ""
         st.session_state["current_owner_prev"] = st.session_state["current_owner"]
 
@@ -745,7 +745,7 @@ st.session_state.setdefault("current_owner_prev", UNASSIGNED_LABEL)
         r5c1, r5c2, r5c3 = st.columns(3)
         with r5c1: dept     = st.text_input("Department", key="reg_dept")
         with r5c2: location = st.text_input("Location", key="reg_location")
-        with r5c3: office   = st.text_input("Office")
+        with r6c1: st.text_input("Office", key="reg_Office")
 
         notes = st.text_area("Notes", height=80)
 
@@ -777,7 +777,7 @@ st.session_state.setdefault("current_owner_prev", UNASSIGNED_LABEL)
                 "Email Address": st.session_state.get("reg_email","").strip(),
                 "Contact Number": st.session_state.get("reg_contact","").strip(),
                 "Location": st.session_state.get("reg_location","").strip(),
-                "Office": office.strip(), "Notes": notes.strip(),
+                "Office": st.session_state.get("reg_Office","").strip(),
                 "Date issued": now_str, "Registered by": actor,
             }
             try:
