@@ -547,6 +547,17 @@ def _find_emp_row_by_name(emp_df: pd.DataFrame, name: str):
     ]
     return cand.iloc[0] if not cand.empty else None
 
+def _get_emp_value(row: pd.Series, *aliases: str) -> str:
+    """Return the first non-empty value from the given alias columns."""
+    if row is None:
+        return ""
+    for col in aliases:
+        v = row.get(col, "")
+        if str(v).strip():
+            return str(v)
+    return ""
+
+
 def build_registration_values(
     device_row: dict,
     *,
@@ -607,24 +618,19 @@ def build_registration_values(
 def _owner_changed(emp_df: pd.DataFrame):
     """Auto-fill contact/email/department/location/office when owner changes."""
     owner = st.session_state.get("current_owner", UNASSIGNED_LABEL)
-    targets = [
-        ("reg_contact",  "Mobile Number"),
-        ("reg_email",    "Email"),
-        ("reg_dept",     "Department"),
-        ("reg_location", "Location (KSA)"),
-        ("reg_office",   "Office"),
-    ]
     if owner and owner != UNASSIGNED_LABEL and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
         r = _find_emp_row_by_name(emp_df, owner)
         if r is not None:
-            for key, col in targets:
-                st.session_state[key] = str(r.get(col, "") or "")
-        else:
-            for key, _ in targets:
-                st.session_state[key] = ""
-    else:
-        for key, _ in targets:
-            st.session_state[key] = ""
+            st.session_state["reg_contact"]  = _get_emp_value(r, "Mobile Number", "Phone", "Mobile")
+            st.session_state["reg_email"]    = _get_emp_value(r, "Email", "E-mail")
+            st.session_state["reg_dept"]     = _get_emp_value(r, "Department", "Dept")
+            st.session_state["reg_location"] = _get_emp_value(r, "Location (KSA)", "Location", "City")
+            # Office ← accepts Project as an alias
+            st.session_state["reg_office"]   = _get_emp_value(r, "Office", "Project", "Site")
+            return
+    # If unassigned / not found: clear
+    for key in ("reg_contact","reg_email","reg_dept","reg_location","reg_office"):
+        st.session_state[key] = ""
 
 def build_transfer_values(inv_row: pd.Series, new_owner: str, *, emp_df: pd.DataFrame) -> dict[str, str]:
     fm = _registration_field_map()
