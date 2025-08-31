@@ -88,12 +88,22 @@ TRANSFER_TEMPLATE_FILE_ID = st.secrets.get("drive", {}).get(
     ICT_TEMPLATE_FILE_ID
 )
 
-def _ict_filename(serial: str, seq: str = "0008") -> str:
-    return f"HO-JED-REG-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
+def _ict_filename(serial: str) -> str:
+    """
+    Build filename for a Registration PDF using the counters worksheet.
+    Example: HO-JED-REG-<SERIAL>-0009-20250831.pdf
+    """
+    seq = _next_sequence("REG")
+    return f"HO-JED-REG-{re.sub(r'[^A-Z0-9]', '', serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
 
-def _transfer_filename(serial: str, seq: str = "0009") -> str:
-    return f"HO-JED-TRN-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
 
+def _transfer_filename(serial: str) -> str:
+    """
+    Build filename for a Transfer PDF using the counters worksheet.
+    Example: HO-JED-TRF-<SERIAL>-0011-20250831.pdf
+    """
+    seq = _next_sequence("TRF")
+    return f"HO-JED-TRF-{re.sub(r'[^A-Z0-9]', '', serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
 
 HEADER_SYNONYMS = {
     "new employee": "New Employeer",
@@ -416,6 +426,50 @@ def append_to_worksheet(ws_title, new_data):
     df_combined = pd.concat([df_existing, new_data], ignore_index=True)
     set_with_dataframe(ws, df_combined); st.cache_data.clear()
 
+# =============================================================================
+# COUNTERS WORKSHEET HELPERS
+# =============================================================================
+
+COUNTERS_WS = "counters"
+
+def _get_or_create_counters_ws():
+    """Ensure the 'counters' worksheet exists."""
+    sh = get_sh()
+    try:
+        return sh.worksheet(COUNTERS_WS)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title=COUNTERS_WS, rows=10, cols=3)
+        ws.append_row(["Type", "LastSeq"])
+        return ws
+
+
+def _next_sequence(counter_type: str) -> str:
+    """
+    Increment and return the next sequence number for a given type (REG, TRF).
+    Returns a zero-padded string (e.g., '0008').
+    """
+    ws = _get_or_create_counters_ws()
+    df = pd.DataFrame(ws.get_all_records())
+
+    if df.empty or counter_type not in df["Type"].values:
+        # Initialize if missing
+        new_seq = 1
+        df = pd.concat([df, pd.DataFrame([{"Type": counter_type, "LastSeq": new_seq}])],
+                       ignore_index=True)
+    else:
+        idx = df.index[df["Type"] == counter_type][0]
+        last_seq = int(df.at[idx, "LastSeq"])
+        new_seq = last_seq + 1
+        df.at[idx, "LastSeq"] = new_seq
+
+    # Save back to sheet
+    ws.clear()
+    set_with_dataframe(ws, df)
+
+    # Return as zero-padded string (4 digits, matches your examples)
+    return f"{new_seq:04d}"
+
+
 def normalize_serial(s: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
 
@@ -442,6 +496,42 @@ def get_device_from_catalog_by_serial(serial: str) -> dict:
         if k.startswith("__"):
             row.pop(k, None)
     return row
+
+
+# =============================================================================
+# COUNTERS (REG / TRF sequence numbers)
+# =============================================================================
+COUNTERS_WS = "counters"
+
+def _get_counter_ws():
+    sh = get_sh()
+    try:
+        return sh.worksheet(COUNTERS_WS)
+    except gspread.exceptions.WorksheetNotFound:
+        # Create with initial values
+        ws = sh.add_worksheet(title=COUNTERS_WS, rows=10, cols=3)
+        ws.update([["Type", "LastUsed"], ["REG", 0], ["TRF", 0]])
+        return ws
+
+def _next_sequence(seq_type: str) -> str:
+    """
+    Atomically increment and return next sequence for REG or TRF.
+    Returns a 4-digit zero-padded string, e.g. '0009'.
+    """
+    ws = _get_counter_ws()
+    df = pd.DataFrame(ws.get_all_records())
+    if df.empty or "Type" not in df or "LastUsed" not in df:
+        df = pd.DataFrame([{"Type": "REG", "LastUsed": 0}, {"Type": "TRF", "LastUsed": 0}])
+        set_with_dataframe(ws, df)
+    # Ensure row exists
+    if seq_type not in df["Type"].values:
+        df = pd.concat([df, pd.DataFrame([{"Type": seq_type, "LastUsed": 0}])], ignore_index=True)
+
+    idx = df.index[df["Type"] == seq_type][0]
+    df.at[idx, "LastUsed"] = int(df.at[idx, "LastUsed"]) + 1
+    set_with_dataframe(ws, df)
+    return f"{int(df.at[idx,'LastUsed']):04d}"
+
 
 # =============================================================================
 # PDF FILLING
@@ -1278,8 +1368,14 @@ def export_tab():
 # =============================================================================
 # UPLOAD: accept octet-stream and show real errors/progress
 # =============================================================================
+# =============================================================================
+# UPLOAD: accept octet-stream and show real errors/progress
+# =============================================================================
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
-    """Upload PDF to Drive. Try SA first; on 403 storage quota, fall back to OAuth user (My Drive)."""
+    """Upload PDF to Drive. 
+    Try Service Account first; if 403 storage quota, fall back to OAuth (My Drive).
+    Always attempt to store inside approvals/Head Office (HO) subfolder.
+    """
     if uploaded_file is None:
         st.error("No file selected.")
         return "", ""
@@ -1312,23 +1408,50 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
         st.error(f"Only PDF files are allowed. Got type '{mime}' and name '{name}'.")
         return "", ""
     if not is_pdf_magic:
-        st.warning("File doesn't start with %PDF header—but continuing. If Drive rejects it, please re-export the PDF.")
+        st.warning("File doesn't start with %PDF header—but continuing. "
+                   "If Drive rejects it, please re-export the PDF.")
 
+    # File name with prefix + counter timestamp
     fname = f"{prefix}_{int(time.time())}.pdf"
     folder_id = st.secrets.get("drive", {}).get("approvals", "")
     metadata = {"name": fname}
+
     if folder_id:
-        metadata["parents"] = [folder_id]
+        # Try to nest inside "Head Office (HO)" subfolder
+        try:
+            drive_cli = _get_drive()
+            q = (
+                f"'{folder_id}' in parents and "
+                "name = 'Head Office (HO)' and "
+                "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+            )
+            results = drive_cli.files().list(q=q, fields="files(id)").execute()
+            files = results.get("files", [])
+            if files:
+                ho_id = files[0]["id"]
+            else:
+                folder_meta = {
+                    "name": "Head Office (HO)",
+                    "mimeType": "application/vnd.google-apps.folder",
+                    "parents": [folder_id],
+                }
+                newf = drive_cli.files().create(body=folder_meta, fields="id").execute()
+                ho_id = newf["id"]
+            metadata["parents"] = [ho_id]
+        except Exception:
+            # fallback: approvals root
+            metadata["parents"] = [folder_id]
 
     media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
 
+    # Try SA upload first
     drive_cli = _get_drive()
     try:
         file = drive_cli.files().create(
-            body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=True,
+            body=metadata, media_body=media,
+            fields="id, webViewLink", supportsAllDrives=True,
         ).execute()
     except HttpError as e:
-        # If SA quota exceeded, optionally fall back to OAuth
         if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
             if not ALLOW_OAUTH_FALLBACK:
                 st.error("Service Account quota exceeded and OAuth fallback disabled.")
@@ -1336,7 +1459,8 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
             try:
                 drive_cli = _get_user_drive()
                 file = drive_cli.files().create(
-                    body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=False,
+                    body=metadata, media_body=media,
+                    fields="id, webViewLink", supportsAllDrives=False,
                 ).execute()
             except Exception as e2:
                 st.error(f"OAuth upload failed: {e2}")
@@ -1344,23 +1468,6 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
         else:
             st.error(f"Drive upload failed: {e}")
             return "", ""
-    except Exception as e:
-        st.error(f"Unexpected error uploading to Drive: {e}")
-        return "", ""
-
-    file_id = file.get("id", ""); link = file.get("webViewLink", "")
-    if not file_id:
-        st.error("Drive did not return a file id.")
-        return "", ""
-
-    # Make public if configured (ignore failures)
-    try:
-        if st.secrets.get("drive", {}).get("public", True):
-            _drive_make_public(file_id, drive_client=drive_cli)
-    except Exception:
-        pass
-
-    return link, file_id
 
 # =============================================================================
 # MAIN
