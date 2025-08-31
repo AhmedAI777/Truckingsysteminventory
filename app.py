@@ -56,7 +56,7 @@ INVENTORY_COLS = [
     "Serial Number","Device Type","Brand","Model","CPU",
     "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
     "Current user","Previous User","TO",
-    "Department","Email Address","Contact Number","Location","Office",
+    "Department","Email","Contact Number","Location","Office",
     "Notes","Date issued","Registered by"
 ]
 CATALOG_COLS = [
@@ -560,7 +560,7 @@ def build_registration_values(
 
     from_name = curr_owner if not is_unassigned else (actor_name or device_row.get("Registered by", ""))
     from_mobile   = str(device_row.get("Contact Number", "") or "")
-    from_email    = str(device_row.get("Email Address", "") or "")
+    from_email    = str(device_row.get("Email", "") or "")
     from_dept     = str(device_row.get("Department", "") or "")
     from_location = str(device_row.get("Location", "") or "")
 
@@ -609,7 +609,7 @@ def build_transfer_values(inv_row: pd.Series, new_owner: str, *, emp_df: pd.Data
     values = {
         fm["from_name"]:       str(inv_row.get("Current user", "")),
         fm["from_mobile"]:     str(inv_row.get("Contact Number", "")),
-        fm["from_email"]:      str(inv_row.get("Email Address", "")),
+        fm["from_email"]:      str(inv_row.get("Email", "")),
         fm["from_department"]: str(inv_row.get("Department", "")),
         fm["from_date"]:       datetime.now().strftime("%Y-%m-%d"),
         fm["from_location"]:   str(inv_row.get("Location", "")),
@@ -689,7 +689,7 @@ def register_device_tab():
             st.session_state.setdefault(k, "")
 
     # For owner pick-list
-    emp_df = read_worksheet(EMPLOYEE_WS)   # <-- no extra indent here
+    emp_df = read_worksheet(EMPLOYEE_WS)
     employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
     owner_options = [UNASSIGNED_LABEL] + employee_names
 
@@ -743,7 +743,7 @@ def register_device_tab():
 
         r4c1, r4c2, r4c3 = st.columns(3)
         with r4c1: screen = st.text_input("Screen Size")
-        with r4c2: email  = st.text_input("Email Address", key="reg_email")
+        with r4c2: email  = st.text_input("Email", key="reg_email")
         with r4c3: contact = st.text_input("Contact Number", key="reg_contact")
 
         r5c1, r5c2, r5c3 = st.columns(3)
@@ -778,7 +778,7 @@ def register_device_tab():
                 "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
                 "Previous User": "", "TO": "",
                 "Department": st.session_state.get("reg_dept","").strip(),
-                "Email Address": st.session_state.get("reg_email","").strip(),
+                "Email": st.session_state.get("reg_email","").strip(),
                 "Contact Number": st.session_state.get("reg_contact","").strip(),
                 "Location": st.session_state.get("reg_location","").strip(),
                 "Office": st.session_state.get("reg_Office","").strip(),
@@ -824,7 +824,7 @@ def register_device_tab():
             "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
             "Previous User": "", "TO": "",
             "Department": st.session_state.get("reg_dept","").strip(),
-            "Email Address": st.session_state.get("reg_email","").strip(),
+            "Email": st.session_state.get("reg_email","").strip(),
             "Contact Number": st.session_state.get("reg_contact","").strip(),
             "Location": st.session_state.get("reg_location","").strip(),
             "Office": office.strip(), "Notes": notes.strip(),
