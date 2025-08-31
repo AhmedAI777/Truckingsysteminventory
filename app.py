@@ -304,6 +304,98 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
 #  transfer_tab, approvals_tab, export_tab, run_app, etc.)
 
 # =============================================================================
+# TAB FUNCTIONS
+# =============================================================================
+def render_header():
+    c_title, c_user = st.columns([7, 3])
+    with c_title:
+        st.markdown(f"### {APP_TITLE}")
+        st.caption(SUBTITLE)
+    with c_user:
+        username = st.session_state.get("username", "—")
+        role = st.session_state.get("role", "—")
+        st.markdown(f"**User:** {username} &nbsp;&nbsp;&nbsp; **Role:** {role}")
+        if st.session_state.get("authenticated") and st.button("Logout"):
+            do_logout()
+    st.markdown("---")
+
+def employee_register_tab():
+    st.subheader("🧑‍💼 Register New Employee (mainlists)")
+    emp_df = read_worksheet(EMPLOYEE_WS)
+    next_id = str(len(emp_df) + 1) if not emp_df.empty else "1"
+    with st.form("register_employee", clear_on_submit=True):
+        emp_name = st.text_input("New Employeer *")
+        emp_id   = st.text_input("Employee ID", help=f"Suggested: {next_id}")
+        submitted = st.form_submit_button("Save Employee", type="primary")
+    if submitted and emp_name.strip():
+        row = {"New Employeer": emp_name.strip(), "Name": emp_name.strip(), "Employee ID": emp_id or next_id}
+        new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True)
+        new_df = reorder_columns(new_df, EMPLOYEE_CANON_COLS)
+        write_worksheet(EMPLOYEE_WS, new_df)
+        st.success("✅ Employee saved.")
+
+def employees_view_tab():
+    st.subheader("📇 Employees")
+    df = read_worksheet(EMPLOYEE_WS)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+def inventory_tab():
+    st.subheader("📋 Inventory")
+    df = read_worksheet(INVENTORY_WS)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+def history_tab():
+    st.subheader("📜 Transfer Log")
+    df = read_worksheet(TRANSFERLOG_WS)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+# register_device_tab()  ← already defined above
+# transfer_tab()         ← already defined above
+
+def approvals_tab():
+    st.subheader("✅ Approvals (Admin)")
+    if st.session_state.get("role") != "Admin":
+        st.info("Only Admins can view approvals.")
+        return
+    pending_dev = read_worksheet(PENDING_DEVICE_WS)
+    st.write(pending_dev)
+
+def export_tab():
+    st.subheader("⬇️ Export")
+    inv = read_worksheet(INVENTORY_WS)
+    log = read_worksheet(TRANSFERLOG_WS)
+    emp = read_worksheet(EMPLOYEE_WS)
+    st.download_button("Inventory CSV", inv.to_csv(index=False).encode(), "inventory.csv")
+    st.download_button("Transfer Log CSV", log.to_csv(index=False).encode(), "transfer_log.csv")
+    st.download_button("Employees CSV", emp.to_csv(index=False).encode(), "employees.csv")
+
+# =============================================================================
+# RUN APP
+# =============================================================================
+def run_app():
+    render_header()
+    if st.session_state.role == "Admin":
+        tabs = st.tabs([
+            "🧑‍💼 Employee Register","📇 View Employees","📝 Register Device",
+            "📋 View Inventory","🔁 Transfer Device","📜 Transfer Log","✅ Approvals","⬇️ Export"
+        ])
+        with tabs[0]: employee_register_tab()
+        with tabs[1]: employees_view_tab()
+        with tabs[2]: register_device_tab()
+        with tabs[3]: inventory_tab()
+        with tabs[4]: transfer_tab()
+        with tabs[5]: history_tab()
+        with tabs[6]: approvals_tab()
+        with tabs[7]: export_tab()
+    else:
+        tabs = st.tabs(["📝 Register Device","🔁 Transfer Device","📋 View Inventory","📜 Transfer Log"])
+        with tabs[0]: register_device_tab()
+        with tabs[1]: transfer_tab()
+        with tabs[2]: inventory_tab()
+        with tabs[3]: history_tab()
+
+
+# =============================================================================
 # ENTRYPOINT
 # =============================================================================
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
