@@ -548,7 +548,7 @@ def _find_emp_row_by_name(emp_df: pd.DataFrame, name: str):
     return cand.iloc[0] if not cand.empty else None
 
 def _get_emp_value(row: pd.Series, *aliases: str) -> str:
-    """Return the first non-empty value from the given alias columns."""
+    """Return first non-empty value among the given alias columns."""
     if row is None:
         return ""
     for col in aliases:
@@ -556,6 +556,7 @@ def _get_emp_value(row: pd.Series, *aliases: str) -> str:
         if str(v).strip():
             return str(v)
     return ""
+
 
 
 def build_registration_values(
@@ -566,24 +567,26 @@ def build_registration_values(
 ) -> dict[str, str]:
     fm = _registration_field_map()
 
-    curr_owner = str(device_row.get("Current user", "")).strip()
+    # Defaults from the submitted form row
+    curr_owner    = str(device_row.get("Current user", "") or "").strip()
     is_unassigned = (not curr_owner) or (curr_owner == UNASSIGNED_LABEL)
 
-    from_name = curr_owner if not is_unassigned else (actor_name or device_row.get("Registered by", ""))
-    from_mobile   = from_mobile   or _get_emp_value(r, "Mobile Number", "Phone", "Mobile")
-    from_email    = from_email    or _get_emp_value(r, "Email", "E-mail")
-    from_dept     = from_dept     or _get_emp_value(r, "Department", "Dept")
-    from_location = from_location or _get_emp_value(r, "Location (KSA)", "Location", "City")
+    from_name     = curr_owner if not is_unassigned else (actor_name or device_row.get("Registered by",""))
+    from_mobile   = str(device_row.get("Contact Number","") or "")
+    from_email    = str(device_row.get("Email Address","") or "")
+    from_dept     = str(device_row.get("Department","") or "")
+    from_location = str(device_row.get("Location","") or "")
 
-
+    # Enrich from Employees sheet (handles aliases; Office is handled in the specs below)
     if not is_unassigned and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
         r = _find_emp_row_by_name(emp_df, curr_owner)
         if r is not None:
-            from_mobile   = from_mobile   or str(r.get("Mobile Number", "") or "")
-            from_email    = from_email    or str(r.get("Email", "") or "")
-            from_dept     = from_dept     or str(r.get("Department", "") or "")
-            from_location = from_location or str(r.get("Location (KSA)", "") or "")
+            from_mobile   = from_mobile   or _get_emp_value(r, "Mobile Number", "Phone", "Mobile")
+            from_email    = from_email    or _get_emp_value(r, "Email", "E-mail")
+            from_dept     = from_dept     or _get_emp_value(r, "Department", "Dept")
+            from_location = from_location or _get_emp_value(r, "Location (KSA)", "Location", "City")
 
+    # PDF values (TO stays blank at registration)
     values = {
         fm["from_name"]:       from_name,
         fm["from_mobile"]:     from_mobile,
@@ -592,19 +595,22 @@ def build_registration_values(
         fm["from_date"]:       datetime.now().strftime("%Y-%m-%d"),
         fm["from_location"]:   from_location,
 
-        # TO stays blank on registration
-        fm["to_name"]:         "",
-        fm["to_mobile"]:       "",
-        fm["to_email"]:        "",
-        fm["to_department"]:   "",
-        fm["to_date"]:         "",
-        fm["to_location"]:     "",
+        fm["to_name"]: "", fm["to_mobile"]: "", fm["to_email"]: "",
+        fm["to_department"]: "", fm["to_date"]: "", fm["to_location"]: "",
     }
 
+    # Equipment block #1 (include Office/Project in specs)
     specs = []
     for label in ["CPU","Memory","GPU","Hard Drive 1","Hard Drive 2","Screen Size","Office","Notes"]:
-        val = str(device_row.get(label, "")).strip()
-        if val: specs.append(f"{label}: {val}")
+        v = str(device_row.get(label, "")).strip()
+        if not v and label == "Office":
+            # accept Project/Site as Office
+            if isinstance(emp_df, pd.DataFrame) and not emp_df.empty and not is_unassigned:
+                r = _find_emp_row_by_name(emp_df, curr_owner)
+                if r is not None:
+                    v = _get_emp_value(r, "Office", "Project", "Site")
+        if v:
+            specs.append(f"{label}: {v}")
     specs_txt = " | ".join(specs)
 
     values.update({
@@ -615,6 +621,7 @@ def build_registration_values(
         fm["eq_serial"]: device_row.get("Serial Number",""),
     })
     return values
+
     
 def _owner_changed(emp_df: pd.DataFrame):
     """Auto-fill contact/email/department/location/office when owner changes."""
