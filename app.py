@@ -1013,6 +1013,45 @@ def transfer_tab():
         }
         append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
         st.success("🕒 Transfer request submitted for admin approval.")
+
+
+def approvals_tab():
+    st.subheader("✅ Approvals")
+
+    # Pending Device Registrations
+    st.markdown("### 📥 Device Registrations")
+    dev_df = read_worksheet(PENDING_DEVICE_WS)
+    if dev_df.empty:
+        st.info("No pending device registrations.")
+    else:
+        for i, row in dev_df.iterrows():
+            if row.get("Approval Status") == "Pending":
+                st.markdown(f"**Serial:** {row.get('Serial Number','')} — {row.get('Device Type','')}")
+                if row.get("Approval PDF"):
+                    st.markdown(f"[View PDF]({row['Approval PDF']})")
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("Approve", key=f"approve_device_{i}"):
+                        _approve_device_row(row)
+                        st.rerun()
+                with c2:
+                    if st.button("Reject", key=f"reject_device_{i}"):
+                        _reject_row(PENDING_DEVICE_WS, i, row)
+                        st.rerun()
+
+    # Pending Transfers
+    st.markdown("### 🔄 Device Transfers")
+    trf_df = read_worksheet(PENDING_TRANSFER_WS)
+    if trf_df.empty:
+        st.info("No pending transfers.")
+    else:
+        for i, row in trf_df.iterrows():
+            if row.get("Approval Status") == "Pending":
+                st.markdown(f"**Serial:** {row.get('Serial Number','')} — {row.get('From owner','')} → {row.get('To owner','')}")
+                if row.get("Approval PDF"):
+                    st.markdown(f"[View PDF]({row['Approval PDF']})")
+                c1, c2 = st
+
 def _approve_device_row(row: pd.Series):
     """Admin approves a device registration → add to Inventory + move PDF → Approved/Register."""
     inv = read_worksheet(INVENTORY_WS)
