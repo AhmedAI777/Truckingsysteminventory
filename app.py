@@ -669,7 +669,7 @@ def build_registration_values(
 
     from_name     = curr_owner if not is_unassigned else (actor_name or device_row.get("Registered by",""))
     from_mobile   = str(device_row.get("Contact Number","") or "")
-    from_email    = str(device_row.get("Email Address","") or "")
+    from_email    = str(device_row.get("Email","") or "")
     from_dept     = str(device_row.get("Department","") or "")
     from_location = str(device_row.get("Location","") or "")
 
@@ -805,7 +805,7 @@ def register_device_tab():
 
         r4c1, r4c2, r4c3 = st.columns(3)
         with r4c1: screen = st.text_input("Screen Size")
-        with r4c2: st.text_input("Email Address", key="reg_email")
+        with r4c2: st.text_input("Email", key="reg_email")
         with r4c3: st.text_input("Contact Number", key="reg_contact")
 
         r5c1, r5c2, r5c3 = st.columns(3)
@@ -852,7 +852,7 @@ def register_device_tab():
                 "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
                 "Previous User": "", "TO": "",
                 "Department": st.session_state.get("reg_dept","").strip(),
-                "Email Address": st.session_state.get("reg_email","").strip(),
+                "Email": st.session_state.get("reg_email","").strip(),
                 "Contact Number": st.session_state.get("reg_contact","").strip(),
                 "Location": st.session_state.get("reg_location","").strip(),
                 "Office": st.session_state.get("reg_office","").strip(),
@@ -909,7 +909,7 @@ if submitted:
         "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
         "Previous User": "", "TO": "",
         "Department": st.session_state.get("reg_dept","").strip(),
-        "Email Address": st.session_state.get("reg_email","").strip(),
+        "Email": st.session_state.get("reg_email","").strip(),
         "Contact Number": st.session_state.get("reg_contact","").strip(),
         "Location": st.session_state.get("reg_location","").strip(),
         "Office": st.session_state.get("reg_office","").strip(),
