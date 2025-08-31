@@ -328,14 +328,28 @@ def run_app():
 # =============================================================================
 # ENTRYPOINT
 # =============================================================================
-if "authenticated" not in st.session_state: st.session_state.authenticated=False
-if "just_logged_out" not in st.session_state: st.session_state.just_logged_out=False
-if not st.session_state.authenticated and not st.session_state.just_logged_out:
-    payload=_read_cookie()
-    if payload: st.session_state.authenticated=True; st.session_state.username=payload["u"]; st.session_state.role=payload.get("r","")
-if st.session_state.authenticated: run_app()
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "just_logged_out" not in st.session_state:
+    st.session_state.just_logged_out = False
+
+# Try cookie restore
+if not st.session_state.authenticated and not st.session_state.get("just_logged_out"):
+    payload = _read_cookie()
+    if payload:
+        st.session_state.authenticated = True
+        st.session_state.username = payload["u"]
+        st.session_state.role = payload.get("r", "")
+
+if st.session_state.authenticated:
+    run_app()
 else:
-    st.subheader("🔐 Sign In"); u=st.text_input("Username"); p=st.text_input("Password",type="password")
-    if st.button("Login"): user=USERS.get(u); 
-        if user and _verify_password(p,user["password"]): do_login(u,user.get("role","Staff"))
-        else: st.error("❌ Invalid username or password.")
+    st.subheader("🔐 Sign In")
+    u = st.text_input("Username")
+    p = st.text_input("Password", type="password")
+    if st.button("Login", type="primary"):
+        user = USERS.get(u)
+        if user and _verify_password(p, user["password"]):
+            do_login(u, user.get("role", "Staff"))
+        else:
+            st.error("❌ Invalid username or password.")
