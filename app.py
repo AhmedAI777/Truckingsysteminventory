@@ -866,88 +866,90 @@ def register_device_tab():
                 st.error("Could not generate the registration PDF.")
                 st.caption(str(e))
 
-    # Optional preview of uploaded PDF
-    if ss.get("reg_pdf"):
-        ss.reg_pdf_ref = ss.reg_pdf
-    if ss.get("reg_pdf_ref"):
-        st.caption("Preview: Uploaded signed PDF")
-        try:
-            pdf_viewer(input=ss.reg_pdf_ref.getvalue(), width=700, key="viewer_reg")
-        except Exception:
-            pass
+    # Optional live preview
+if ss.get("reg_pdf"): ss.reg_pdf_ref = ss.reg_pdf
+if ss.reg_pdf_ref:
+    st.caption("Preview: Uploaded signed PDF")
+    try: pdf_viewer(input=ss.reg_pdf_ref.getvalue(), width=700, key="viewer_reg")
+    except Exception: pass
 
     # --- Save (PDF required for all roles)
-    if submitted:
-        if not serial.strip() or not device.strip():
-            st.error("Serial Number and Device Type are required.")
-            return
-        if pdf_file is None:
-            st.error("Signed ICT Registration PDF is required for submission.")
-            return
-
+   if submitted:
+    # Basic validations
+    if not serial.strip() or not device.strip():
+        st.error("Serial Number and Device Type are required.")
+    elif pdf_file is None:
+        st.error("Signed ICT Registration PDF is required for submission.")
+    else:
         s_norm = normalize_serial(serial)
         if not s_norm:
             st.error("Serial Number cannot be blank after normalization.")
-            return
-
-        now_str = datetime.now().strftime(DATE_FMT)
-        actor   = st.session_state.get("username", "")
-        row = {
-            "Serial Number": serial.strip(),
-            "Device Type": device.strip(),
-            "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
-            "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
-            "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
-            "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-            "Previous User": "", "TO": "",
-            "Department": st.session_state.get("reg_dept","").strip(),
-            "Email Address": st.session_state.get("reg_email","").strip(),
-            "Contact Number": st.session_state.get("reg_contact","").strip(),
-            "Location": st.session_state.get("reg_location","").strip(),
-            "Office": st.session_state.get("reg_office","").strip(),
-            "Notes": notes.strip(),
-            "Date issued": now_str, "Registered by": actor,
-        }
-
-        link, fid = upload_pdf_and_link(pdf_file, prefix=f"device_{s_norm}")
-        if not fid:
-            return
-
-        is_admin = st.session_state.get("role") == "Admin"
-        if is_admin:
-            inv = read_worksheet(INVENTORY_WS)
-            inv_out = pd.concat(
-                [inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS), pd.DataFrame([row])],
-                ignore_index=True
-            )
-            inv_out = reorder_columns(inv_out, INVENTORY_COLS)
-            write_worksheet(INVENTORY_WS, inv_out)
-
-            pending = {
-                **row,
-                "Approval Status": "Approved",
-                "Approval PDF": link,
-                "Approval File ID": fid,
-                "Submitted by": actor,
-                "Submitted at": now_str,
-                "Approver": actor,
-                "Decision at": now_str,
-            }
-            append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-            st.success("✅ Device registered and added to Inventory. Signed PDF stored.")
         else:
-            pending = {
-                **row,
-                "Approval Status": "Pending",
-                "Approval PDF": link,
-                "Approval File ID": fid,
-                "Submitted by": actor,
-                "Submitted at": now_str,
-                "Approver": "",
-                "Decision at": "",
+            now_str = datetime.now().strftime(DATE_FMT)
+            actor   = st.session_state.get("username", "")
+            row = {
+                "Serial Number": serial.strip(),
+                "Device Type": device.strip(),
+                "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
+                "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
+                "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
+                "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
+                "Previous User": "", "TO": "",
+                "Department": st.session_state.get("reg_dept","").strip(),
+                "Email Address": st.session_state.get("reg_email","").strip(),
+                "Contact Number": st.session_state.get("reg_contact","").strip(),
+                "Location": st.session_state.get("reg_location","").strip(),
+                "Office": st.session_state.get("reg_office","").strip(),
+                "Notes": notes.strip(),
+                "Date issued": now_str, "Registered by": actor,
             }
-            append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-            st.success("🕒 Submitted for admin approval. You'll see it in Inventory once approved.")
+
+            is_admin = st.session_state.get("role") == "Admin"
+
+            with st.status("Uploading signed PDF…", expanded=True) as status:
+                try:
+                    status.write("Validating file...")
+                    # quick sanity: 200MB hard cap already by Streamlit, but we can add a soft cap
+                    if getattr(pdf_file, "size", 0) > 50 * 1024 * 1024:
+                        st.error("PDF is larger than 50MB; please compress before uploading.")
+                        status.update(label="Upload aborted", state="error")
+                    else:
+                        status.write("Sending to Google Drive…")
+                        link, fid = upload_pdf_and_link(pdf_file, prefix=f"device_{s_norm}")
+                        if not fid:
+                            status.update(label="Upload failed", state="error")
+                            st.error("Upload failed. Please check your Drive settings and try again.")
+                        else:
+                            status.write("Upload complete. Writing to Sheets…")
+                            if is_admin:
+                                inv = read_worksheet(INVENTORY_WS)
+                                inv_out = pd.concat(
+                                    [inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS), pd.DataFrame([row])],
+                                    ignore_index=True
+                                )
+                                inv_out = reorder_columns(inv_out, INVENTORY_COLS)
+                                write_worksheet(INVENTORY_WS, inv_out)
+
+                                pending = {
+                                    **row, "Approval Status": "Approved", "Approval PDF": link, "Approval File ID": fid,
+                                    "Submitted by": actor, "Submitted at": now_str, "Approver": actor, "Decision at": now_str,
+                                }
+                                append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+                                status.update(label="Saved to Sheets", state="complete")
+                                st.success("✅ Device registered and added to Inventory. Signed PDF stored.")
+                            else:
+                                pending = {
+                                    **row, "Approval Status": "Pending", "Approval PDF": link, "Approval File ID": fid,
+                                    "Submitted by": actor, "Submitted at": now_str, "Approver": "", "Decision at": "",
+                                }
+                                append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+                                status.update(label="Submitted for approval", state="complete")
+                                st.success("🕒 Submitted for admin approval. You'll see it in Inventory once approved.")
+                except Exception as e:
+                    status.update(label="Error during upload/save", state="error")
+                    st.error("An error occurred while uploading or saving.")
+                    st.caption(str(e))
+
 
 
 def transfer_tab():
