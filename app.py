@@ -1259,19 +1259,18 @@ def run_app():
     _config_check_ui()
 
     if st.session_state.role == "Admin":
-    tabs = st.tabs([
-        "🧑‍💼 Employee Register","📇 View Employees","📝 Register Device",
-        "📋 View Inventory","🔁 Transfer Device","📜 Transfer Log","✅ Approvals","⬇️ Export",
-    ])
-    with tabs[0]: employee_register_tab()
-    with tabs[1]: employees_view_tab()
-    with tabs[2]: register_device_tab()
-    with tabs[3]: inventory_tab()
-    with tabs[4]: transfer_tab()
-    with tabs[5]: history_tab()
-    with tabs[6]: approvals_tab()
-    with tabs[7]: export_tab()
-
+        tabs = st.tabs([
+            "🧑‍💼 Employee Register","📇 View Employees","📝 Register Device",
+            "📋 View Inventory","🔁 Transfer Device","📜 Transfer Log","✅ Approvals","⬇️ Export",
+        ])
+        with tabs[0]: employee_register_tab()
+        with tabs[1]: employees_view_tab()
+        with tabs[2]: register_device_tab()
+        with tabs[3]: inventory_tab()
+        with tabs[4]: transfer_tab()
+        with tabs[5]: history_tab()
+        with tabs[6]: approvals_tab()
+        with tabs[7]: export_tab()
     else:
         tabs = st.tabs([
             "📝 Register Device","🔁 Transfer Device",
@@ -1281,6 +1280,7 @@ def run_app():
         with tabs[1]: transfer_tab()
         with tabs[2]: inventory_tab()
         with tabs[3]: history_tab()
+
 
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
 if "just_logged_out" not in st.session_state: st.session_state.just_logged_out = False
