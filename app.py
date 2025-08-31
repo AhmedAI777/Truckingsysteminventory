@@ -183,12 +183,32 @@ def _get_counter_ws():
         ws.update([["Type","LastUsed"],["REG",0],["TRF",0]])
         return ws
 
-def _next_sequence(t): ws=_get_counter_ws(); df=pd.DataFrame(ws.get_all_records()); 
-df_empty = df.empty
-    if df.empty: df=pd.DataFrame([{"Type":"REG","LastUsed":0},{"Type":"TRF","LastUsed":0}])
-    if t not in df["Type"].values: df=pd.concat([df,pd.DataFrame([{"Type":t,"LastUsed":0}])])
-    idx=df.index[df["Type"]==t][0]; df.at[idx,"LastUsed"]=int(df.at[idx,"LastUsed"])+1; set_with_dataframe(ws,df)
-    return f"{int(df.at[idx,'LastUsed']):04d}"
+def _next_sequence(seq_type: str) -> str:
+    """
+    Atomically increment and return next sequence for REG or TRF.
+    Returns a 4-digit zero-padded string, e.g. '0009'.
+    """
+    ws = _get_counter_ws()
+    df = pd.DataFrame(ws.get_all_records())
+
+    # Initialize if empty
+    if df.empty or "Type" not in df or "LastUsed" not in df:
+        df = pd.DataFrame([
+            {"Type": "REG", "LastUsed": 0},
+            {"Type": "TRF", "LastUsed": 0}
+        ])
+
+    # Ensure row exists
+    if seq_type not in df["Type"].values:
+        df = pd.concat([df, pd.DataFrame([{"Type": seq_type, "LastUsed": 0}])], ignore_index=True)
+
+    # Increment
+    idx = df.index[df["Type"] == seq_type][0]
+    df.at[idx, "LastUsed"] = int(df.at[idx, "LastUsed"]) + 1
+    set_with_dataframe(ws, df)
+
+    return f"{int(df.at[idx, 'LastUsed']):04d}"
+
 
 def normalize_serial(sn): return re.sub(r"[^A-Z0-9]","",str(sn).upper().strip()) if sn else ""
 def unique_nonempty(df,col): return sorted({str(x).strip() for x in df[col].dropna()}) if df is not None and not df.empty and col in df.columns else []
