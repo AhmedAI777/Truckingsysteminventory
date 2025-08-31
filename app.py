@@ -95,7 +95,9 @@ def _ict_filename(serial: str, office: str = "HO", location: str = "JEDDAH", seq
     sn = re.sub(r'[^A-Z0-9]','', str(serial).upper())
     s = (seq or "XXXX")
     return f"{office_clean}-{location_clean}-REG-{sn}-{s}-{datetime.now().strftime('%Y%m%d')}.pdf"
-" in pk: sa["private_key"] = pk.replace("\\n", "\n")
+if isinstance(pk, str) and "\\n" in pk:
+    sa["private_key"] = pk.replace("\\n", "\n")
+
     if "private_key" not in sa:
         raise RuntimeError("Service account JSON not found or missing 'private_key'.")
     return sa
