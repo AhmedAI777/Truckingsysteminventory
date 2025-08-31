@@ -123,10 +123,6 @@ def _load_sa_info() -> dict:
         raise RuntimeError("Service account JSON not found or missing 'private_key'.")
     return sa
 
-@st.cache_resource(show_spinner=False)
-def _get_creds():
-    return Credentials.from_service_account_info(_load_sa_info(), scopes=SCOPES)
-
 def _ict_filename(serial: str, office: str = "HO", location: str = "JEDDAH", seq: str | None = None) -> str:
     office_clean = re.sub(r'[^A-Z0-9]', '', str(office).upper())
     location_clean = re.sub(r'[^A-Z0-9]', '', str(location).upper()[:3])
