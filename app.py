@@ -363,6 +363,8 @@ def move_drive_file(file_id: str, office: str, city_code: str, action: str, deci
     ).execute()
 
 def upload_pdf_and_get_link(file_obj, *, prefix: str, office: str, city_code: str, action: str) -> tuple[str, str]:
+
+    
     """
     Upload a signed PDF to Google Drive into:
         approvals / <office> / <city> / <action> / Pending
@@ -934,62 +936,104 @@ def register_device_tab():
             filled    = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
             st.download_button("📄 Download ICT Registration Form", data=filled, file_name=_ict_filename(serial))
 
-    if submitted:
-        if not serial.strip() or not device.strip():
-            st.error("Serial and Device Type required.")
-            return
-        pdf_file_obj = pdf_file or ss.get("reg_pdf")
-        if pdf_file_obj is None:
-            st.error("Signed ICT Registration PDF required.")
-            return
-        now_str = datetime.now().strftime(DATE_FMT)
-        actor   = st.session_state.get("username", "")
-        row = {
-            "Serial Number": serial.strip(),
-            "Device Type": device.strip(),
-            "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
-            "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
-            "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
-            "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-            "Previous User": "", "TO": "",
-            "Department": st.session_state.get("reg_dept","").strip(),
-            "Email Address": st.session_state.get("reg_email","").strip(),
-            "Contact Number": st.session_state.get("reg_contact","").strip(),
-            "Location": st.session_state.get("reg_location","").strip(),
-            "Office": st.session_state.get("reg_office","").strip(),
-            "Notes": notes.strip(),
-            "Date issued": now_str, "Registered by": actor,
-        }
-        link, fid = upload_pdf_and_get_link(
-    pdf_file_obj,
-    prefix=f"device_{normalize_serial(serial)}",
-    office="Head Office (HO)",
-    city_code=row.get("Location", ""),
-    action="Register"
-)
+    # --- Save (PDF required for all roles)
+if submitted:
+    if not serial.strip() or not device.strip():
+        st.error("Serial Number and Device Type are required.")
+        return
 
+    # Prefer the widget variable, fall back to session_state to be safe
+    pdf_file_obj = pdf_file or ss.get("reg_pdf")
+    if pdf_file_obj is None:
+        st.error("Signed ICT Registration PDF is required for submission.")
+        return
 
+    now_str = datetime.now().strftime(DATE_FMT)
+    actor   = st.session_state.get("username", "")
+
+    row = {
+        "Serial Number": serial.strip(),
+        "Device Type": device.strip(),
+        "Brand": brand.strip(),
+        "Model": model.strip(),
+        "CPU": cpu.strip(),
+        "Hard Drive 1": hdd1.strip(),
+        "Hard Drive 2": hdd2.strip(),
+        "Memory": mem.strip(),
+        "GPU": gpu.strip(),
+        "Screen Size": screen.strip(),
+        "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
+        "Previous User": "",
+        "TO": "",
+        "Department": st.session_state.get("reg_dept", "").strip(),
+        "Email Address": st.session_state.get("reg_email", "").strip(),
+        "Contact Number": st.session_state.get("reg_contact", "").strip(),
+        "Location": st.session_state.get("reg_location", "").strip(),
+        "Office": st.session_state.get("reg_office", "").strip(),
+        "Notes": notes.strip(),
+        "Date issued": now_str,
+        "Registered by": actor,
+    }
+
+    # Upload the signed PDF into: Head Office (HO) / <City> / Register / Pending
+    link, fid = upload_pdf_and_get_link(
+        pdf_file_obj,
+        prefix=f"device_{normalize_serial(serial)}",
+        office="Head Office (HO)",
+        city_code=row.get("Location", ""),
+        action="Register",
+    )
+    if not fid:
+        # upload function already showed an error toast
+        return
+
+    is_admin = st.session_state.get("role") == "Admin"
+
+    if is_admin:
+        # Apply immediately to Inventory + record Approved in pending sheet
+        inv = read_worksheet(INVENTORY_WS)
+        inv_out = pd.concat(
+            [inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS), pd.DataFrame([row])],
+            ignore_index=True,
         )
-        if not fid:
-            return
-        is_admin = st.session_state.get("role") == "Admin"
-        if is_admin:
-            inv = read_worksheet(INVENTORY_WS)
-            inv_out = pd.concat([inv, pd.DataFrame([row])], ignore_index=True)
-            write_worksheet(INVENTORY_WS, inv_out)
-            pending = {**row,
-                "Approval Status": "Approved","Approval PDF": link,"Approval File ID": fid,
-                "Submitted by": actor,"Submitted at": now_str,"Approver": actor,"Decision at": now_str,
-            }
-            append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-            st.success("✅ Device registered and approved.")
-        else:
-            pending = {**row,
-                "Approval Status": "Pending","Approval PDF": link,"Approval File ID": fid,
-                "Submitted by": actor,"Submitted at": now_str,"Approver": "","Decision at": "",
-            }
-            append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-            st.success("🕒 Submitted for admin approval.")
+        write_worksheet(INVENTORY_WS, inv_out)
+
+        pending = {
+            **row,
+            "Approval Status": "Approved",
+            "Approval PDF": link,
+            "Approval File ID": fid,
+            "Submitted by": actor,
+            "Submitted at": now_str,
+            "Approver": actor,
+            "Decision at": now_str,
+        }
+        append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+
+        # Move file from Pending → Approved (Register)
+        try:
+            move_drive_file(fid, "Head Office (HO)", row.get("Location", ""), "Register", "Approved")
+        except Exception:
+            # don't fail the UI if Drive move hiccups
+            pass
+
+        st.success("✅ Device registered and added to Inventory. Signed PDF stored.")
+
+    else:
+        # Staff: leave Inventory untouched; create a Pending row for Admin
+        pending = {
+            **row,
+            "Approval Status": "Pending",
+            "Approval PDF": link,
+            "Approval File ID": fid,
+            "Submitted by": actor,
+            "Submitted at": now_str,
+            "Approver": "",
+            "Decision at": "",
+        }
+        append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+        st.success("🕒 Submitted for admin approval.")
+
 
 # (transfer_tab, approvals_tab, _approve_device_row, _approve_transfer_row, _reject_row)
 # In these functions, after writing to Sheets, call:
