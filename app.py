@@ -779,41 +779,47 @@ def register_device_tab():
         submitted = st.form_submit_button("Save Device", type="primary", use_container_width=True)
 
     # Generate the pre-filled registration form (TO blank)
-    if c_download:
-        if not serial.strip() or not device.strip():
-            st.error("Serial Number and Device Type are required before generating the form.")
-        else:
-            now_str = datetime.now().strftime(DATE_FMT)
-            actor = st.session_state.get("username", "")
-            row = {
-                "Serial Number": serial.strip(),
-                "Device Type": device.strip(),
-                "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
-                "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
-                "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
-                "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-                "Previous User": "", "TO": "",
-                "Department": st.session_state.get("reg_dept","").strip(),
-                "Email Address": st.session_state.get("reg_email","").strip(),
-                "Contact Number": st.session_state.get("reg_contact","").strip(),
-                "Location": st.session_state.get("reg_location","").strip(),
-                "Office": st.session_state.get("reg_office","").strip(),
-                "Notes": notes.strip(),
-                "Date issued": now_str, "Registered by": actor,
-            }
-           try:
-    # Prefer a resilient fetch if you added it; else keep _drive_download_bytes
-    tpl_bytes = _drive_download_bytes(ICT_TEMPLATE_FILE_ID)
-    reg_vals  = build_registration_values(row, actor_name=actor, emp_df=emp_df)
-    filled    = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
-    st.success("Registration form generated. Sign it and upload below, then click Save Device.")
-    st.download_button(
-        "📄 Download ICT Registration Form (pre-filled, TO blank)",
-        data=filled, file_name=_ict_filename(serial), mime="application/pdf",
-    )
-except Exception as e:
-    st.error("Could not generate the registration PDF.")
-    st.caption(str(e))
+    # --- Generate pre-filled PDF for registration
+if c_download:
+    if not serial.strip() or not device.strip():
+        st.error("Serial Number and Device Type are required before generating the form.")
+    else:
+        now_str = datetime.now().strftime(DATE_FMT)
+        actor = st.session_state.get("username", "")
+        row = {
+            "Serial Number": serial.strip(),
+            "Device Type": device.strip(),
+            "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
+            "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
+            "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
+            "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
+            "Previous User": "", "TO": "",
+            "Department": st.session_state.get("reg_dept","").strip(),
+            "Email Address": st.session_state.get("reg_email","").strip(),
+            "Contact Number": st.session_state.get("reg_contact","").strip(),
+            "Location": st.session_state.get("reg_location","").strip(),
+            "Office": st.session_state.get("reg_office","").strip(),
+            "Notes": notes.strip(),
+            "Date issued": now_str, "Registered by": actor,
+        }
+        try:
+            # If you added the resilient helper, prefer this:
+            # tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
+            # Otherwise use the SA-only fetch:
+            tpl_bytes = _drive_download_bytes(ICT_TEMPLATE_FILE_ID)
+
+            reg_vals  = build_registration_values(row, actor_name=actor, emp_df=emp_df)
+            filled    = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
+            st.success("Registration form generated. Sign it and upload below, then click Save Device.")
+            st.download_button(
+                "📄 Download ICT Registration Form (pre-filled, TO blank)",
+                data=filled, file_name=_ict_filename(serial), mime="application/pdf",
+            )
+        except Exception as e:
+            # show the real cause instead of the old generic banner
+            st.error("Could not generate the registration PDF.")
+            st.caption(str(e))
+
 
 
     # Preview uploaded PDF
