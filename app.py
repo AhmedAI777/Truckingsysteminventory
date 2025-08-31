@@ -714,8 +714,9 @@ st.session_state.setdefault("current_owner_prev", UNASSIGNED_LABEL)
                 st.session_state["reg_email"]    = str(r.get("Email", "") or "")
                 st.session_state["reg_dept"]     = str(r.get("Department", "") or "")
                 st.session_state["reg_location"] = str(r.get("Location (KSA)", "") or "")
+                st.seesion_state["reg_Office"] = str(r.get("Office","" or "")
         else:
-            for key in ("reg_contact","reg_email","reg_dept","reg_location"):
+            for key in ("reg_contact","reg_email","reg_dept","reg_location", reg_Office):
                 st.session_state[key] = ""
         st.session_state["current_owner_prev"] = st.session_state["current_owner"]
 
