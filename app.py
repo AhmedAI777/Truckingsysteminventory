@@ -88,11 +88,21 @@ TRANSFER_TEMPLATE_FILE_ID = st.secrets.get("drive", {}).get(
     ICT_TEMPLATE_FILE_ID
 )
 
-def _ict_filename(serial: str, seq: str = "0008") -> str:
-    return f"HO-JED-REG-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
 
-def _transfer_filename(serial: str, seq: str = "0009") -> str:
-    return f"HO-JED-TRN-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
+def _ict_filename(serial: str, office: str = "HO", location: str = "JEDDAH", seq: str = None) -> str:
+    if seq is None:
+        seq = get_next_counter("REG")
+    office_clean = re.sub(r'[^A-Z0-9]', '', str(office).upper())
+    location_clean = re.sub(r'[^A-Z0-9]', '', str(location).upper()[:3])
+    return f"{office_clean}-{location_clean}-REG-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
+
+
+def _transfer_filename(serial: str, office: str = "HO", location: str = "JEDDAH", seq: str = None) -> str:
+    if seq is None:
+        seq = get_next_counter("TRF")
+    office_clean = re.sub(r'[^A-Z0-9]', '', str(office).upper())
+    location_clean = re.sub(r'[^A-Z0-9]', '', str(location).upper()[:3])
+    return f"{office_clean}-{location_clean}-TRN-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
 
 
 HEADER_SYNONYMS = {
@@ -312,6 +322,18 @@ def _drive_download_bytes(file_id: str) -> bytes:
 # =============================================================================
 # SHEETS HELPERS
 # =============================================================================
+def get_next_counter(counter_type: str) -> str:
+    df = read_worksheet("counters")
+    if df.empty or counter_type not in df["Type"].values:
+        return "0001"
+
+    idx = df[df["Type"] == counter_type].index[0]
+    last_used = int(df.loc[idx, "LastUsed"])
+    next_val = last_used + 1
+    df.loc[idx, "LastUsed"] = next_val
+    write_worksheet("counters", df)
+    return str(next_val).zfill(4)  # pad with zeroes to 4 digits
+
 def _norm_header(h: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
 
