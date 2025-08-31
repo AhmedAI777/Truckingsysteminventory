@@ -920,21 +920,27 @@ def _config_check_ui():
         st.error("Cannot open spreadsheet with Service Account."); st.code(str(e)); st.stop()
 
 def run_app():
-    if st.session_state.role == "Admin":
-    tabs = st.tabs([
-        "📇 View Employees","📝 Register Device",
-        "📋 View Inventory","🔁 Transfer Device","📜 Transfer Log","✅ Approvals","⬇️ Export",
-    ])
-    with tabs[0]: employees_view_tab()
-    with tabs[1]: register_device_tab()
-    with tabs[2]: inventory_tab()
-    with tabs[3]: transfer_tab()
-    with tabs[4]: history_tab()
-    with tabs[5]: approvals_tab()
-    with tabs[6]: export_tab()
+    render_header()
+    _config_check_ui()
 
+    if st.session_state.role == "Admin":
+        tabs = st.tabs([
+            "📇 View Employees","📝 Register Device",
+            "📋 View Inventory","🔁 Transfer Device",
+            "📜 Transfer Log","✅ Approvals","⬇️ Export",
+        ])
+        with tabs[0]: employees_view_tab()
+        with tabs[1]: register_device_tab()
+        with tabs[2]: inventory_tab()
+        with tabs[3]: transfer_tab()
+        with tabs[4]: history_tab()
+        with tabs[5]: approvals_tab()
+        with tabs[6]: export_tab()
     else:
-        tabs = st.tabs(["📝 Register Device","🔁 Transfer Device","📋 View Inventory","📜 Transfer Log"])
+        tabs = st.tabs([
+            "📝 Register Device","🔁 Transfer Device",
+            "📋 View Inventory","📜 Transfer Log"
+        ])
         with tabs[0]: register_device_tab()
         with tabs[1]: transfer_tab()
         with tabs[2]: inventory_tab()
