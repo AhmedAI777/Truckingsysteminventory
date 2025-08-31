@@ -801,18 +801,20 @@ def register_device_tab():
                 "Notes": notes.strip(),
                 "Date issued": now_str, "Registered by": actor,
             }
-            try:
-                tpl_bytes = _drive_download_bytes(ICT_TEMPLATE_FILE_ID)
-                reg_vals  = build_registration_values(row, actor_name=actor, emp_df=emp_df)
-                filled    = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
-                st.success("Registration form generated. Sign it and upload below, then click Save Device.")
-                st.download_button(
-                    "📄 Download ICT Registration Form (pre-filled, TO blank)",
-                    data=filled, file_name=_ict_filename(serial), mime="application/pdf",
-                )
-            except Exception as e:
-                st.warning("ICT template form could not be generated. Check drive.template_file_id in secrets.")
-                st.caption(str(e))
+           try:
+    # Prefer a resilient fetch if you added it; else keep _drive_download_bytes
+    tpl_bytes = _drive_download_bytes(ICT_TEMPLATE_FILE_ID)
+    reg_vals  = build_registration_values(row, actor_name=actor, emp_df=emp_df)
+    filled    = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
+    st.success("Registration form generated. Sign it and upload below, then click Save Device.")
+    st.download_button(
+        "📄 Download ICT Registration Form (pre-filled, TO blank)",
+        data=filled, file_name=_ict_filename(serial), mime="application/pdf",
+    )
+except Exception as e:
+    st.error("Could not generate the registration PDF.")
+    st.caption(str(e))
+
 
     # Preview uploaded PDF
     if ss.get("reg_pdf"): ss.reg_pdf_ref = ss.reg_pdf
