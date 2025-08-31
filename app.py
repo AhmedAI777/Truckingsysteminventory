@@ -3,7 +3,7 @@
 #   pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas \
 #               google-auth google-api-python-client streamlit-pdf-viewer requests PyPDF2
 
-import os, re, io, glob, json, hmac, time, base64, hashlib
+import os, re, io, json, hmac, time, base64, hashlib
 from datetime import datetime, timedelta
 from typing import Tuple
 
@@ -460,7 +460,6 @@ def get_device_from_catalog_by_serial(serial: str) -> dict:
 # =============================================================================
 # PDF FILLING
 # =============================================================================
-# =========[ PDF FIELD MAP ]=========
 def _registration_field_map() -> dict[str, str]:
     """
     Matches 'Register and Transfer Device.pdf':
@@ -470,8 +469,11 @@ def _registration_field_map() -> dict[str, str]:
       Equip #2:   Text Field17..21
       Equip #3:   Text Field22..26
       Equip #4:   Text Field27..31
+
+    We fill only Equipment #1 by default. Aliases (eq_type/brand/model/specs/serial)
+    map to the first equipment block for convenience.
     """
-    fm = {
+    fm: dict[str, str] = {
         # ----- FROM header -----
         "from_name":       "Text Field0",
         "from_mobile":     "Text Field1",
@@ -489,31 +491,30 @@ def _registration_field_map() -> dict[str, str]:
         "to_location":     "Text Field11",
     }
 
-    # Equipment blocks
+    # Equipment blocks 1..4
     for blk in range(4):
-        base = 12 + blk*5
-        fm.update({
-            f"eq{blk+1}_type":   f"Text Field{base}",
-            f"eq{blk+1}_brand":  f"Text Field{base+1}",
-            f"eq{blk+1}_model":  f"Text Field{base+2}",
-            f"eq{blk+1}_specs":  f"Text Field{base+3}",
-            f"eq{blk+1}_serial": f"Text Field{base+4}",
-        })
+        base = 12 + blk * 5
+        fm[f"eq{blk+1}_type"]   = f"Text Field{base}"
+        fm[f"eq{blk+1}_brand"]  = f"Text Field{base+1}"
+        fm[f"eq{blk+1}_model"]  = f"Text Field{base+2}"
+        fm[f"eq{blk+1}_specs"]  = f"Text Field{base+3}"
+        fm[f"eq{blk+1}_serial"] = f"Text Field{base+4}"
+
+    # Aliases to Equipment #1 (used by build_* functions)
+    fm.update({
+        "eq_type":   fm["eq1_type"],
+        "eq_brand":  fm["eq1_brand"],
+        "eq_model":  fm["eq1_model"],
+        "eq_specs":  fm["eq1_specs"],
+        "eq_serial": fm["eq1_serial"],
+    })
+
+    # Allow overrides from secrets if a different PDF uses other field names
+    override = st.secrets.get("pdf", {}).get("reg_field_map", {})
+    if isinstance(override, dict) and override:
+        fm.update(override)
 
     return fm
-    
-fm = _registration_field_map()
-
-values.update({
-    fm["eq1_type"]:   device_row.get("Device Type",""),
-    fm["eq1_brand"]:  device_row.get("Brand",""),
-    fm["eq1_model"]:  device_row.get("Model",""),
-    fm["eq1_specs"]:  specs_txt,
-    fm["eq1_serial"]: device_row.get("Serial Number",""),
-})
-
-
-    return {**default, **st.secrets.get("pdf", {}).get("reg_field_map", {})}
 
 def fill_pdf_form(template_bytes: bytes, values: dict[str,str], *, flatten: bool = True) -> bytes:
     reader = PdfReader(io.BytesIO(template_bytes)); writer = PdfWriter()
@@ -547,8 +548,14 @@ def build_registration_values(device_row: dict, *, actor_name: str) -> dict[str,
         fm["from_department"]: device_row.get("Department",""),
         fm["from_date"]:       datetime.now().strftime("%Y-%m-%d"),
         fm["from_location"]:   device_row.get("Location",""),
+        # TO header intentionally blank for registration
+        fm["to_name"]:         "",
+        fm["to_mobile"]:       "",
+        fm["to_email"]:        "",
+        fm["to_department"]:   "",
+        fm["to_date"]:         "",
+        fm["to_location"]:     "",
     }
-    # TO remains blank on registration
     specs = []
     for label in ["CPU","Memory","GPU","Hard Drive 1","Hard Drive 2","Screen Size","Office","Notes"]:
         val = str(device_row.get(label, "")).strip()
@@ -691,7 +698,6 @@ def register_device_tab():
         else:
             st.success("Loaded from catalog. Re-open the form fields to see values.")
             st.experimental_set_query_params()  # noop to show a message
-            # Just echo for user clarity
             st.json(cat)
 
     # Optional live preview
@@ -988,6 +994,22 @@ def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
     df.loc[idx, "Approver"] = st.session_state.get("username", "")
     df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
     write_worksheet(ws_title, df)
+
+def _reject_row(ws_title: str, i: int, row: pd.Series):
+    df = read_worksheet(ws_title)
+    key_cols = [c for c in ["Serial Number","Submitted at","Submitted by","To owner"] if c in df.columns]
+    mask = pd.Series([True] * len(df))
+    for c in key_cols: mask &= df[c].astype(str) == str(row.get(c, ""))
+    idxs = df[mask].index.tolist()
+    if not idxs and "Serial Number" in df.columns:
+        idxs = df[df["Serial Number"].astype(str) == str(row.get("Serial Number",""))].index.tolist()
+    if not idxs: return
+    idx = idxs[0]
+    df.loc[idx, "Approval Status"] = "Rejected"
+    df.loc[idx, "Approver"] = st.session_state.get("username","")
+    df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
+    write_worksheet(ws_title, df)
+    st.success("❌ Request rejected.")
 
 def export_tab():
     st.subheader("⬇️ Export (always fresh)")
