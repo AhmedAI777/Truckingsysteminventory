@@ -362,6 +362,50 @@ def move_drive_file(file_id: str, office: str, city_code: str, action: str, deci
         supportsAllDrives=True
     ).execute()
 
+def upload_pdf_and_get_link(file_obj, *, prefix: str, office: str, city_code: str, action: str) -> tuple[str, str]:
+    """
+    Upload a signed PDF to Google Drive into:
+        approvals / <office> / <city> / <action> / Pending
+    Example:
+        approvals/Head Office (HO)/Jeddah (JED)/Register/Pending
+
+    Returns:
+        (share_link, file_id)
+    """
+    try:
+        drive_cli = _get_drive()
+        root_id = st.secrets.get("drive", {}).get("approvals", "")
+        if not root_id:
+            st.error("Drive approvals folder not configured in secrets.")
+            return "", ""
+
+        # Ensure folder structure exists
+        city_folder = city_folder_name(city_code)
+        path_parts = [office, city_folder, action, "Pending"]
+        folder_id = ensure_drive_subfolder(root_id, path_parts, drive_cli)
+
+        # Prepare file metadata
+        today = datetime.now().strftime("%Y%m%d")
+        fname = f"{prefix}_{today}.pdf"
+        meta = {"name": fname, "parents": [folder_id], "mimeType": "application/pdf"}
+
+        # Upload file
+        media = MediaIoBaseUpload(file_obj, mimetype="application/pdf", resumable=True)
+        f = drive_cli.files().create(
+            body=meta,
+            media_body=media,
+            fields="id, webViewLink",
+            supportsAllDrives=True,
+        ).execute()
+
+        return f.get("webViewLink", ""), f.get("id", "")
+
+    except Exception as e:
+        st.error(f"Error uploading PDF: {e}")
+        return "", ""
+
+
+
 # =============================================================================
 # SHEETS HELPERS
 # =============================================================================
@@ -916,11 +960,15 @@ def register_device_tab():
             "Notes": notes.strip(),
             "Date issued": now_str, "Registered by": actor,
         }
-        link, fid = upload_pdf_and_link(pdf_file_obj,
-            prefix=f"device_{normalize_serial(serial)}",
-            office="Head Office (HO)",
-            city_code=row.get("Location", ""),
-            action="Register"
+        link, fid = upload_pdf_and_get_link(
+    pdf_file_obj,
+    prefix=f"device_{normalize_serial(serial)}",
+    office="Head Office (HO)",
+    city_code=row.get("Location", ""),
+    action="Register"
+)
+
+
         )
         if not fid:
             return
@@ -1006,29 +1054,44 @@ def transfer_tab():
         return
 
     device_choices = inv_df["Serial Number"].dropna().tolist()
-    new_owner_choices = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
+    new_owner_choices = sorted({*unique_nonempty(emp_df, "New Employeer"),
+                                *unique_nonempty(emp_df, "Name")})
 
     with st.form("transfer_device", clear_on_submit=True):
-        serial   = st.selectbox("Select Device (Serial Number)", device_choices)
+        serial    = st.selectbox("Select Device (Serial Number)", device_choices)
         new_owner = st.selectbox("Transfer To (Employee)", new_owner_choices)
         notes     = st.text_area("Notes")
 
-        submitted = st.form_submit_button("Submit Transfer", type="primary")
+        st.markdown("**Signed ICT Transfer Form (PDF)**")
+        pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="trf_pdf")
+
+        submitted = st.form_submit_button("Save Transfer", type="primary")
 
     if submitted:
+        if not serial.strip() or not new_owner.strip():
+            st.error("Device Serial and New Owner are required.")
+            return
+
+        if pdf_file is None:
+            st.error("Signed ICT Transfer PDF is required.")
+            return
+
         row = inv_df[inv_df["Serial Number"] == serial].iloc[0].to_dict()
         now_str = datetime.now().strftime(DATE_FMT)
         actor   = st.session_state.get("username", "")
 
-        # Fill PDF
-        tpl_bytes = _download_template_bytes_or_public(TRANSFER_TEMPLATE_FILE_ID)
-        pdf_vals  = build_transfer_values(pd.Series(row), new_owner, emp_df=emp_df)
-        filled    = fill_pdf_form(tpl_bytes, pdf_vals, flatten=True)
+        # Upload signed PDF into Transfer/Pending
+        link, fid = upload_pdf_and_get_link(
+            pdf_file,
+            prefix=f"transfer_{normalize_serial(serial)}",
+            office="Head Office (HO)",
+            city_code=row.get("Location", ""),
+            action="Transfer"
+        )
+        if not fid:
+            return
 
-        fname = _transfer_filename(serial)
-        st.download_button("📄 Download Transfer Form", data=filled, file_name=fname)
-
-        # Save Pending in Sheets
+        # Save transfer request in Pending Transfers sheet
         pending = {
             "Device Type": row.get("Device Type",""),
             "Serial Number": row.get("Serial Number",""),
@@ -1037,15 +1100,18 @@ def transfer_tab():
             "Date issued": now_str,
             "Registered by": actor,
             "Approval Status": "Pending",
-            "Approval PDF": "",
-            "Approval File ID": "",
+            "Approval PDF": link,
+            "Approval File ID": fid,
             "Submitted by": actor,
             "Submitted at": now_str,
             "Approver": "",
             "Decision at": "",
+            "Notes": notes.strip(),
         }
         append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
-        st.success("🕒 Transfer request submitted for admin approval.")
+
+        st.success("🕒 Transfer request submitted for Admin approval.")
+
 
 
 def approvals_tab():
