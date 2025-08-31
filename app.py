@@ -291,12 +291,40 @@ def _is_pdf_bytes(data: bytes) -> bool:
 
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
     """Upload PDF to Drive. Try SA first; on 403 storage quota, fall back to OAuth user (My Drive)."""
-    if uploaded_file is None: return "", ""
-    if getattr(uploaded_file, "type", "") not in ("application/pdf","application/x-pdf","binary/octet-stream"):
-        st.error("Only PDF files are allowed."); return "", ""
-    data = uploaded_file.getvalue()
-    if not _is_pdf_bytes(data):
-        st.error("The uploaded file doesn't look like a real PDF."); return "", ""
+    if uploaded_file is None:
+        st.error("No file selected.")
+        return "", ""
+
+    # Accept common PDF MIME types
+    allowed = {
+        "application/pdf",
+        "application/x-pdf",
+        "application/octet-stream",   # <-- IMPORTANT: browsers often use this
+        "binary/octet-stream",
+    }
+    mime = getattr(uploaded_file, "type", "") or ""
+    name = getattr(uploaded_file, "name", "file.pdf")
+
+    # Read bytes once
+    try:
+        data = uploaded_file.getvalue()
+    except Exception as e:
+        st.error(f"Failed reading the uploaded file: {e}")
+        return "", ""
+
+    if not data:
+        st.error("Uploaded file is empty.")
+        return "", ""
+
+    # Light PDF validation: allow octet-stream if name endswith .pdf or header matches
+    is_pdf_magic = data[:4] == b"%PDF"
+    looks_like_pdf = name.lower().endswith(".pdf") or is_pdf_magic
+    if mime not in allowed and not looks_like_pdf:
+        st.error(f"Only PDF files are allowed. Got type '{mime}' and name '{name}'.")
+        return "", ""
+    if not is_pdf_magic:
+        # Proceed anyway—some producers prepend bytes; Drive will store it fine.
+        st.warning("File doesn't start with %PDF header—but continuing. If Drive rejects it, please re-export the PDF.")
 
     fname = f"{prefix}_{int(time.time())}.pdf"
     folder_id = st.secrets.get("drive", {}).get("approvals", "")
@@ -312,19 +340,40 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
             body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=True,
         ).execute()
     except HttpError as e:
+        # If SA quota exceeded, optionally fall back to OAuth
         if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
             if not ALLOW_OAUTH_FALLBACK:
-                st.error("Service Account cannot upload to My Drive. Move folder to a Shared drive or enable OAuth fallback."); st.stop()
-            drive_cli = _get_user_drive()
-            file = drive_cli.files().create(
-                body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=False,
-            ).execute()
+                st.error("Service Account quota exceeded and OAuth fallback disabled.")
+                return "", ""
+            try:
+                drive_cli = _get_user_drive()
+                file = drive_cli.files().create(
+                    body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=False,
+                ).execute()
+            except Exception as e2:
+                st.error(f"OAuth upload failed: {e2}")
+                return "", ""
         else:
-            raise
+            st.error(f"Drive upload failed: {e}")
+            return "", ""
+    except Exception as e:
+        st.error(f"Unexpected error uploading to Drive: {e}")
+        return "", ""
 
     file_id = file.get("id", ""); link = file.get("webViewLink", "")
-    if st.secrets.get("drive", {}).get("public", True) and file_id: _drive_make_public(file_id, drive_client=drive_cli)
+    if not file_id:
+        st.error("Drive did not return a file id.")
+        return "", ""
+
+    # Make public if configured (ignore failures)
+    try:
+        if st.secrets.get("drive", {}).get("public", True):
+            _drive_make_public(file_id, drive_client=drive_cli)
+    except Exception:
+        pass
+
     return link, file_id
+
 
 def _fetch_public_pdf_bytes(file_id: str, link: str) -> bytes:
     try:
@@ -832,95 +881,96 @@ def register_device_tab():
                 st.caption(str(e))
 
     # --- Save (PDF required for all roles)
-    if submitted:
-        if not serial.strip() or not device.strip():
-            st.error("Serial Number and Device Type are required.")
-            return
-        if pdf_file is None:
-            st.error("Signed ICT Registration PDF is required for submission.")
-            return
+    # --- Save (PDF required for all roles)
+if submitted:
+    if not serial.strip() or not device.strip():
+        st.error("Serial Number and Device Type are required.")
+        return
 
-        s_norm = normalize_serial(serial)
-        if not s_norm:
-            st.error("Serial Number cannot be blank after normalization.")
-            return
+    # Prefer the widget variable, fall back to session_state to be safe
+    pdf_file_obj = pdf_file or ss.get("reg_pdf")
+    if pdf_file_obj is None:
+        st.error("Signed ICT Registration PDF is required for submission.")
+        return
 
-        now_str = datetime.now().strftime(DATE_FMT)
-        actor   = st.session_state.get("username", "")
-        row = {
-            "Serial Number": serial.strip(),
-            "Device Type": device.strip(),
-            "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
-            "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
-            "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
-            "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-            "Previous User": "", "TO": "",
-            "Department": st.session_state.get("reg_dept","").strip(),
-            "Email Address": st.session_state.get("reg_email","").strip(),
-            "Contact Number": st.session_state.get("reg_contact","").strip(),
-            "Location": st.session_state.get("reg_location","").strip(),
-            "Office": st.session_state.get("reg_office","").strip(),
-            "Notes": notes.strip(),
-            "Date issued": now_str, "Registered by": actor,
-        }
+    s_norm = normalize_serial(serial)
+    if not s_norm:
+        st.error("Serial Number cannot be blank after normalization.")
+        return
 
-        with st.status("Uploading signed PDF…", expanded=True) as status:
-            try:
-                status.write("Validating file...")
-                if getattr(pdf_file, "size", 0) > 50 * 1024 * 1024:
-                    st.error("PDF is larger than 50MB; please compress before uploading.")
-                    status.update(label="Upload aborted", state="error")
-                    return
+    now_str = datetime.now().strftime(DATE_FMT)
+    actor   = st.session_state.get("username", "")
+    row = {
+        "Serial Number": serial.strip(),
+        "Device Type": device.strip(),
+        "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
+        "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
+        "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
+        "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
+        "Previous User": "", "TO": "",
+        "Department": st.session_state.get("reg_dept","").strip(),
+        "Email Address": st.session_state.get("reg_email","").strip(),
+        "Contact Number": st.session_state.get("reg_contact","").strip(),
+        "Location": st.session_state.get("reg_location","").strip(),
+        "Office": st.session_state.get("reg_office","").strip(),
+        "Notes": notes.strip(),
+        "Date issued": now_str, "Registered by": actor,
+    }
 
-                status.write("Sending to Google Drive…")
-                link, fid = upload_pdf_and_link(pdf_file, prefix=f"device_{s_norm}")
-                if not fid:
-                    status.update(label="Upload failed", state="error")
-                    st.error("Upload failed. Please check your Drive settings and try again.")
-                    return
+    with st.status("Uploading signed PDF…", expanded=True) as status:
+        try:
+            status.write(f"File: {getattr(pdf_file_obj,'name','(no name)')} | "
+                         f"MIME: {getattr(pdf_file_obj,'type','(unknown)')} | "
+                         f"Size: {getattr(pdf_file_obj,'size',0)} bytes")
 
-                status.write("Upload complete. Writing to Sheets…")
-                is_admin = st.session_state.get("role") == "Admin"
-                if is_admin:
-                    inv = read_worksheet(INVENTORY_WS)
-                    inv_out = pd.concat(
-                        [inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS), pd.DataFrame([row])],
-                        ignore_index=True
-                    )
-                    inv_out = reorder_columns(inv_out, INVENTORY_COLS)
-                    write_worksheet(INVENTORY_WS, inv_out)
+            status.write("Sending to Google Drive…")
+            link, fid = upload_pdf_and_link(pdf_file_obj, prefix=f"device_{s_norm}")
+            if not fid:
+                status.update(label="Upload failed", state="error")
+                return
 
-                    pending = {
-                        **row,
-                        "Approval Status": "Approved",
-                        "Approval PDF": link,
-                        "Approval File ID": fid,
-                        "Submitted by": actor,
-                        "Submitted at": now_str,
-                        "Approver": actor,
-                        "Decision at": now_str,
-                    }
-                    append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-                    status.update(label="Saved to Sheets", state="complete")
-                    st.success("✅ Device registered and added to Inventory. Signed PDF stored.")
-                else:
-                    pending = {
-                        **row,
-                        "Approval Status": "Pending",
-                        "Approval PDF": link,
-                        "Approval File ID": fid,
-                        "Submitted by": actor,
-                        "Submitted at": now_str,
-                        "Approver": "",
-                        "Decision at": "",
-                    }
-                    append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-                    status.update(label="Submitted for approval", state="complete")
-                    st.success("🕒 Submitted for admin approval. You'll see it in Inventory once approved.")
-            except Exception as e:
-                status.update(label="Error during upload/save", state="error")
-                st.error("An error occurred while uploading or saving.")
-                st.caption(str(e))
+            status.write("Upload complete. Writing to Sheets…")
+            is_admin = st.session_state.get("role") == "Admin"
+            if is_admin:
+                inv = read_worksheet(INVENTORY_WS)
+                inv_out = pd.concat(
+                    [inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS), pd.DataFrame([row])],
+                    ignore_index=True
+                )
+                inv_out = reorder_columns(inv_out, INVENTORY_COLS)
+                write_worksheet(INVENTORY_WS, inv_out)
+
+                pending = {
+                    **row,
+                    "Approval Status": "Approved",
+                    "Approval PDF": link,
+                    "Approval File ID": fid,
+                    "Submitted by": actor,
+                    "Submitted at": now_str,
+                    "Approver": actor,
+                    "Decision at": now_str,
+                }
+                append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+                status.update(label="Saved to Sheets", state="complete")
+                st.success("✅ Device registered and added to Inventory. Signed PDF stored.")
+            else:
+                pending = {
+                    **row,
+                    "Approval Status": "Pending",
+                    "Approval PDF": link,
+                    "Approval File ID": fid,
+                    "Submitted by": actor,
+                    "Submitted at": now_str,
+                    "Approver": "",
+                    "Decision at": "",
+                }
+                append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+                status.update(label="Submitted for approval", state="complete")
+                st.success("🕒 Submitted for admin approval. You'll see it in Inventory once approved.")
+        except Exception as e:
+            status.update(label="Error during upload/save", state="error")
+            st.error("An error occurred while uploading or saving.")
+            st.caption(str(e))
 
 
 
