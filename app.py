@@ -538,16 +538,49 @@ def fill_pdf_form(template_bytes: bytes, values: dict[str,str], *, flatten: bool
         except Exception: pass
     out = io.BytesIO(); writer.write(out); out.seek(0); return out.read()
 
-def build_registration_values(device_row: dict, *, actor_name: str) -> dict[str,str]:
+def _find_emp_row_by_name(emp_df: pd.DataFrame, name: str):
+    if emp_df is None or emp_df.empty or not name:
+        return None
+    cand = emp_df[
+        (emp_df.get("New Employeer", "").astype(str).str.strip() == name.strip()) |
+        (emp_df.get("Name", "").astype(str).str.strip() == name.strip())
+    ]
+    return cand.iloc[0] if not cand.empty else None
+
+def build_registration_values(
+    device_row: dict,
+    *,
+    actor_name: str,
+    emp_df: pd.DataFrame | None = None
+) -> dict[str, str]:
     fm = _registration_field_map()
+
+    curr_owner = str(device_row.get("Current user", "")).strip()
+    is_unassigned = (not curr_owner) or (curr_owner == UNASSIGNED_LABEL)
+
+    from_name = curr_owner if not is_unassigned else (actor_name or device_row.get("Registered by", ""))
+    from_mobile   = str(device_row.get("Contact Number", "") or "")
+    from_email    = str(device_row.get("Email Address", "") or "")
+    from_dept     = str(device_row.get("Department", "") or "")
+    from_location = str(device_row.get("Location", "") or "")
+
+    if not is_unassigned and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
+        r = _find_emp_row_by_name(emp_df, curr_owner)
+        if r is not None:
+            from_mobile   = from_mobile   or str(r.get("Mobile Number", "") or "")
+            from_email    = from_email    or str(r.get("Email", "") or "")
+            from_dept     = from_dept     or str(r.get("Department", "") or "")
+            from_location = from_location or str(r.get("Location (KSA)", "") or "")
+
     values = {
-        fm["from_name"]:       actor_name or device_row.get("Registered by",""),
-        fm["from_mobile"]:     device_row.get("Contact Number",""),
-        fm["from_email"]:      device_row.get("Email Address",""),
-        fm["from_department"]: device_row.get("Department",""),
+        fm["from_name"]:       from_name,
+        fm["from_mobile"]:     from_mobile,
+        fm["from_email"]:      from_email,
+        fm["from_department"]: from_dept,
         fm["from_date"]:       datetime.now().strftime("%Y-%m-%d"),
-        fm["from_location"]:   device_row.get("Location",""),
-        # TO header intentionally blank for registration
+        fm["from_location"]:   from_location,
+
+        # TO stays blank on registration
         fm["to_name"]:         "",
         fm["to_mobile"]:       "",
         fm["to_email"]:        "",
@@ -555,11 +588,13 @@ def build_registration_values(device_row: dict, *, actor_name: str) -> dict[str,
         fm["to_date"]:         "",
         fm["to_location"]:     "",
     }
+
     specs = []
     for label in ["CPU","Memory","GPU","Hard Drive 1","Hard Drive 2","Screen Size","Office","Notes"]:
         val = str(device_row.get(label, "")).strip()
         if val: specs.append(f"{label}: {val}")
     specs_txt = " | ".join(specs)
+
     values.update({
         fm["eq_type"]:   device_row.get("Device Type",""),
         fm["eq_brand"]:  device_row.get("Brand",""),
@@ -646,44 +681,72 @@ def inventory_tab():
 def register_device_tab():
     st.subheader("📝 Register New Device")
 
-    # --- UI
-    with st.form("register_device", clear_on_submit=False):  # keep form values when generating PDF
+    # Ensure session keys exist for auto-filled fields
+    for k in ("reg_email","reg_contact","reg_dept","reg_location","current_owner","current_owner_prev"):
+        st.session_state.setdefault(k, "")
+
+    # Owner picker OUTSIDE the form so that selection instantly reruns and fills fields
+    emp_df = read_worksheet(EMPLOYEE_WS)
+    employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
+    owner_options = [UNASSIGNED_LABEL] + employee_names
+
+    st.selectbox(
+        "Current owner (at registration)",
+        owner_options,
+        index=owner_options.index(st.session_state["current_owner"]) if st.session_state["current_owner"] in owner_options else 0,
+        key="current_owner",
+        help="Choosing an employee auto-fills contact, email, department and location.",
+    )
+
+    # If owner changed, auto-fill fields from Employees sheet
+    if st.session_state["current_owner"] != st.session_state.get("current_owner_prev"):
+        owner = st.session_state["current_owner"]
+        if owner and owner != UNASSIGNED_LABEL:
+            r = _find_emp_row_by_name(emp_df, owner)
+            if r is not None:
+                st.session_state["reg_contact"]  = str(r.get("Mobile Number", "") or "")
+                st.session_state["reg_email"]    = str(r.get("Email", "") or "")
+                st.session_state["reg_dept"]     = str(r.get("Department", "") or "")
+                st.session_state["reg_location"] = str(r.get("Location (KSA)", "") or "")
+        else:
+            for key in ("reg_contact","reg_email","reg_dept","reg_location"):
+                st.session_state[key] = ""
+        st.session_state["current_owner_prev"] = st.session_state["current_owner"]
+
+    # --- UI form (kept so the two submit buttons work together)
+    with st.form("register_device", clear_on_submit=False):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1: serial = st.text_input("Serial Number *")
-        with r1c2:
-            st.caption("Owner will be assigned during TRANSFER, not on registration.")
-            assigned_to = UNASSIGNED_LABEL
-        with r1c3: device = st.text_input("Device Type *")
+        with r1c2: device = st.text_input("Device Type *")
+        with r1c3: brand  = st.text_input("Brand")
 
         r2c1, r2c2, r2c3 = st.columns(3)
-        with r2c1: brand  = st.text_input("Brand")
-        with r2c2: model  = st.text_input("Model")
-        with r2c3: cpu    = st.text_input("CPU")
+        with r2c1: model  = st.text_input("Model")
+        with r2c2: cpu    = st.text_input("CPU")
+        with r2c3: mem    = st.text_input("Memory")
 
         r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1: mem  = st.text_input("Memory")
-        with r3c2: hdd1 = st.text_input("Hard Drive 1")
-        with r3c3: hdd2 = st.text_input("Hard Drive 2")
+        with r3c1: hdd1 = st.text_input("Hard Drive 1")
+        with r3c2: hdd2 = st.text_input("Hard Drive 2")
+        with r3c3: gpu  = st.text_input("GPU")
 
         r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1: gpu    = st.text_input("GPU")
-        with r4c2: screen = st.text_input("Screen Size")
-        with r4c3: email  = st.text_input("Email Address")
+        with r4c1: screen = st.text_input("Screen Size")
+        with r4c2: email  = st.text_input("Email Address", key="reg_email")
+        with r4c3: contact = st.text_input("Contact Number", key="reg_contact")
 
         r5c1, r5c2, r5c3 = st.columns(3)
-        with r5c1: contact  = st.text_input("Contact Number")
-        with r5c2: dept     = st.text_input("Department")
-        with r5c3: location = st.text_input("Location")
+        with r5c1: dept     = st.text_input("Department", key="reg_dept")
+        with r5c2: location = st.text_input("Location", key="reg_location")
+        with r5c3: office   = st.text_input("Office")
 
-        r6c1, r6c2 = st.columns([1,2])
-        with r6c1: office = st.text_input("Office")
-        with r6c2: notes  = st.text_area("Notes", height=80)
+        notes = st.text_area("Notes", height=80)
 
         st.divider()
         # Repurposed button: generate a pre-filled registration PDF (TO blank)
         c_download = st.form_submit_button("Download register new device", use_container_width=True)
 
-        # Signed PDF uploader (for all roles)
+        # Signed PDF uploader (required for ALL roles)
         st.markdown("**Signed ICT Equipment Form (PDF)** — required for submission")
         pdf_file = st.file_uploader("Drag & drop signed PDF here", type=["pdf"], key="reg_pdf")
         submitted = st.form_submit_button("Save Device", type="primary", use_container_width=True)
@@ -701,15 +764,18 @@ def register_device_tab():
                 "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
                 "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
                 "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
-                "Current user": UNASSIGNED_LABEL, "Previous User": "", "TO": "",
-                "Department": dept.strip(), "Email Address": email.strip(),
-                "Contact Number": contact.strip(), "Location": location.strip(),
+                "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
+                "Previous User": "", "TO": "",
+                "Department": st.session_state.get("reg_dept","").strip(),
+                "Email Address": st.session_state.get("reg_email","").strip(),
+                "Contact Number": st.session_state.get("reg_contact","").strip(),
+                "Location": st.session_state.get("reg_location","").strip(),
                 "Office": office.strip(), "Notes": notes.strip(),
                 "Date issued": now_str, "Registered by": actor,
             }
             try:
                 tpl_bytes = _drive_download_bytes(ICT_TEMPLATE_FILE_ID)
-                reg_vals  = build_registration_values(row, actor_name=actor)
+                reg_vals  = build_registration_values(row, actor_name=actor, emp_df=emp_df)
                 filled    = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
                 st.success("Registration form generated. Sign it and upload below, then click Save Device.")
                 st.download_button(
@@ -727,7 +793,7 @@ def register_device_tab():
         try: pdf_viewer(input=ss.reg_pdf_ref.getvalue(), width=700, key="viewer_reg")
         except Exception: pass
 
-    # Submit handling
+    # Submit handling (PDF required for all)
     if submitted:
         if not serial.strip() or not device.strip():
             st.error("Serial Number and Device Type are required."); return
@@ -744,9 +810,12 @@ def register_device_tab():
             "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
             "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
             "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
-            "Current user": UNASSIGNED_LABEL, "Previous User": "", "TO": "",
-            "Department": dept.strip(), "Email Address": email.strip(),
-            "Contact Number": contact.strip(), "Location": location.strip(),
+            "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
+            "Previous User": "", "TO": "",
+            "Department": st.session_state.get("reg_dept","").strip(),
+            "Email Address": st.session_state.get("reg_email","").strip(),
+            "Contact Number": st.session_state.get("reg_contact","").strip(),
+            "Location": st.session_state.get("reg_location","").strip(),
             "Office": office.strip(), "Notes": notes.strip(),
             "Date issued": now_str, "Registered by": actor,
         }
@@ -756,13 +825,11 @@ def register_device_tab():
         if not fid: return
 
         if is_admin:
-            # Add to inventory immediately
             inv = read_worksheet(INVENTORY_WS)
             inv_out = pd.concat([inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS),
                                  pd.DataFrame([row])], ignore_index=True)
             inv_out = reorder_columns(inv_out, INVENTORY_COLS); write_worksheet(INVENTORY_WS, inv_out)
 
-            # Audit trail in pending sheet as Approved
             pending = {**row,
                 "Approval Status": "Approved", "Approval PDF": link, "Approval File ID": fid,
                 "Submitted by": actor, "Submitted at": now_str, "Approver": actor, "Decision at": now_str,
