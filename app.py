@@ -741,6 +741,39 @@ def render_header():
             do_logout()
     st.markdown("---")
 
+def employee_register_tab():
+    st.subheader("🧑‍💼 Register New Employee")
+
+    with st.form("employee_register", clear_on_submit=True):
+        name   = st.text_input("Full Name *")
+        emp_id = st.text_input("Employee ID *")
+        email  = st.text_input("Email Address")
+        mobile = st.text_input("Mobile Number")
+        dept   = st.text_input("Department")
+        loc    = st.text_input("Location (KSA)")
+        proj   = st.text_input("Project / Office")
+
+        submitted = st.form_submit_button("Save Employee", type="primary")
+
+    if submitted:
+        if not name.strip() or not emp_id.strip():
+            st.error("Name and Employee ID are required.")
+            return
+
+        new_row = {
+            "New Employeer": name.strip(),
+            "Employee ID": emp_id.strip(),
+            "Email": email.strip(),
+            "Mobile Number": mobile.strip(),
+            "Department": dept.strip(),
+            "Location (KSA)": loc.strip(),
+            "Project": proj.strip(),
+            "Active": "Yes",
+        }
+
+        append_to_worksheet(EMPLOYEE_WS, pd.DataFrame([new_row]))
+        st.success(f"✅ Employee '{name}' registered.")
+
 def employees_view_tab():
     st.subheader("📇 Employees (mainlists)")
     df = read_worksheet(EMPLOYEE_WS)
@@ -1226,18 +1259,19 @@ def run_app():
     _config_check_ui()
 
     if st.session_state.role == "Admin":
-        tabs = st.tabs([
-            "📇 View Employees","📝 Register Device",
-            "📋 View Inventory","🔁 Transfer Device",
-            "📜 Transfer Log","✅ Approvals","⬇️ Export",
-        ])
-        with tabs[0]: employees_view_tab()
-        with tabs[1]: register_device_tab()
-        with tabs[2]: inventory_tab()
-        with tabs[3]: transfer_tab()
-        with tabs[4]: history_tab()
-        with tabs[5]: approvals_tab()
-        with tabs[6]: export_tab()
+    tabs = st.tabs([
+        "🧑‍💼 Employee Register","📇 View Employees","📝 Register Device",
+        "📋 View Inventory","🔁 Transfer Device","📜 Transfer Log","✅ Approvals","⬇️ Export",
+    ])
+    with tabs[0]: employee_register_tab()
+    with tabs[1]: employees_view_tab()
+    with tabs[2]: register_device_tab()
+    with tabs[3]: inventory_tab()
+    with tabs[4]: transfer_tab()
+    with tabs[5]: history_tab()
+    with tabs[6]: approvals_tab()
+    with tabs[7]: export_tab()
+
     else:
         tabs = st.tabs([
             "📝 Register Device","🔁 Transfer Device",
