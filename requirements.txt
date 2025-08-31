@@ -20,6 +20,7 @@ streamlit-drawable-canvas==0.9.3
 PyPDF2
 reportlab
 pdfrw
+XlsxWriter==3.2.0
 
 
 
