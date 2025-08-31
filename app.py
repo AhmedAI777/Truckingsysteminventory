@@ -509,7 +509,6 @@ def _registration_field_map() -> dict[str, str]:
         "eq_serial": fm["eq1_serial"],
     })
 
-    # Allow overrides from secrets if a different PDF uses other field names
     override = st.secrets.get("pdf", {}).get("reg_field_map", {})
     if isinstance(override, dict) and override:
         fm.update(override)
@@ -648,7 +647,7 @@ def register_device_tab():
     st.subheader("📝 Register New Device")
 
     # --- UI
-    with st.form("register_device", clear_on_submit=True):
+    with st.form("register_device", clear_on_submit=False):  # keep form values when generating PDF
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1: serial = st.text_input("Serial Number *")
         with r1c2:
@@ -680,27 +679,48 @@ def register_device_tab():
         with r6c1: office = st.text_input("Office")
         with r6c2: notes  = st.text_area("Notes", height=80)
 
-        # Catalog fill
         st.divider()
-        c_load = st.form_submit_button("🔎 Load from catalog", use_container_width=True)
-        # Signed PDF uploader (for staff)
-        st.markdown("**Signed ICT Equipment Form (PDF)** — required for non-admin")
+        # Repurposed button: generate a pre-filled registration PDF (TO blank)
+        c_download = st.form_submit_button("Download register new device", use_container_width=True)
+
+        # Signed PDF uploader (for all roles)
+        st.markdown("**Signed ICT Equipment Form (PDF)** — required for submission")
         pdf_file = st.file_uploader("Drag & drop signed PDF here", type=["pdf"], key="reg_pdf")
         submitted = st.form_submit_button("Save Device", type="primary", use_container_width=True)
 
-    # Catalog action
-    if c_load:
-        if not serial.strip():
-            st.error("Enter a Serial Number first, then click Load."); return
-        cat = get_device_from_catalog_by_serial(serial)
-        if not cat:
-            st.warning("Serial not found in catalog.")
+    # Handle "Download register new device"
+    if c_download:
+        if not serial.strip() or not device.strip():
+            st.error("Serial Number and Device Type are required before generating the form.")
         else:
-            st.success("Loaded from catalog. Re-open the form fields to see values.")
-            st.experimental_set_query_params()  # noop to show a message
-            st.json(cat)
+            now_str = datetime.now().strftime(DATE_FMT)
+            actor = st.session_state.get("username", "")
+            row = {
+                "Serial Number": serial.strip(),
+                "Device Type": device.strip(),
+                "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
+                "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
+                "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
+                "Current user": UNASSIGNED_LABEL, "Previous User": "", "TO": "",
+                "Department": dept.strip(), "Email Address": email.strip(),
+                "Contact Number": contact.strip(), "Location": location.strip(),
+                "Office": office.strip(), "Notes": notes.strip(),
+                "Date issued": now_str, "Registered by": actor,
+            }
+            try:
+                tpl_bytes = _drive_download_bytes(ICT_TEMPLATE_FILE_ID)
+                reg_vals  = build_registration_values(row, actor_name=actor)
+                filled    = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
+                st.success("Registration form generated. Sign it and upload below, then click Save Device.")
+                st.download_button(
+                    "📄 Download ICT Registration Form (pre-filled, TO blank)",
+                    data=filled, file_name=_ict_filename(serial), mime="application/pdf",
+                )
+            except Exception as e:
+                st.warning("ICT template form could not be generated. Check drive.template_file_id in secrets.")
+                st.caption(str(e))
 
-    # Optional live preview
+    # Optional live preview of uploaded signed PDF
     if ss.get("reg_pdf"): ss.reg_pdf_ref = ss.reg_pdf
     if ss.reg_pdf_ref:
         st.caption("Preview: Uploaded signed PDF")
@@ -711,10 +731,12 @@ def register_device_tab():
     if submitted:
         if not serial.strip() or not device.strip():
             st.error("Serial Number and Device Type are required."); return
+        if pdf_file is None:
+            st.error("Signed ICT Registration PDF is required for submission."); return
+
         s_norm = normalize_serial(serial)
         if not s_norm: st.error("Serial Number cannot be blank after normalization."); return
 
-        # Build row (no 'TO' user on registration)
         now_str = datetime.now().strftime(DATE_FMT); actor = st.session_state.get("username", "")
         row = {
             "Serial Number": serial.strip(),
@@ -729,33 +751,25 @@ def register_device_tab():
             "Date issued": now_str, "Registered by": actor,
         }
 
-        # Offer pre-filled, non-editable Registration PDF (TO left blank)
-        try:
-            tpl_bytes = _drive_download_bytes(ICT_TEMPLATE_FILE_ID)
-            reg_vals  = build_registration_values(row, actor_name=actor)
-            filled    = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
-            st.download_button(
-                "📄 Download ICT Registration Form (pre-filled, TO blank)",
-                data=filled, file_name=_ict_filename(serial), mime="application/pdf",
-                help="Sign, then upload the signed PDF above (if you are not admin)."
-            )
-        except Exception as e:
-            st.warning("ICT template form could not be generated. Check drive.template_file_id in secrets.")
-            st.caption(str(e))
-
         is_admin = st.session_state.get("role") == "Admin"
-        if not is_admin and pdf_file is None:
-            st.error("Signed ICT Registration PDF is required for submission."); return
+        link, fid = upload_pdf_and_link(pdf_file, prefix=f"device_{s_norm}")
+        if not fid: return
 
-        if is_admin and pdf_file is None:
+        if is_admin:
+            # Add to inventory immediately
             inv = read_worksheet(INVENTORY_WS)
             inv_out = pd.concat([inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS),
                                  pd.DataFrame([row])], ignore_index=True)
             inv_out = reorder_columns(inv_out, INVENTORY_COLS); write_worksheet(INVENTORY_WS, inv_out)
-            st.success("✅ Device registered and added to Inventory.")
+
+            # Audit trail in pending sheet as Approved
+            pending = {**row,
+                "Approval Status": "Approved", "Approval PDF": link, "Approval File ID": fid,
+                "Submitted by": actor, "Submitted at": now_str, "Approver": actor, "Decision at": now_str,
+            }
+            append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+            st.success("✅ Device registered and added to Inventory. Signed PDF stored.")
         else:
-            link, fid = upload_pdf_and_link(pdf_file, prefix=f"device_{s_norm}")
-            if not fid: return
             pending = {**row,
                 "Approval Status": "Pending", "Approval PDF": link, "Approval File ID": fid,
                 "Submitted by": actor, "Submitted at": now_str, "Approver": "", "Decision at": "",
@@ -791,7 +805,7 @@ def transfer_tab():
                 st.download_button(
                     "📄 Download ICT Transfer Form (pre-filled)",
                     data=filled, file_name=_transfer_filename(chosen_serial), mime="application/pdf",
-                    help="Sign, then upload the signed PDF above (if you are not admin)."
+                    help="Sign, then upload the signed PDF above."
                 )
             except Exception as e:
                 st.warning("Could not generate transfer form. Check drive.transfer_template_file_id or PDF fields.")
@@ -805,10 +819,13 @@ def transfer_tab():
         except Exception: pass
 
     is_admin = st.session_state.get("role") == "Admin"
-    do_transfer = st.button("Submit Transfer for Approval" if not is_admin else "Transfer Now", type="primary",
+    do_transfer = st.button("Transfer Now" if is_admin else "Submit Transfer for Approval", type="primary",
                             disabled=not (chosen_serial and new_owner))
 
     if do_transfer:
+        if pdf_file is None:
+            st.error("Signed ICT Transfer PDF is required for submission."); return
+
         match = inventory_df[inventory_df["Serial Number"].astype(str) == chosen_serial]
         if match.empty: st.warning("Serial number not found."); return
         idx = match.index[0]
@@ -816,10 +833,11 @@ def transfer_tab():
         now_str   = datetime.now().strftime(DATE_FMT)
         actor     = st.session_state.get("username", "")
 
-        if not is_admin and pdf_file is None:
-            st.error("Signed ICT Transfer PDF is required for submission."); return
+        link, fid = upload_pdf_and_link(pdf_file, prefix=f"transfer_{normalize_serial(chosen_serial)}")
+        if not fid: return
 
-        if is_admin and pdf_file is None:
+        if is_admin:
+            # Apply transfer immediately
             inventory_df.loc[idx, "Previous User"] = prev_user
             inventory_df.loc[idx, "Current user"]  = new_owner.strip()
             inventory_df.loc[idx, "TO"]            = new_owner.strip()
@@ -833,10 +851,19 @@ def transfer_tab():
                 "To owner": new_owner.strip(), "Date issued": now_str, "Registered by": actor,
             }
             append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
-            st.success(f"✅ Transfer saved: {prev_user or '(blank)'} → {new_owner.strip()}")
+
+            # Audit trail in pending sheet as Approved
+            pend = {
+                "Device Type": inventory_df.loc[idx, "Device Type"],
+                "Serial Number": chosen_serial,
+                "From owner": prev_user, "To owner": new_owner.strip(),
+                "Date issued": now_str, "Registered by": actor,
+                "Approval Status": "Approved", "Approval PDF": link, "Approval File ID": fid,
+                "Submitted by": actor, "Submitted at": now_str, "Approver": actor, "Decision at": now_str,
+            }
+            append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pend]))
+            st.success(f"✅ Transfer applied. Signed PDF stored. {prev_user or '(blank)'} → {new_owner.strip()}")
         else:
-            link, fid = upload_pdf_and_link(pdf_file, prefix=f"transfer_{normalize_serial(chosen_serial)}")
-            if not fid: return
             pend = {
                 "Device Type": inventory_df.loc[idx, "Device Type"],
                 "Serial Number": chosen_serial,
