@@ -53,6 +53,7 @@ DEVICE_CATALOG_WS    = st.secrets.get("sheets", {}).get("catalog_ws", "truckings
 
 # Standard device columns (used across inventory + catalog)
 INVENTORY_COLS = [
+    "Register No.",
     "Serial Number","Device Type","Brand","Model","CPU",
     "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
     "Current user","Previous User","TO",
@@ -63,7 +64,7 @@ CATALOG_COLS = [
     "Serial Number","Device Type","Brand","Model","CPU",
     "Hard Drive 1","Hard Drive 2","Memory","GPU","Screen Size",
 ]
-LOG_COLS = ["Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
+LOG_COLS = ["Transfer No.", "Device Type","Serial Number","From owner","To owner","Date issued","Registered by"]
 EMPLOYEE_CANON_COLS = [
     "New Employeer","Employee ID","New Signature","Name","Address",
     "Active","Position","Department","Location (KSA)",
@@ -88,150 +89,13 @@ TRANSFER_TEMPLATE_FILE_ID = st.secrets.get("drive", {}).get(
     ICT_TEMPLATE_FILE_ID
 )
 
-
-def _ict_filename(serial: str, office: str = "HO", location: str = "JEDDAH", seq: str = None) -> str:
-    if seq is None:
-        seq = get_next_counter("REG")
+def _ict_filename(serial: str, office: str = "HO", location: str = "JEDDAH", seq: str | None = None) -> str:
     office_clean = re.sub(r'[^A-Z0-9]', '', str(office).upper())
     location_clean = re.sub(r'[^A-Z0-9]', '', str(location).upper()[:3])
-    return f"{office_clean}-{location_clean}-REG-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
-
-
-def _transfer_filename(serial: str, office: str = "HO", location: str = "JEDDAH", seq: str = None) -> str:
-    if seq is None:
-        seq = get_next_counter("TRF")
-    office_clean = re.sub(r'[^A-Z0-9]', '', str(office).upper())
-    location_clean = re.sub(r'[^A-Z0-9]', '', str(location).upper()[:3])
-    return f"{office_clean}-{location_clean}-TRN-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
-
-
-HEADER_SYNONYMS = {
-    "new employee": "New Employeer",
-    "new employeer": "New Employeer",
-    "employeeid": "Employee ID",
-    "newsignature": "New Signature",
-    "locationksa": "Location (KSA)",
-    "microsoftteams": "Microsoft Teams",
-    "microsoftteam": "Microsoft Teams",
-    "mobile": "Mobile Number",
-    "mobilenumber": "Mobile Number",
-}
-INVENTORY_HEADER_SYNONYMS = {
-    "user": "Current user",
-    "currentuser": "Current user",
-    "previoususer": "Previous User",
-    "to": "TO",
-    "email": "Email Address",  # allow 'Email' header to map to 'Email Address'
-    "department1": None,
-}
-
-COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
-for k in ("reg_pdf_ref", "transfer_pdf_ref"): ss.setdefault(k, None)
-
-# =============================================================================
-# AUTH
-# =============================================================================
-def _load_users_from_secrets():
-    users_cfg = st.secrets.get("auth", {}).get("users", [])
-    users = {}
-    for u in users_cfg:
-        users[u["username"]] = {"password": u.get("password", ""), "role": u.get("role", "Staff")}
-    return users
-USERS = _load_users_from_secrets()
-
-def _verify_password(raw: str, stored: str) -> bool:
-    return hmac.compare_digest(str(stored), str(raw))
-
-def _cookie_keys() -> list[str]:
-    keys = [st.secrets.get("auth", {}).get("cookie_key", "")]
-    keys += st.secrets.get("auth", {}).get("legacy_cookie_keys", [])
-    return [k for k in keys if k]
-
-def _sign(raw: bytes, *, key: str | None = None) -> str:
-    use = key or st.secrets.get("auth", {}).get("cookie_key", "")
-    return hmac.new(use.encode(), raw, hashlib.sha256).hexdigest()
-
-def _verify_sig(sig: str, raw: bytes) -> bool:
-    for k in _cookie_keys():
-        if hmac.compare_digest(sig, _sign(raw, key=k)):
-            return True
-    return False
-
-def _issue_session_cookie(username: str, role: str):
-    iat = int(time.time())
-    exp = iat + (SESSION_TTL_SECONDS if SESSION_TTL_SECONDS > 0 else 0)
-    payload = {"u": username, "r": role, "iat": iat, "exp": exp, "v": 1}
-    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
-    token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
-    COOKIE_MGR.set(
-        COOKIE_NAME, token,
-        expires_at=(datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS)) if SESSION_TTL_SECONDS > 0 else None,
-        secure=st.secrets.get("auth", {}).get("cookie_secure", True),
-    )
-
-def _read_cookie():
-    token = COOKIE_MGR.get(COOKIE_NAME)
-    if not token: return None
-    try:
-        data_b64, sig = token.split(".", 1)
-        raw = base64.urlsafe_b64decode(data_b64.encode())
-        if not _verify_sig(sig, raw):
-            COOKIE_MGR.delete(COOKIE_NAME); return None
-        payload = json.loads(raw.decode())
-        exp = int(payload.get("exp", 0)); now = int(time.time())
-        if exp and now > exp:
-            COOKIE_MGR.delete(COOKIE_NAME); return None
-        return payload
-    except Exception:
-        COOKIE_MGR.delete(COOKIE_NAME); return None
-
-def do_login(username: str, role: str):
-    st.session_state.authenticated = True
-    st.session_state.username = username
-    st.session_state.role = role
-    st.session_state.just_logged_out = False
-    _issue_session_cookie(username, role)
-    st.rerun()
-
-def do_logout():
-    try:
-        COOKIE_MGR.delete(COOKIE_NAME)
-        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1))
-    except Exception:
-        pass
-    for k in ["authenticated", "role", "username"]: st.session_state.pop(k, None)
-    st.session_state.just_logged_out = True
-    st.rerun()
-
-if "cookie_bootstrapped" not in st.session_state:
-    st.session_state.cookie_bootstrapped = True
-    _ = COOKIE_MGR.get_all()
-    st.rerun()
-
-# =============================================================================
-# GOOGLE SHEETS & DRIVE
-# =============================================================================
-SCOPES = [
-    "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive",
-]
-OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
-ALLOW_OAUTH_FALLBACK = st.secrets.get("drive", {}).get("allow_oauth_fallback", True)
-
-def _load_sa_info() -> dict:
-    raw = st.secrets.get("gcp_service_account", {})
-    sa: dict = {}
-    if isinstance(raw, dict): sa = dict(raw)
-    elif isinstance(raw, str) and raw.strip():
-        try: sa = json.loads(raw)
-        except Exception: sa = {}
-    if not sa:
-        env_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
-        if env_json:
-            try: sa = json.loads(env_json)
-            except Exception: sa = {}
-    pk = sa.get("private_key", "")
-    if isinstance(pk, str) and "\\n" in pk: sa["private_key"] = pk.replace("\\n", "\n")
+    sn = re.sub(r'[^A-Z0-9]','', str(serial).upper())
+    s = (seq or "XXXX")
+    return f"{office_clean}-{location_clean}-REG-{sn}-{s}-{datetime.now().strftime('%Y%m%d')}.pdf"
+" in pk: sa["private_key"] = pk.replace("\\n", "\n")
     if "private_key" not in sa:
         raise RuntimeError("Service account JSON not found or missing 'private_key'.")
     return sa
@@ -319,21 +183,51 @@ def _drive_download_bytes(file_id: str) -> bytes:
     buf.seek(0)
     return buf.read()
 
-# =============================================================================
-# SHEETS HELPERS
-# =============================================================================
-def get_next_counter(counter_type: str) -> str:
-    df = read_worksheet("counters")
-    if df.empty or counter_type not in df["Type"].values:
-        return "0001"
 
+# =============================================================================
+# COUNTER HELPERS (patched)
+# =============================================================================
+def _reserve_counter_local(counter_type: str) -> str:
+    df = read_worksheet("counters")
+    if df.empty or counter_type not in df.get("Type", []):
+        df = (pd.DataFrame([{"Type": counter_type, "LastUsed": 0}])
+              if df.empty else pd.concat([df, pd.DataFrame([{"Type": counter_type, "LastUsed": 0}])], ignore_index=True))
     idx = df[df["Type"] == counter_type].index[0]
-    last_used = int(df.loc[idx, "LastUsed"])
+    last_used = int(df.loc[idx, "LastUsed"] or 0)
     next_val = last_used + 1
     df.loc[idx, "LastUsed"] = next_val
     write_worksheet("counters", df)
-    return str(next_val).zfill(4)  # pad with zeroes to 4 digits
+    return f"{next_val:04d}"
 
+def reserve_counter(counter_type: str) -> str:
+    url = st.secrets.get("gas", {}).get("counter_url")
+    token = st.secrets.get("gas", {}).get("token")
+    if url and token:
+        try:
+            r = requests.post(url, json={"type": counter_type, "token": token}, timeout=10)
+            r.raise_for_status()
+            js = r.json()
+            nxt = str(js.get("next", "")).strip()
+            if re.fullmatch(r"\d{4,}", nxt):
+                return nxt.zfill(4)
+        except Exception as e:
+            st.warning(f"Counter service unavailable, using local fallback. ({e})")
+    return _reserve_counter_local(counter_type)
+
+def _drive_rename(file_id: str, new_name: str, drive_client=None) -> None:
+    try:
+        (drive_client or _get_drive()).files().update(
+            fileId=file_id,
+            body={"name": new_name},
+            fields="id",
+            supportsAllDrives=True
+        ).execute()
+    except Exception:
+        pass
+
+# =============================================================================
+# SHEETS HELPERS
+# =============================================================================
 def _norm_header(h: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (h or "").strip().lower())
 
