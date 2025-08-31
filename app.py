@@ -363,8 +363,6 @@ def move_drive_file(file_id: str, office: str, city_code: str, action: str, deci
     ).execute()
 
 def upload_pdf_and_get_link(file_obj, *, prefix: str, office: str, city_code: str, action: str) -> tuple[str, str]:
-
-    
     """
     Upload a signed PDF to Google Drive into:
         approvals / <office> / <city> / <action> / Pending
@@ -405,6 +403,7 @@ def upload_pdf_and_get_link(file_obj, *, prefix: str, office: str, city_code: st
     except Exception as e:
         st.error(f"Error uploading PDF: {e}")
         return "", ""
+
 
 
 
