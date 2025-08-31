@@ -788,7 +788,7 @@ def employee_register_tab():
             st.error(f"Employee ID '{emp_id}' already exists.")
             return
 
-        row = {
+        row = { 
             "New Employeer": emp_name.strip(), "Name": emp_name.strip(),
             "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
             "New Signature": new_sig if new_sig != "— Select —" else "",
