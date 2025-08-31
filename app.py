@@ -680,6 +680,8 @@ def inventory_tab():
 
 def register_device_tab():
     st.subheader("📝 Register New Device")
+
+    # --- Ensure session keys exist with safe defaults
     st.session_state.setdefault("reg_email", "")
     st.session_state.setdefault("reg_contact", "")
     st.session_state.setdefault("reg_dept", "")
@@ -688,90 +690,74 @@ def register_device_tab():
     st.session_state.setdefault("current_owner", UNASSIGNED_LABEL)
     st.session_state.setdefault("current_owner_prev", UNASSIGNED_LABEL)
 
+    # --- For owner pick-list
+    emp_df = read_worksheet(EMPLOYEE_WS)
+    employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
+    owner_options = [UNASSIGNED_LABEL] + employee_names
 
-    # Ensure session keys exist for auto-filled fields
-    for k in ("reg_email","reg_contact","reg_dept","reg_location","reg_office","current_owner","current_owner_prev"):
-        if k in ("current_owner","current_owner_prev"):
-            st.session_state.setdefault(k, UNASSIGNED_LABEL)
+    # --- Detect owner change and auto-fill details
+    if st.session_state["current_owner"] != st.session_state.get("current_owner_prev"):
+        owner = st.session_state["current_owner"]
+        if owner and owner != UNASSIGNED_LABEL:
+            r = _find_emp_row_by_name(emp_df, owner)
+            if r is not None:
+                st.session_state["reg_contact"]  = str(r.get("Mobile Number", "") or "")
+                st.session_state["reg_email"]    = str(r.get("Email", "") or "")
+                st.session_state["reg_dept"]     = str(r.get("Department", "") or "")
+                st.session_state["reg_location"] = str(r.get("Location (KSA)", "") or "")
+                st.session_state["reg_office"]   = str(r.get("Office", "") or "")
         else:
-            st.session_state.setdefault(k, "")
+            for key in ("reg_contact","reg_email","reg_dept","reg_location","reg_office"):
+                st.session_state[key] = ""
+        st.session_state["current_owner_prev"] = st.session_state["current_owner"]
 
-    # For owner pick-list
-    emp_df = read_worksheet(EMPLOYEE_WS)
-    employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
-    owner_options = [UNASSIGNED_LABEL] + employee_names
-
-
-
-    # Owner picker OUTSIDE the form so that selection instantly reruns and fills fields
-    emp_df = read_worksheet(EMPLOYEE_WS)
-    employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
-    owner_options = [UNASSIGNED_LABEL] + employee_names
-
-    st.selectbox(
-        "Current owner (at registration)",
-        owner_options,
-        index=owner_options.index(st.session_state["current_owner"]) if st.session_state["current_owner"] in owner_options else 0,
-        key="current_owner",
-        help="Choosing an employee auto-fills contact, email, department and location.",
-    )
-
-    # If owner changed, auto-fill fields from Employees sheet
-    # --- after: owner = st.session_state["current_owner"]
-if st.session_state["current_owner"] != st.session_state.get("current_owner_prev"):
-    owner = st.session_state["current_owner"]
-    if owner and owner != UNASSIGNED_LABEL:
-        r = _find_emp_row_by_name(emp_df, owner)
-        if r is not None:
-            st.session_state["reg_contact"]  = str(r.get("Mobile Number", "") or "")
-            st.session_state["reg_email"]    = str(r.get("Email", "") or "")
-            st.session_state["reg_dept"]     = str(r.get("Department", "") or "")
-            st.session_state["reg_location"] = str(r.get("Location (KSA)", "") or "")
-            st.session_state["reg_office"]   = str(r.get("Office", "") or "")    # <-- fixed
-    else:
-        for key in ("reg_contact","reg_email","reg_dept","reg_location","reg_office"):
-            st.session_state[key] = ""
-    st.session_state["current_owner_prev"] = st.session_state["current_owner"]
-
-    # --- UI form (kept so the two submit buttons work together)
+    # --- UI form
     with st.form("register_device", clear_on_submit=False):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1: serial = st.text_input("Serial Number *")
-        with r1c2: device = st.text_input("Device Type *")
-        with r1c3: brand  = st.text_input("Brand")
+        with r1c2:
+            st.selectbox(
+                "Current owner (at registration)",
+                owner_options,
+                index=owner_options.index(st.session_state["current_owner"])
+                    if st.session_state["current_owner"] in owner_options else 0,
+                key="current_owner",
+                help="Choosing an employee auto-fills contact, email, department, location and office."
+            )
+        with r1c3: device = st.text_input("Device Type *")
 
         r2c1, r2c2, r2c3 = st.columns(3)
-        with r2c1: model  = st.text_input("Model")
-        with r2c2: cpu    = st.text_input("CPU")
-        with r2c3: mem    = st.text_input("Memory")
+        with r2c1: brand  = st.text_input("Brand")
+        with r2c2: model  = st.text_input("Model")
+        with r2c3: cpu    = st.text_input("CPU")
 
         r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1: hdd1 = st.text_input("Hard Drive 1")
-        with r3c2: hdd2 = st.text_input("Hard Drive 2")
-        with r3c3: gpu  = st.text_input("GPU")
+        with r3c1: mem  = st.text_input("Memory")
+        with r3c2: hdd1 = st.text_input("Hard Drive 1")
+        with r3c3: hdd2 = st.text_input("Hard Drive 2")
 
         r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1: screen = st.text_input("Screen Size")
-        with r4c2: email  = st.text_input("Email", key="reg_email")
-        with r4c3: contact = st.text_input("Contact Number", key="reg_contact")
+        with r4c1: gpu    = st.text_input("GPU")
+        with r4c2: screen = st.text_input("Screen Size")
+        with r4c3: st.text_input("Email Address", key="reg_email")
 
         r5c1, r5c2, r5c3 = st.columns(3)
-        with r5c1: dept     = st.text_input("Department", key="reg_dept")
-        with r5c2: location = st.text_input("Location", key="reg_location")
-        with r5c3: office = st.text_input("Office", key="reg_office")
+        with r5c1: st.text_input("Contact Number", key="reg_contact")
+        with r5c2: st.text_input("Department", key="reg_dept")
+        with r5c3: st.text_input("Office", key="reg_office")
 
-        notes = st.text_area("Notes", height=80)
+        r6c1, r6c2 = st.columns([1,2])
+        with r6c1: st.text_input("Location", key="reg_location")
+        with r6c2: notes  = st.text_area("Notes", height=80)
 
         st.divider()
-        # Repurposed button: generate a pre-filled registration PDF (TO blank)
         c_download = st.form_submit_button("Download register new device", use_container_width=True)
 
-        # Signed PDF uploader (required for ALL roles)
         st.markdown("**Signed ICT Equipment Form (PDF)** — required for submission")
         pdf_file = st.file_uploader("Drag & drop signed PDF here", type=["pdf"], key="reg_pdf")
         submitted = st.form_submit_button("Save Device", type="primary", use_container_width=True)
 
-    # Handle "Download register new device"
+    # --- Generate pre-filled PDF for registration
     if c_download:
         if not serial.strip() or not device.strip():
             st.error("Serial Number and Device Type are required before generating the form.")
@@ -787,10 +773,11 @@ if st.session_state["current_owner"] != st.session_state.get("current_owner_prev
                 "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
                 "Previous User": "", "TO": "",
                 "Department": st.session_state.get("reg_dept","").strip(),
-                "Email": st.session_state.get("reg_email","").strip(),
+                "Email Address": st.session_state.get("reg_email","").strip(),
                 "Contact Number": st.session_state.get("reg_contact","").strip(),
                 "Location": st.session_state.get("reg_location","").strip(),
-                "Office": st.session_state.get("reg_Office","").strip(),
+                "Office": st.session_state.get("reg_office","").strip(),
+                "Notes": notes.strip(),
                 "Date issued": now_str, "Registered by": actor,
             }
             try:
@@ -806,14 +793,14 @@ if st.session_state["current_owner"] != st.session_state.get("current_owner_prev
                 st.warning("ICT template form could not be generated. Check drive.template_file_id in secrets.")
                 st.caption(str(e))
 
-    # Optional live preview of uploaded signed PDF
+    # --- Optional preview
     if ss.get("reg_pdf"): ss.reg_pdf_ref = ss.reg_pdf
     if ss.reg_pdf_ref:
         st.caption("Preview: Uploaded signed PDF")
         try: pdf_viewer(input=ss.reg_pdf_ref.getvalue(), width=700, key="viewer_reg")
         except Exception: pass
 
-    # Submit handling (PDF required for all)
+    # --- Save handling
     if submitted:
         if not serial.strip() or not device.strip():
             st.error("Serial Number and Device Type are required."); return
@@ -833,10 +820,11 @@ if st.session_state["current_owner"] != st.session_state.get("current_owner_prev
             "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
             "Previous User": "", "TO": "",
             "Department": st.session_state.get("reg_dept","").strip(),
-            "Email": st.session_state.get("reg_email","").strip(),
+            "Email Address": st.session_state.get("reg_email","").strip(),
             "Contact Number": st.session_state.get("reg_contact","").strip(),
             "Location": st.session_state.get("reg_location","").strip(),
-            "Office": office.strip(), "Notes": notes.strip(),
+            "Office": st.session_state.get("reg_office","").strip(),
+            "Notes": notes.strip(),
             "Date issued": now_str, "Registered by": actor,
         }
 
