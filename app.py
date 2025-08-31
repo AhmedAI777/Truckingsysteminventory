@@ -603,6 +603,28 @@ def build_registration_values(
         fm["eq_serial"]: device_row.get("Serial Number",""),
     })
     return values
+    
+def _owner_changed(emp_df: pd.DataFrame):
+    """Auto-fill contact/email/department/location/office when owner changes."""
+    owner = st.session_state.get("current_owner", UNASSIGNED_LABEL)
+    targets = [
+        ("reg_contact",  "Mobile Number"),
+        ("reg_email",    "Email"),
+        ("reg_dept",     "Department"),
+        ("reg_location", "Location (KSA)"),
+        ("reg_office",   "Office"),
+    ]
+    if owner and owner != UNASSIGNED_LABEL and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
+        r = _find_emp_row_by_name(emp_df, owner)
+        if r is not None:
+            for key, col in targets:
+                st.session_state[key] = str(r.get(col, "") or "")
+        else:
+            for key, _ in targets:
+                st.session_state[key] = ""
+    else:
+        for key, _ in targets:
+            st.session_state[key] = ""
 
 def build_transfer_values(inv_row: pd.Series, new_owner: str, *, emp_df: pd.DataFrame) -> dict[str, str]:
     fm = _registration_field_map()
@@ -681,74 +703,59 @@ def inventory_tab():
 def register_device_tab():
     st.subheader("📝 Register New Device")
 
-    # --- Ensure session keys exist with safe defaults
+    # Safe defaults
     st.session_state.setdefault("reg_email", "")
     st.session_state.setdefault("reg_contact", "")
     st.session_state.setdefault("reg_dept", "")
     st.session_state.setdefault("reg_location", "")
     st.session_state.setdefault("reg_office", "")
     st.session_state.setdefault("current_owner", UNASSIGNED_LABEL)
-    st.session_state.setdefault("current_owner_prev", UNASSIGNED_LABEL)
 
-    # --- For owner pick-list
+    # Employees -> owner options
     emp_df = read_worksheet(EMPLOYEE_WS)
     employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
     owner_options = [UNASSIGNED_LABEL] + employee_names
 
-    # --- Detect owner change and auto-fill details
-    if st.session_state["current_owner"] != st.session_state.get("current_owner_prev"):
-        owner = st.session_state["current_owner"]
-        if owner and owner != UNASSIGNED_LABEL:
-            r = _find_emp_row_by_name(emp_df, owner)
-            if r is not None:
-                st.session_state["reg_contact"]  = str(r.get("Mobile Number", "") or "")
-                st.session_state["reg_email"]    = str(r.get("Email", "") or "")
-                st.session_state["reg_dept"]     = str(r.get("Department", "") or "")
-                st.session_state["reg_location"] = str(r.get("Location (KSA)", "") or "")
-                st.session_state["reg_office"]   = str(r.get("Office", "") or "")
-        else:
-            for key in ("reg_contact","reg_email","reg_dept","reg_location","reg_office"):
-                st.session_state[key] = ""
-        st.session_state["current_owner_prev"] = st.session_state["current_owner"]
+    # Owner selector OUTSIDE the form so changes trigger a rerun and on_change callback fires
+    st.selectbox(
+        "Current owner (at registration)",
+        owner_options,
+        index=owner_options.index(st.session_state["current_owner"])
+            if st.session_state["current_owner"] in owner_options else 0,
+        key="current_owner",
+        on_change=_owner_changed,         # <-- auto-fill on change
+        args=(emp_df,),                   #     pass employees DF
+        help="Choosing an employee auto-fills contact, email, department, location, and office."
+    )
 
-    # --- UI form
+    # --- Form with two submit actions
     with st.form("register_device", clear_on_submit=False):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1: serial = st.text_input("Serial Number *")
-        with r1c2:
-            st.selectbox(
-                "Current owner (at registration)",
-                owner_options,
-                index=owner_options.index(st.session_state["current_owner"])
-                    if st.session_state["current_owner"] in owner_options else 0,
-                key="current_owner",
-                help="Choosing an employee auto-fills contact, email, department, location and office."
-            )
-        with r1c3: device = st.text_input("Device Type *")
+        with r1c2: device = st.text_input("Device Type *")
+        with r1c3: brand  = st.text_input("Brand")
 
         r2c1, r2c2, r2c3 = st.columns(3)
-        with r2c1: brand  = st.text_input("Brand")
-        with r2c2: model  = st.text_input("Model")
-        with r2c3: cpu    = st.text_input("CPU")
+        with r2c1: model  = st.text_input("Model")
+        with r2c2: cpu    = st.text_input("CPU")
+        with r2c3: mem    = st.text_input("Memory")
 
         r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1: mem  = st.text_input("Memory")
-        with r3c2: hdd1 = st.text_input("Hard Drive 1")
-        with r3c3: hdd2 = st.text_input("Hard Drive 2")
+        with r3c1: hdd1 = st.text_input("Hard Drive 1")
+        with r3c2: hdd2 = st.text_input("Hard Drive 2")
+        with r3c3: gpu  = st.text_input("GPU")
 
         r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1: gpu    = st.text_input("GPU")
-        with r4c2: screen = st.text_input("Screen Size")
-        with r4c3: st.text_input("Email Address", key="reg_email")
+        with r4c1: screen = st.text_input("Screen Size")
+        with r4c2: st.text_input("Email Address", key="reg_email")
+        with r4c3: st.text_input("Contact Number", key="reg_contact")
 
         r5c1, r5c2, r5c3 = st.columns(3)
-        with r5c1: st.text_input("Contact Number", key="reg_contact")
-        with r5c2: st.text_input("Department", key="reg_dept")
+        with r5c1: st.text_input("Department", key="reg_dept")
+        with r5c2: st.text_input("Location", key="reg_location")
         with r5c3: st.text_input("Office", key="reg_office")
 
-        r6c1, r6c2 = st.columns([1,2])
-        with r6c1: st.text_input("Location", key="reg_location")
-        with r6c2: notes  = st.text_area("Notes", height=80)
+        notes = st.text_area("Notes", height=80)
 
         st.divider()
         c_download = st.form_submit_button("Download register new device", use_container_width=True)
@@ -757,7 +764,7 @@ def register_device_tab():
         pdf_file = st.file_uploader("Drag & drop signed PDF here", type=["pdf"], key="reg_pdf")
         submitted = st.form_submit_button("Save Device", type="primary", use_container_width=True)
 
-    # --- Generate pre-filled PDF for registration
+    # Generate the pre-filled registration form (TO blank)
     if c_download:
         if not serial.strip() or not device.strip():
             st.error("Serial Number and Device Type are required before generating the form.")
@@ -793,14 +800,14 @@ def register_device_tab():
                 st.warning("ICT template form could not be generated. Check drive.template_file_id in secrets.")
                 st.caption(str(e))
 
-    # --- Optional preview
+    # Preview uploaded PDF
     if ss.get("reg_pdf"): ss.reg_pdf_ref = ss.reg_pdf
     if ss.reg_pdf_ref:
         st.caption("Preview: Uploaded signed PDF")
         try: pdf_viewer(input=ss.reg_pdf_ref.getvalue(), width=700, key="viewer_reg")
         except Exception: pass
 
-    # --- Save handling
+    # Save handling (PDF required for all)
     if submitted:
         if not serial.strip() or not device.strip():
             st.error("Serial Number and Device Type are required."); return
@@ -851,6 +858,7 @@ def register_device_tab():
             }
             append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
             st.success("🕒 Submitted for admin approval. You'll see it in Inventory once approved.")
+
 
 def transfer_tab():
     st.subheader("🔁 Transfer Device")
