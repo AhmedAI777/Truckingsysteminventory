@@ -122,6 +122,9 @@ def _load_sa_info() -> dict:
     if "private_key" not in sa:
         raise RuntimeError("Service account JSON not found or missing 'private_key'.")
     return sa
+    @st.cache_resource(show_spinner=False)
+def _get_creds():
+    return Credentials.from_service_account_info(_load_sa_info(), scopes=SCOPES)
 
 def _ict_filename(serial: str, office: str = "HO", location: str = "JEDDAH", seq: str | None = None) -> str:
     office_clean = re.sub(r'[^A-Z0-9]', '', str(office).upper())
@@ -129,10 +132,6 @@ def _ict_filename(serial: str, office: str = "HO", location: str = "JEDDAH", seq
     sn = re.sub(r'[^A-Z0-9]', '', str(serial).upper())
     s = (seq or "XXXX")  # Use placeholder until counter reserved
     return f"{office_clean}-{location_clean}-REG-{sn}-{s}-{datetime.now().strftime('%Y%m%d')}.pdf"
-
-@st.cache_resource(show_spinner=False)
-def _get_creds():
-    return Credentials.from_service_account_info(_load_sa_info(), scopes=SCOPES)
 
 @st.cache_resource(show_spinner=False)
 def _get_gc(): return gspread.authorize(_get_creds())
