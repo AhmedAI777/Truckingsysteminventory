@@ -757,6 +757,15 @@ def inventory_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
+def history_tab():
+    st.subheader("📜 Transfer Log")
+    df = read_worksheet(TRANSFERLOG_WS)
+    if df.empty:
+        st.info("No transfer history found.")
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
 # =========================
 # Register Device Tab
 # =========================
@@ -1004,6 +1013,134 @@ def transfer_tab():
         }
         append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
         st.success("🕒 Transfer request submitted for admin approval.")
+def _approve_device_row(row: pd.Series):
+    """Admin approves a device registration → add to Inventory + move PDF → Approved/Register."""
+    inv = read_worksheet(INVENTORY_WS)
+    now_str = datetime.now().strftime(DATE_FMT)
+    approver = st.session_state.get("username", "")
+
+    # 1) Append to Inventory
+    new_row = {k: row.get(k, "") for k in INVENTORY_COLS}
+    new_row["Registered by"] = approver or new_row.get("Registered by", "")
+    new_row["Date issued"]   = now_str
+
+    inv_out = pd.concat(
+        [inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS), pd.DataFrame([new_row])],
+        ignore_index=True
+    )
+    write_worksheet(INVENTORY_WS, inv_out)
+
+    # 2) Mark decision in Pending sheet
+    _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
+
+    # 3) Move PDF from Pending → Approved (Register)
+    try:
+        file_id   = str(row.get("Approval File ID", "")).strip()
+        city_code = str(row.get("Location", "")).strip()
+        if file_id and city_code:
+            move_drive_file(file_id, "Head Office (HO)", city_code, "Register", "Approved")
+    except Exception as e:
+        st.warning(f"Approved, but couldn’t move PDF in Drive: {e}")
+
+    st.success("✅ Device approved, added to Inventory, and PDF moved to Register/Approved.")
+
+def _approve_transfer_row(row: pd.Series):
+    """Admin approves a transfer → update Inventory + log + move PDF → Approved/Transfer."""
+    inv = read_worksheet(INVENTORY_WS)
+    if inv.empty:
+        st.error("Inventory is empty; cannot apply transfer.")
+        return
+
+    sn = str(row.get("Serial Number", ""))
+    match = inv[inv["Serial Number"].astype(str) == sn]
+    if match.empty:
+        st.error("Serial not found in Inventory.")
+        return
+
+    idx = match.index[0]
+    now_str = datetime.now().strftime(DATE_FMT)
+    approver = st.session_state.get("username", "")
+    prev_user = str(inv.loc[idx, "Current user"] or "")
+
+    # 1) Apply transfer in Inventory
+    inv.loc[idx, "Previous User"] = prev_user
+    inv.loc[idx, "Current user"]  = str(row.get("To owner", ""))
+    inv.loc[idx, "TO"]            = str(row.get("To owner", ""))
+    inv.loc[idx, "Date issued"]   = now_str
+    inv.loc[idx, "Registered by"] = approver
+    write_worksheet(INVENTORY_WS, inv)
+
+    # 2) Append to Transfer Log
+    log_row = {k: row.get(k, "") for k in LOG_COLS}
+    log_row["Date issued"]   = now_str
+    log_row["Registered by"] = approver
+    append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
+
+    # 3) Mark decision in Pending sheet
+    _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
+
+    # 4) Move PDF from Pending → Approved (Transfer)
+    try:
+        file_id   = str(row.get("Approval File ID", "")).strip()
+        # For transfers, Pending row may not have Location; read from Inventory
+        city_code = str(inv.loc[idx, "Location"]).strip() if "Location" in inv.columns else ""
+        if file_id and city_code:
+            move_drive_file(file_id, "Head Office (HO)", city_code, "Transfer", "Approved")
+    except Exception as e:
+        st.warning(f"Approved, but couldn’t move PDF in Drive: {e}")
+
+    st.success(f"✅ Transfer approved and applied. PDF moved to Transfer/Approved. {prev_user or '(blank)'} → {row.get('To owner','')}")
+def _reject_row(ws_title: str, i: int, row: pd.Series):
+    """
+    Admin rejects a pending request → mark Rejected and move PDF to Rejected.
+    Works for both Device (Register) and Transfer.
+    """
+    # 1) Mark Rejected in the corresponding Pending sheet
+    df = read_worksheet(ws_title)
+    key_cols = [c for c in ["Serial Number","Submitted at","Submitted by","To owner"] if c in df.columns]
+    mask = pd.Series([True] * len(df))
+    for c in key_cols:
+        mask &= df[c].astype(str) == str(row.get(c, ""))
+    idxs = df[mask].index.tolist()
+    if not idxs and "Serial Number" in df.columns:
+        idxs = df[df["Serial Number"].astype(str) == str(row.get("Serial Number",""))].index.tolist()
+    if not idxs:
+        st.warning("Could not locate row to mark as Rejected.")
+        return
+
+    idx = idxs[0]
+    df.loc[idx, "Approval Status"] = "Rejected"
+    df.loc[idx, "Approver"] = st.session_state.get("username","")
+    df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
+    write_worksheet(ws_title, df)
+
+    # 2) Move the PDF to Rejected
+    try:
+        action   = "Register" if ws_title == PENDING_DEVICE_WS else "Transfer"
+        file_id  = str(row.get("Approval File ID", "")).strip()
+
+        # Determine city code
+        city_code = ""
+        if action == "Register":
+            city_code = str(row.get("Location", "")).strip()
+        else:
+            # For transfers, fetch city from Inventory via Serial Number
+            sn = str(row.get("Serial Number",""))
+            inv = read_worksheet(INVENTORY_WS)
+            hit = inv[inv["Serial Number"].astype(str) == sn]
+            if not hit.empty and "Location" in hit.columns:
+                city_code = str(hit.iloc[0]["Location"]).strip()
+
+        if file_id and city_code:
+            move_drive_file(file_id, "Head Office (HO)", city_code, action, "Rejected")
+
+    except Exception as e:
+        st.warning(f"Rejected, but couldn’t move PDF in Drive: {e}")
+
+    st.success("❌ Request rejected. PDF stored under Rejected for evidence.")
+
+
+
 
 def run_app():
     render_header()
