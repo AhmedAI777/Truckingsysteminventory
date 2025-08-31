@@ -570,10 +570,11 @@ def build_registration_values(
     is_unassigned = (not curr_owner) or (curr_owner == UNASSIGNED_LABEL)
 
     from_name = curr_owner if not is_unassigned else (actor_name or device_row.get("Registered by", ""))
-    from_mobile   = str(device_row.get("Contact Number", "") or "")
-    from_email    = str(device_row.get("Email", "") or "")
-    from_dept     = str(device_row.get("Department", "") or "")
-    from_location = str(device_row.get("Location", "") or "")
+    from_mobile   = from_mobile   or _get_emp_value(r, "Mobile Number", "Phone", "Mobile")
+    from_email    = from_email    or _get_emp_value(r, "Email", "E-mail")
+    from_dept     = from_dept     or _get_emp_value(r, "Department", "Dept")
+    from_location = from_location or _get_emp_value(r, "Location (KSA)", "Location", "City")
+
 
     if not is_unassigned and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
         r = _find_emp_row_by_name(emp_df, curr_owner)
