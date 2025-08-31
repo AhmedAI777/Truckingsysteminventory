@@ -682,7 +682,7 @@ def register_device_tab():
     st.subheader("📝 Register New Device")
 
     # Ensure session keys exist for auto-filled fields
-    for k in ("reg_email","reg_contact","reg_dept","reg_location","reg_Office","current_owner","current_owner_prev"):
+    for k in ("reg_email","reg_contact","reg_dept","reg_location","reg_office","current_owner","current_owner_prev"):
         if k in ("current_owner","current_owner_prev"):
             st.session_state.setdefault(k, UNASSIGNED_LABEL)
         else:
@@ -718,9 +718,9 @@ def register_device_tab():
                 st.session_state["reg_email"]    = str(r.get("Email", "") or "")
                 st.session_state["reg_dept"]     = str(r.get("Department", "") or "")
                 st.session_state["reg_location"] = str(r.get("Location (KSA)", "") or "")
-                st.seesion_state["reg_Office"] = str(r.get("Office","" or "")
+                st.seesion_state["reg_office"] = str(r.get("Office","" or "")
         else:
-            for key in ("reg_contact","reg_email","reg_dept","reg_location", "reg_Office"):
+            for key in ("reg_contact","reg_email","reg_dept","reg_location", "reg_office"):
                 st.session_state[key] = ""
         st.session_state["current_owner_prev"] = st.session_state["current_owner"]
 
