@@ -918,6 +918,92 @@ def _config_check_ui():
         _ = get_sh()
     except Exception as e:
         st.error("Cannot open spreadsheet with Service Account."); st.code(str(e)); st.stop()
+def employee_register_tab():
+    st.subheader("🧑‍💼 Register New Employee")
+
+    df = read_worksheet(EMPLOYEE_WS)
+
+    with st.form("employee_register", clear_on_submit=True):
+        name   = st.text_input("Full Name *")
+        emp_id = st.text_input("Employee ID *")
+        email  = st.text_input("Email Address")
+        mobile = st.text_input("Mobile Number")
+        dept   = st.text_input("Department")
+        loc    = st.text_input("Location (KSA)")
+        proj   = st.text_input("Project / Office")
+
+        submitted = st.form_submit_button("Save Employee", type="primary")
+
+    if submitted:
+        if not name.strip() or not emp_id.strip():
+            st.error("Name and Employee ID are required.")
+            return
+
+        new_row = {
+            "New Employeer": name.strip(),
+            "Employee ID": emp_id.strip(),
+            "Email": email.strip(),
+            "Mobile Number": mobile.strip(),
+            "Department": dept.strip(),
+            "Location (KSA)": loc.strip(),
+            "Project": proj.strip(),
+            "Active": "Yes",
+        }
+
+        append_to_worksheet(EMPLOYEE_WS, pd.DataFrame([new_row]))
+        st.success(f"✅ Employee '{name}' registered.")
+
+def transfer_tab():
+    st.subheader("🔁 Transfer Device")
+
+    inv_df = read_worksheet(INVENTORY_WS)
+    emp_df = read_worksheet(EMPLOYEE_WS)
+
+    if inv_df.empty:
+        st.info("No devices in inventory.")
+        return
+
+    device_choices = inv_df["Serial Number"].dropna().tolist()
+    new_owner_choices = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
+
+    with st.form("transfer_device", clear_on_submit=True):
+        serial   = st.selectbox("Select Device (Serial Number)", device_choices)
+        new_owner = st.selectbox("Transfer To (Employee)", new_owner_choices)
+        notes     = st.text_area("Notes")
+
+        submitted = st.form_submit_button("Submit Transfer", type="primary")
+
+    if submitted:
+        row = inv_df[inv_df["Serial Number"] == serial].iloc[0].to_dict()
+        now_str = datetime.now().strftime(DATE_FMT)
+        actor   = st.session_state.get("username", "")
+
+        # Fill PDF
+        tpl_bytes = _download_template_bytes_or_public(TRANSFER_TEMPLATE_FILE_ID)
+        pdf_vals  = build_transfer_values(pd.Series(row), new_owner, emp_df=emp_df)
+        filled    = fill_pdf_form(tpl_bytes, pdf_vals, flatten=True)
+
+        fname = _transfer_filename(serial)
+        st.download_button("📄 Download Transfer Form", data=filled, file_name=fname)
+
+        # Save Pending in Sheets
+        pending = {
+            "Device Type": row.get("Device Type",""),
+            "Serial Number": row.get("Serial Number",""),
+            "From owner": row.get("Current user",""),
+            "To owner": new_owner,
+            "Date issued": now_str,
+            "Registered by": actor,
+            "Approval Status": "Pending",
+            "Approval PDF": "",
+            "Approval File ID": "",
+            "Submitted by": actor,
+            "Submitted at": now_str,
+            "Approver": "",
+            "Decision at": "",
+        }
+        append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
+        st.success("🕒 Transfer request submitted for admin approval.")
 
 def run_app():
     render_header()
