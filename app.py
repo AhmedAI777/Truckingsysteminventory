@@ -682,13 +682,17 @@ def register_device_tab():
     st.subheader("📝 Register New Device")
 
     # Ensure session keys exist for auto-filled fields
-    # Initialize session keys with safe defaults
-st.session_state.setdefault("reg_email", "")
-st.session_state.setdefault("reg_contact", "")
-st.session_state.setdefault("reg_dept", "")
-st.session_state.setdefault("reg_location", "")
-st.session_state.setdefault("current_owner", UNASSIGNED_LABEL)
-st.session_state.setdefault("current_owner_prev", UNASSIGNED_LABEL)
+    for k in ("reg_email","reg_contact","reg_dept","reg_location","reg_Office","current_owner","current_owner_prev"):
+        if k in ("current_owner","current_owner_prev"):
+            st.session_state.setdefault(k, UNASSIGNED_LABEL)
+        else:
+            st.session_state.setdefault(k, "")
+
+    # For owner pick-list
+    emp_df = read_worksheet(EMPLOYEE_WS)   # <-- no extra indent here
+    employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
+    owner_options = [UNASSIGNED_LABEL] + employee_names
+
 
 
     # Owner picker OUTSIDE the form so that selection instantly reruns and fills fields
