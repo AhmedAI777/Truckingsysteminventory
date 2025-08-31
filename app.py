@@ -88,19 +88,51 @@ TRANSFER_TEMPLATE_FILE_ID = st.secrets.get("drive", {}).get(
     "transfer_template_file_id",
     ICT_TEMPLATE_FILE_ID
 )
+# =============================================================================
+# GOOGLE SHEETS & DRIVE
+# =============================================================================
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+ALLOW_OAUTH_FALLBACK = st.secrets.get("drive", {}).get("allow_oauth_fallback", True)
+
+# <-- PASTE THE FUNCTION HERE
+def _load_sa_info() -> dict:
+    raw = st.secrets.get("gcp_service_account", {})
+    sa: dict = {}
+    if isinstance(raw, dict):
+        sa = dict(raw)
+    elif isinstance(raw, str) and raw.strip():
+        try:
+            sa = json.loads(raw)
+        except Exception:
+            sa = {}
+    if not sa:
+        env_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+        if env_json:
+            try:
+                sa = json.loads(env_json)
+            except Exception:
+                sa = {}
+    pk = sa.get("private_key", "")
+    if isinstance(pk, str) and "\\n" in pk:
+        sa["private_key"] = pk.replace("\\n", "\n")
+    if "private_key" not in sa:
+        raise RuntimeError("Service account JSON not found or missing 'private_key'.")
+    return sa
+
+@st.cache_resource(show_spinner=False)
+def _get_creds():
+    return Credentials.from_service_account_info(_load_sa_info(), scopes=SCOPES)
 
 def _ict_filename(serial: str, office: str = "HO", location: str = "JEDDAH", seq: str | None = None) -> str:
     office_clean = re.sub(r'[^A-Z0-9]', '', str(office).upper())
     location_clean = re.sub(r'[^A-Z0-9]', '', str(location).upper()[:3])
-    sn = re.sub(r'[^A-Z0-9]','', str(serial).upper())
-    s = (seq or "XXXX")
+    sn = re.sub(r'[^A-Z0-9]', '', str(serial).upper())
+    s = (seq or "XXXX")  # Use placeholder until counter reserved
     return f"{office_clean}-{location_clean}-REG-{sn}-{s}-{datetime.now().strftime('%Y%m%d')}.pdf"
-if isinstance(pk, str) and "\\n" in pk:
-    sa["private_key"] = pk.replace("\\n", "\n")
-
-    if "private_key" not in sa:
-        raise RuntimeError("Service account JSON not found or missing 'private_key'.")
-    return sa
 
 @st.cache_resource(show_spinner=False)
 def _get_creds():
