@@ -463,13 +463,15 @@ def get_device_from_catalog_by_serial(serial: str) -> dict:
 # =========[ PDF FIELD MAP ]=========
 def _registration_field_map() -> dict[str, str]:
     """
-    Matches your 'Register and Transfer Device.pdf':
+    Matches 'Register and Transfer Device.pdf':
       From (6):   Text Field0..5
       To (6):     Text Field6..11
       Equip #1:   Text Field12..16
-      (Equip #2..#4 exist as 17..31; we only use #1)
+      Equip #2:   Text Field17..21
+      Equip #3:   Text Field22..26
+      Equip #4:   Text Field27..31
     """
-    return {
+    fm = {
         # ----- FROM header -----
         "from_name":       "Text Field0",
         "from_mobile":     "Text Field1",
@@ -478,21 +480,38 @@ def _registration_field_map() -> dict[str, str]:
         "from_date":       "Text Field4",
         "from_location":   "Text Field5",
 
-        # ----- TO header (registration leaves these BLANK; transfer fills them) -----
+        # ----- TO header -----
         "to_name":         "Text Field6",
         "to_mobile":       "Text Field7",
         "to_email":        "Text Field8",
         "to_department":   "Text Field9",
         "to_date":         "Text Field10",
         "to_location":     "Text Field11",
-
-        # ----- Equipment block #1 -----
-        "eq_type":         "Text Field12",
-        "eq_brand":        "Text Field13",
-        "eq_model":        "Text Field14",
-        "eq_specs":        "Text Field15",
-        "eq_serial":       "Text Field16",
     }
+
+    # Equipment blocks
+    for blk in range(4):
+        base = 12 + blk*5
+        fm.update({
+            f"eq{blk+1}_type":   f"Text Field{base}",
+            f"eq{blk+1}_brand":  f"Text Field{base+1}",
+            f"eq{blk+1}_model":  f"Text Field{base+2}",
+            f"eq{blk+1}_specs":  f"Text Field{base+3}",
+            f"eq{blk+1}_serial": f"Text Field{base+4}",
+        })
+
+    return fm
+    
+fm = _registration_field_map()
+
+values.update({
+    fm["eq1_type"]:   device_row.get("Device Type",""),
+    fm["eq1_brand"]:  device_row.get("Brand",""),
+    fm["eq1_model"]:  device_row.get("Model",""),
+    fm["eq1_specs"]:  specs_txt,
+    fm["eq1_serial"]: device_row.get("Serial Number",""),
+})
+
 
     return {**default, **st.secrets.get("pdf", {}).get("reg_field_map", {})}
 
