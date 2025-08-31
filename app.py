@@ -427,78 +427,6 @@ def append_to_worksheet(ws_title, new_data):
     set_with_dataframe(ws, df_combined); st.cache_data.clear()
 
 # =============================================================================
-# COUNTERS WORKSHEET HELPERS
-# =============================================================================
-
-COUNTERS_WS = "counters"
-
-def _get_or_create_counters_ws():
-    """Ensure the 'counters' worksheet exists."""
-    sh = get_sh()
-    try:
-        return sh.worksheet(COUNTERS_WS)
-    except gspread.exceptions.WorksheetNotFound:
-        ws = sh.add_worksheet(title=COUNTERS_WS, rows=10, cols=3)
-        ws.append_row(["Type", "LastSeq"])
-        return ws
-
-
-def _next_sequence(counter_type: str) -> str:
-    """
-    Increment and return the next sequence number for a given type (REG, TRF).
-    Returns a zero-padded string (e.g., '0008').
-    """
-    ws = _get_or_create_counters_ws()
-    df = pd.DataFrame(ws.get_all_records())
-
-    if df.empty or counter_type not in df["Type"].values:
-        # Initialize if missing
-        new_seq = 1
-        df = pd.concat([df, pd.DataFrame([{"Type": counter_type, "LastSeq": new_seq}])],
-                       ignore_index=True)
-    else:
-        idx = df.index[df["Type"] == counter_type][0]
-        last_seq = int(df.at[idx, "LastSeq"])
-        new_seq = last_seq + 1
-        df.at[idx, "LastSeq"] = new_seq
-
-    # Save back to sheet
-    ws.clear()
-    set_with_dataframe(ws, df)
-
-    # Return as zero-padded string (4 digits, matches your examples)
-    return f"{new_seq:04d}"
-
-
-def normalize_serial(s: str) -> str:
-    return re.sub(r"[^A-Z0-9]", "", (s or "").strip().upper())
-
-def unique_nonempty(df: pd.DataFrame, col: str) -> list[str]:
-    if df.empty or col not in df.columns:
-        return []
-    vals = [str(x).strip() for x in df[col].dropna().astype(str).tolist()]
-    return sorted({v for v in vals if v})
-
-def _get_catalog_df() -> pd.DataFrame:
-    return read_worksheet(DEVICE_CATALOG_WS)
-
-def get_device_from_catalog_by_serial(serial: str) -> dict:
-    df = _get_catalog_df()
-    if df.empty:
-        return {}
-    df["__snorm"] = df["Serial Number"].astype(str).map(normalize_serial)
-    sn = normalize_serial(serial)
-    hit = df[df["__snorm"] == sn]
-    if hit.empty:
-        return {}
-    row = hit.iloc[0].to_dict()
-    for k in list(row.keys()):
-        if k.startswith("__"):
-            row.pop(k, None)
-    return row
-
-
-# =============================================================================
 # COUNTERS (REG / TRF sequence numbers)
 # =============================================================================
 COUNTERS_WS = "counters"
@@ -820,21 +748,61 @@ def render_header():
             do_logout()
     st.markdown("---")
 
-def employees_view_tab():
-    st.subheader("📇 Employees (mainlists)")
-    df = read_worksheet(EMPLOYEE_WS)
-    if df.empty:
-        st.info("No employees found in 'mainlists'.")
-    else:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+def employee_register_tab():
+    st.subheader("🧑‍💼 Register New Employee (mainlists)")
+    emp_df = read_worksheet(EMPLOYEE_WS)
 
-def inventory_tab():
-    st.subheader("📋 Inventory")
-    df = read_worksheet(INVENTORY_WS)
-    if df.empty:
-        st.warning("Inventory is empty.")
-    else:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+    try:
+        ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
+        next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
+    except Exception:
+        next_id_suggestion = str(len(emp_df) + 1)
+
+    with st.form("register_employee", clear_on_submit=True):
+        r1c1, r1c2, r1c3 = st.columns(3)
+        with r1c1: emp_name = st.text_input("New Employeer *")
+        with r1c2: emp_id   = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
+        with r1c3: new_sig  = st.selectbox("New Signature", ["— Select —", "Yes", "No", "Requested"])
+
+        r2c1, r2c2 = st.columns(2)
+        with r2c1: Email  = st.text_input("Email")
+        with r2c2: active = st.selectbox("Active", ["Active", "Inactive", "Onboarding", "Resigned"])
+
+        r3c1, r3c2, r3c3 = st.columns(3)
+        with r3c1: position = st.text_input("Position")
+        with r3c2: department = st.text_input("Department")
+        with r3c3: location_ksa = st.text_input("Location (KSA)")
+
+        r4c1, r4c2, r4c3 = st.columns(3)
+        with r4c1: project = st.text_input("Project")
+        with r4c2: teams   = st.selectbox("Microsoft Teams", ["— Select —", "Yes", "No", "Requested"])
+        with r4c3: mobile  = st.text_input("Mobile Number")
+
+        submitted = st.form_submit_button("Save Employee", type="primary")
+
+    if submitted:
+        if not emp_name.strip():
+            st.error("New Employeer is required.")
+            return
+        if emp_id.strip() and not emp_df.empty and emp_id.strip() in emp_df["Employee ID"].astype(str).values:
+            st.error(f"Employee ID '{emp_id}' already exists.")
+            return
+
+        row = {
+            "New Employeer": emp_name.strip(), "Name": emp_name.strip(),
+            "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
+            "New Signature": new_sig if new_sig != "— Select —" else "",
+            "Email": Email.strip(), "Active": active.strip(),
+            "Position": position.strip(), "Department": department.strip(),
+            "Location (KSA)": location_ksa.strip(), "Project": project.strip(),
+            "Microsoft Teams": teams if teams != "— Select —" else "",
+            "Mobile Number": mobile.strip(),
+        }
+
+        new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True) if not emp_df.empty else pd.DataFrame([row])
+        new_df = reorder_columns(new_df, EMPLOYEE_CANON_COLS)
+        write_worksheet(EMPLOYEE_WS, new_df)
+        st.success("✅ Employee saved to 'mainlists'.")
 
 # =========================
 # Full register_device_tab
@@ -1190,22 +1158,12 @@ def approvals_tab():
             with st.expander(f"{row['Device Type']} — SN {row['Serial Number']} (by {row['Submitted by']})", expanded=False):
                 c1, c2 = st.columns([3,2])
                 with c1:
-                    info = {k: row.get(k, "") for k in INVENTORY_COLS}; st.json(info)
-                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID",""), row.get("Approval PDF",""))
-                    if pdf_bytes:
-                        st.caption("Approval PDF Preview")
-                        try:
-                            pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_dev_{i}")
-                        except Exception:
-                            pass
-                    elif row.get("Approval PDF"):
-                        st.markdown(f"[Open Approval PDF]({row['Approval PDF']})")
+                    st.json({k: row.get(k, "") for k in INVENTORY_COLS})
                 with c2:
-                    reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_dev_{i}") if REQUIRE_REVIEW_CHECK else True
-                    a_col, r_col = st.columns(2)
-                    if a_col.button("Approve", key=f"approve_dev_{i}", disabled=not reviewed):
+                    reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_dev_{i}")
+                    if st.button("Approve", key=f"approve_dev_{i}", disabled=not reviewed):
                         _approve_device_row(row)
-                    if r_col.button("Reject", key=f"reject_dev_{i}"):
+                    if st.button("Reject", key=f"reject_dev_{i}"):
                         _reject_row(PENDING_DEVICE_WS, i, row)
 
     st.markdown("---"); st.markdown("### Pending Transfers")
@@ -1217,22 +1175,12 @@ def approvals_tab():
             with st.expander(f"SN {row['Serial Number']}: {row['From owner']} → {row['To owner']} (by {row['Submitted by']})", expanded=False):
                 c1, c2 = st.columns([3,2])
                 with c1:
-                    info = {k: row.get(k, "") for k in LOG_COLS}; st.json(info)
-                    pdf_bytes = _fetch_public_pdf_bytes(row.get("Approval File ID",""), row.get("Approval PDF",""))
-                    if pdf_bytes:
-                        st.caption("Approval PDF Preview")
-                        try:
-                            pdf_viewer(input=pdf_bytes, width=700, key=f"viewer_tr_{i}")
-                        except Exception:
-                            pass
-                    elif row.get("Approval PDF"):
-                        st.markdown(f"[Open Approval PDF]({row['Approval PDF']})")
+                    st.json({k: row.get(k, "") for k in LOG_COLS})
                 with c2:
-                    reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_tr_{i}") if REQUIRE_REVIEW_CHECK else True
-                    a_col, r_col = st.columns(2)
-                    if a_col.button("Approve", key=f"approve_tr_{i}", disabled=not reviewed):
+                    reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_tr_{i}")
+                    if st.button("Approve", key=f"approve_tr_{i}", disabled=not reviewed):
                         _approve_transfer_row(row)
-                    if r_col.button("Reject", key=f"reject_tr_{i}"):
+                    if st.button("Reject", key=f"reject_tr_{i}"):
                         _reject_row(PENDING_TRANSFER_WS, i, row)
 
 def _approve_device_row(row: pd.Series):
@@ -1304,16 +1252,16 @@ def _reject_row(ws_title: str, i: int, row: pd.Series):
 
 def export_tab():
     st.subheader("⬇️ Export (always fresh)")
-    inv = read_worksheet(INVENTORY_WS); log = read_worksheet(TRANSFERLOG_WS); emp = read_worksheet(EMPLOYEE_WS)
+    inv = read_worksheet(INVENTORY_WS)
+    log = read_worksheet(TRANSFERLOG_WS)
+    emp = read_worksheet(EMPLOYEE_WS)
+
     st.caption(f"Last fetched: {datetime.now().strftime(DATE_FMT)}")
     c1, c2, c3 = st.columns(3)
     with c1: st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"), "inventory.csv", "text/csv")
     with c2: st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"), "transfer_log.csv", "text/csv")
     with c3: st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"), "employees.csv", "text/csv")
 
-# =============================================================================
-# UPLOAD: accept octet-stream and show real errors/progress
-# =============================================================================
 # =============================================================================
 # UPLOAD: accept octet-stream and show real errors/progress
 # =============================================================================
@@ -1429,6 +1377,238 @@ def _config_check_ui():
         _ = get_sh()
     except Exception as e:
         st.error("Cannot open the spreadsheet with the configured Service Account."); st.code(str(e)); st.stop()
+
+# =============================================================================
+# TAB FUNCTIONS (Employees, Inventory, History, Approvals, Export)
+# =============================================================================
+
+def employee_register_tab():
+    st.subheader("🧑‍💼 Register New Employee (mainlists)")
+    emp_df = read_worksheet(EMPLOYEE_WS)
+
+    try:
+        ids = pd.to_numeric(emp_df["Employee ID"], errors="coerce").dropna().astype(int)
+        next_id_suggestion = str(ids.max() + 1) if len(ids) else str(len(emp_df) + 1)
+    except Exception:
+        next_id_suggestion = str(len(emp_df) + 1)
+
+    with st.form("register_employee", clear_on_submit=True):
+        r1c1, r1c2, r1c3 = st.columns(3)
+        with r1c1: emp_name = st.text_input("New Employeer *")
+        with r1c2: emp_id   = st.text_input("Employee ID", help=f"Suggested next ID: {next_id_suggestion}")
+        with r1c3: new_sig  = st.selectbox("New Signature", ["— Select —", "Yes", "No", "Requested"])
+
+        r2c1, r2c2 = st.columns(2)
+        with r2c1: Email  = st.text_input("Email")
+        with r2c2: active = st.selectbox("Active", ["Active", "Inactive", "Onboarding", "Resigned"])
+
+        r3c1, r3c2, r3c3 = st.columns(3)
+        with r3c1: position = st.text_input("Position")
+        with r3c2: department = st.text_input("Department")
+        with r3c3: location_ksa = st.text_input("Location (KSA)")
+
+        r4c1, r4c2, r4c3 = st.columns(3)
+        with r4c1: project = st.text_input("Project")
+        with r4c2: teams   = st.selectbox("Microsoft Teams", ["— Select —", "Yes", "No", "Requested"])
+        with r4c3: mobile  = st.text_input("Mobile Number")
+
+        submitted = st.form_submit_button("Save Employee", type="primary")
+
+    if submitted:
+        if not emp_name.strip():
+            st.error("New Employeer is required.")
+            return
+        if emp_id.strip() and not emp_df.empty and emp_id.strip() in emp_df["Employee ID"].astype(str).values:
+            st.error(f"Employee ID '{emp_id}' already exists.")
+            return
+
+        row = {
+            "New Employeer": emp_name.strip(), "Name": emp_name.strip(),
+            "Employee ID": emp_id.strip() if emp_id.strip() else next_id_suggestion,
+            "New Signature": new_sig if new_sig != "— Select —" else "",
+            "Email": Email.strip(), "Active": active.strip(),
+            "Position": position.strip(), "Department": department.strip(),
+            "Location (KSA)": location_ksa.strip(), "Project": project.strip(),
+            "Microsoft Teams": teams if teams != "— Select —" else "",
+            "Mobile Number": mobile.strip(),
+        }
+
+        new_df = pd.concat([emp_df, pd.DataFrame([row])], ignore_index=True) if not emp_df.empty else pd.DataFrame([row])
+        new_df = reorder_columns(new_df, EMPLOYEE_CANON_COLS)
+        write_worksheet(EMPLOYEE_WS, new_df)
+        st.success("✅ Employee saved to 'mainlists'.")
+
+
+def employees_view_tab():
+    st.subheader("📇 Employees (mainlists)")
+    df = read_worksheet(EMPLOYEE_WS)
+    if df.empty:
+        st.info("No employees found in 'mainlists'.")
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def inventory_tab():
+    st.subheader("📋 Inventory")
+    df = read_worksheet(INVENTORY_WS)
+    if df.empty:
+        st.warning("Inventory is empty.")
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def history_tab():
+    st.subheader("📜 Transfer Log")
+    df = read_worksheet(TRANSFERLOG_WS)
+    if df.empty:
+        st.info("No transfer history found.")
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def approvals_tab():
+    st.subheader("✅ Approvals (Admin)")
+    if st.session_state.get("role") != "Admin":
+        st.info("Only Admins can view approvals.")
+        return
+
+    pending_dev = read_worksheet(PENDING_DEVICE_WS)
+    pending_tr  = read_worksheet(PENDING_TRANSFER_WS)
+
+    st.markdown("### Pending Device Registrations")
+    df_dev = pending_dev[pending_dev["Approval Status"].isin(["", "Pending"])].reset_index(drop=True)
+    if df_dev.empty:
+        st.success("No pending device registrations.")
+    else:
+        for i, row in df_dev.iterrows():
+            with st.expander(f"{row['Device Type']} — SN {row['Serial Number']} (by {row['Submitted by']})", expanded=False):
+                c1, c2 = st.columns([3,2])
+                with c1:
+                    st.json({k: row.get(k, "") for k in INVENTORY_COLS})
+                with c2:
+                    reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_dev_{i}")
+                    if st.button("Approve", key=f"approve_dev_{i}", disabled=not reviewed):
+                        _approve_device_row(row)
+                    if st.button("Reject", key=f"reject_dev_{i}"):
+                        _reject_row(PENDING_DEVICE_WS, i, row)
+
+    st.markdown("---"); st.markdown("### Pending Transfers")
+    df_tr = pending_tr[pending_tr["Approval Status"].isin(["", "Pending"])].reset_index(drop=True)
+    if df_tr.empty:
+        st.success("No pending transfers.")
+    else:
+        for i, row in df_tr.iterrows():
+            with st.expander(f"SN {row['Serial Number']}: {row['From owner']} → {row['To owner']} (by {row['Submitted by']})", expanded=False):
+                c1, c2 = st.columns([3,2])
+                with c1:
+                    st.json({k: row.get(k, "") for k in LOG_COLS})
+                with c2:
+                    reviewed = st.checkbox("I reviewed the attached PDF", key=f"review_tr_{i}")
+                    if st.button("Approve", key=f"approve_tr_{i}", disabled=not reviewed):
+                        _approve_transfer_row(row)
+                    if st.button("Reject", key=f"reject_tr_{i}"):
+                        _reject_row(PENDING_TRANSFER_WS, i, row)
+
+
+def _approve_device_row(row: pd.Series):
+    inv = read_worksheet(INVENTORY_WS)
+    now_str = datetime.now().strftime(DATE_FMT)
+    approver = st.session_state.get("username", "")
+
+    new_row = {k: row.get(k, "") for k in INVENTORY_COLS}
+    new_row["Registered by"] = approver or new_row.get("Registered by", "")
+    new_row["Date issued"] = now_str
+
+    inv_out = pd.concat([inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS),
+                         pd.DataFrame([new_row])], ignore_index=True)
+    write_worksheet(INVENTORY_WS, inv_out)
+
+    _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
+    st.success("✅ Device approved and added to Inventory.")
+
+
+def _approve_transfer_row(row: pd.Series):
+    inv = read_worksheet(INVENTORY_WS)
+    if inv.empty:
+        st.error("Inventory is empty; cannot apply transfer.")
+        return
+
+    sn = str(row.get("Serial Number", ""))
+    match = inv[inv["Serial Number"].astype(str) == sn]
+    if match.empty:
+        st.error("Serial not found in Inventory.")
+        return
+
+    idx = match.index[0]
+    now_str = datetime.now().strftime(DATE_FMT)
+    approver = st.session_state.get("username", "")
+
+    prev_user = str(inv.loc[idx, "Current user"] or "")
+    inv.loc[idx, "Previous User"] = prev_user
+    inv.loc[idx, "Current user"]  = str(row.get("To owner", ""))
+    inv.loc[idx, "TO"]            = str(row.get("To owner", ""))
+    inv.loc[idx, "Date issued"]   = now_str
+    inv.loc[idx, "Registered by"] = approver
+    write_worksheet(INVENTORY_WS, inv)
+
+    log_row = {k: row.get(k, "") for k in LOG_COLS}
+    log_row["Date issued"] = now_str
+    log_row["Registered by"] = approver
+    append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
+
+    _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
+    st.success("✅ Transfer approved and applied.")
+
+
+def _mark_decision(ws_title: str, row: pd.Series, *, status: str):
+    df = read_worksheet(ws_title)
+    key_cols = [c for c in ["Serial Number","Submitted at","Submitted by","To owner"] if c in df.columns]
+    mask = pd.Series([True] * len(df))
+    for c in key_cols:
+        mask &= df[c].astype(str) == str(row.get(c, ""))
+    if not mask.any() and "Serial Number" in df.columns:
+        mask = df["Serial Number"].astype(str) == str(row.get("Serial Number", ""))
+    idxs = df[mask].index.tolist()
+    if not idxs:
+        return
+    idx = idxs[0]
+    df.loc[idx, "Approval Status"] = status
+    df.loc[idx, "Approver"] = st.session_state.get("username", "")
+    df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
+    write_worksheet(ws_title, df)
+
+
+def _reject_row(ws_title: str, i: int, row: pd.Series):
+    df = read_worksheet(ws_title)
+    key_cols = [c for c in ["Serial Number","Submitted at","Submitted by","To owner"] if c in df.columns]
+    mask = pd.Series([True] * len(df))
+    for c in key_cols:
+        mask &= df[c].astype(str) == str(row.get(c, ""))
+    idxs = df[mask].index.tolist()
+    if not idxs and "Serial Number" in df.columns:
+        idxs = df[df["Serial Number"].astype(str) == str(row.get("Serial Number",""))].index.tolist()
+    if not idxs:
+        return
+    idx = idxs[0]
+    df.loc[idx, "Approval Status"] = "Rejected"
+    df.loc[idx, "Approver"] = st.session_state.get("username","")
+    df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
+    write_worksheet(ws_title, df)
+    st.success("❌ Request rejected.")
+
+
+def export_tab():
+    st.subheader("⬇️ Export (always fresh)")
+    inv = read_worksheet(INVENTORY_WS)
+    log = read_worksheet(TRANSFERLOG_WS)
+    emp = read_worksheet(EMPLOYEE_WS)
+
+    st.caption(f"Last fetched: {datetime.now().strftime(DATE_FMT)}")
+    c1, c2, c3 = st.columns(3)
+    with c1: st.download_button("Inventory CSV", inv.to_csv(index=False).encode("utf-8"), "inventory.csv", "text/csv")
+    with c2: st.download_button("Transfer Log CSV", log.to_csv(index=False).encode("utf-8"), "transfer_log.csv", "text/csv")
+    with c3: st.download_button("Employees CSV", emp.to_csv(index=False).encode("utf-8"), "employees.csv", "text/csv")
+
 
 def run_app():
     render_header(); _config_check_ui()
