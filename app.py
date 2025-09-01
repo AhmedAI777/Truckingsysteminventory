@@ -939,13 +939,13 @@ def register_device_tab():
 if submitted:
     if not serial.strip() or not device.strip():
         st.error("Serial Number and Device Type are required.")
-        return
+        st.stop()
 
     # Prefer the widget variable, fall back to session_state to be safe
     pdf_file_obj = pdf_file or ss.get("reg_pdf")
     if pdf_file_obj is None:
         st.error("Signed ICT Registration PDF is required for submission.")
-        return
+        st.stop()
 
     now_str = datetime.now().strftime(DATE_FMT)
     actor   = st.session_state.get("username", "")
@@ -1113,11 +1113,11 @@ def transfer_tab():
     if submitted:
         if not serial.strip() or not new_owner.strip():
             st.error("Device Serial and New Owner are required.")
-            return
+            st.stop()
 
         if pdf_file is None:
             st.error("Signed ICT Transfer PDF is required.")
-            return
+            st.stop()
 
         row = inv_df[inv_df["Serial Number"] == serial].iloc[0].to_dict()
         now_str = datetime.now().strftime(DATE_FMT)
