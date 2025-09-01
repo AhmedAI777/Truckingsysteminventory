@@ -820,49 +820,59 @@ def build_registration_values(device_row: dict, *, actor_name: str, emp_df: pd.D
     })
     return values
 
-def build_transfer_values(inv_row: pd.Series, new_owner: str, *, emp_df: pd.DataFrame) -> dict[str, str]:
-    fm = _registration_field_map()
-    values = {
-        fm["from_name"]:       str(inv_row.get("Current user", "")),
-        fm["from_mobile"]:     str(inv_row.get("Contact Number", "")),
-        fm["from_email"]:      str(inv_row.get("Email Address", "")),
-        fm["from_department"]: str(inv_row.get("Department", "")),
-        fm["from_date"]:       datetime.now().strftime("%Y-%m-%d"),
-        fm["from_location"]:   str(inv_row.get("Location", "")),
+def build_transfer_values(row: dict, new_owner: str, emp_df: pd.DataFrame):
+    """Build values for the ICT transfer form (both From and To)."""
+    now_str = datetime.now().strftime(DATE_FMT)
+
+    # --- From (current owner, from device row) ---
+    from_name  = row.get("Current user", "")
+    from_email = row.get("Email Address", "")
+    from_phone = row.get("Contact Number", "")
+    from_dept  = row.get("Department", "")
+    from_loc   = row.get("Location", "")
+
+    # --- To (new owner, looked up from emp_df) ---
+    emp_row = emp_df.loc[
+        (emp_df["New Employeer"] == new_owner) | (emp_df["Name"] == new_owner)
+    ]
+    if not emp_row.empty:
+        emp_data = emp_row.iloc[0]
+        to_name  = emp_data.get("Name", new_owner)
+        to_email = emp_data.get("Email Address", "")
+        to_phone = emp_data.get("Mobile Number", "")
+        to_dept  = emp_data.get("Department", "")
+        to_loc   = emp_data.get("Location (KSA)", "")
+    else:
+        to_name, to_email, to_phone, to_dept, to_loc = new_owner, "", "", "", ""
+
+    # --- Equipment details (copied from registration row) ---
+    equip = f"CPU: {row.get('CPU','')} | Memory: {row.get('Memory','')} | GPU: {row.get('GPU','')} | Hard Drive 1: {row.get('Hard Drive 1','')} | Hard Drive 2: {row.get('Hard Drive 2','')} | Screen Size: {row.get('Screen Size','')} | Office: {row.get('Office','')}"
+
+    return {
+        # From Section
+        "From_Name": from_name,
+        "From_Email": from_email,
+        "From_Mobile": from_phone,
+        "From_Department": from_dept,
+        "From_Date": now_str,
+        "From_Project_Location": from_loc,
+
+        # To Section
+        "To_Name": to_name,
+        "To_Email": to_email,
+        "To_Mobile": to_phone,
+        "To_Department": to_dept,
+        "To_Date": now_str,
+        "To_Project_Location": to_loc,
+
+        # Equipment
+        "Type": row.get("Device Type", ""),
+        "Brand": row.get("Brand", ""),
+        "Model": row.get("Model", ""),
+        "Specifications": equip,
+        "Serial Number": row.get("Serial Number", ""),
     }
-    to_mobile = to_email = to_dept = to_loc = ""
-    try:
-        if isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
-            r = _find_emp_row_by_name(emp_df, new_owner)
-            if r is not None:
-                to_mobile = _get_emp_value(r, "Mobile Number", "Phone", "Mobile")
-                to_email  = _get_emp_value(r, "Email", "E-mail")
-                to_dept   = _get_emp_value(r, "Department", "Dept")
-                to_loc    = _get_emp_value(r, "Location (KSA)", "Location", "City")
-    except Exception:
-        pass
-    values.update({
-        fm["to_name"]:       new_owner.strip(),
-        fm["to_mobile"]:     to_mobile,
-        fm["to_email"]:      to_email,
-        fm["to_department"]: to_dept,
-        fm["to_date"]:       datetime.now().strftime("%Y-%m-%d"),
-        fm["to_location"]:   to_loc,
-    })
-    specs = []
-    for label in ["CPU","Memory","GPU","Hard Drive 1","Hard Drive 2","Screen Size","Office","Notes"]:
-        val = str(inv_row.get(label, "")).strip()
-        if val:
-            specs.append(f"{label}: {val}")
-    specs_txt = " | ".join(specs)
-    values.update({
-        fm["eq_type"]:   str(inv_row.get("Device Type","")),
-        fm["eq_brand"]:  str(inv_row.get("Brand","")),
-        fm["eq_model"]:  str(inv_row.get("Model","")),
-        fm["eq_specs"]:  specs_txt,
-        fm["eq_serial"]: str(inv_row.get("Serial Number","")),
-    })
-    return values
+
 
 # =============================================================================
 # UI (header and tabs)
