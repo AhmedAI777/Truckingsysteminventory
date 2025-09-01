@@ -984,7 +984,7 @@ if submitted:
     )
     if not fid:
         # upload function already showed an error toast
-        return
+        st.stop()
 
     is_admin = st.session_state.get("role") == "Admin"
 
