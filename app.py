@@ -971,22 +971,22 @@ def register_device_tab():
             action="Register",
         )
         if not fid: return
-            # transfer_tab()  → when building `pending`
-    pending = {
-        **row,  # inventory row
-        "From owner": row.get("Current user", ""),     
-        "To owner": new_owner,
-        "Approval Status": "Pending",
-        "Approval PDF": link,
-        "Approval File ID": fid,
-        "Submitted by": actor,
-        "Submitted at": now_str,
-        "Approver": "",
-        "Decision at": "",
-    }
-
-        append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-        st.success("🕒 Device registration submitted for Admin approval.")
+            
+        # Save in Pending Transfers sheet
+        pending = {
+            **row,  # copy inventory row
+            "From owner": row.get("Current user", ""), 
+            "To owner": new_owner,
+            "Approval Status": "Pending",
+            "Approval PDF": link,
+            "Approval File ID": fid,
+            "Submitted by": actor,
+            "Submitted at": now_str,
+            "Approver": "",
+            "Decision at": "",
+        }
+        append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
+        st.success("🕒 Transfer request submitted for Admin approval.")
 
 def transfer_tab():
     st.subheader("🔄 Device Transfer")
