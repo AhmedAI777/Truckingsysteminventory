@@ -473,10 +473,27 @@ def _mark_decision(ws_name: str, row: dict, *, status: str):
     actor = st.session_state.get("username", "")
 
     # Read the current sheet
-    df = read_worksheet(mainlists)
-    if df.empty:
-        st.error(f"Worksheet {mainlists} is empty, cannot update.")
-        return
+   def read_worksheet(mainlists: str):
+    ws = sh.worksheet(mainlists)
+    return pd.DataFrame(ws.get_all_records())
+EXPECTED_HEADERS = [
+    "Name",
+    "Email",
+    "APLUS",
+    "Active",
+    "Position",
+    "Department",
+    "Location (KSA)",
+    "Project",
+    "Microsoft Teams",
+    "Mobile Number",
+]
+
+def read_employee_sheet():
+    ws = get_sh().worksheet("mainlists")
+    records = ws.get_all_records(expected_headers=EXPECTED_HEADERS)
+    return pd.DataFrame(records)
+
 
     # Locate the row by unique Serial Number + File ID if available
     serial = row.get("Serial Number", "")
@@ -936,6 +953,24 @@ def render_header():
 
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee")
+    EXPECTED_HEADERS = [
+    "Name",
+    "Email",
+    "APLUS",
+    "Active",
+    "Position",
+    "Department",
+    "Location (KSA)",
+    "Project",
+    "Microsoft Teams",
+    "Mobile Number",
+]
+
+def read_employee_sheet():
+    ws = get_sh().worksheet("mainlists")
+    records = ws.get_all_records(expected_headers=EXPECTED_HEADERS)
+    return pd.DataFrame(records)
+
 
     with st.form("employee_register", clear_on_submit=True):
         name   = st.text_input("Full Name *")
