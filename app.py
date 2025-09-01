@@ -859,7 +859,8 @@ def register_device_tab():
     st.session_state.setdefault("current_owner", UNASSIGNED_LABEL)
 
     emp_df = read_worksheet(EMPLOYEE_WS)
-    employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
+    employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"),
+                             *unique_nonempty(emp_df, "Name")})
     owner_options = [UNASSIGNED_LABEL] + employee_names
 
     st.selectbox(
@@ -872,6 +873,7 @@ def register_device_tab():
         args=(emp_df,),
     )
 
+    # --- Device registration form ---
     with st.form("register_device", clear_on_submit=False):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1: serial = st.text_input("Serial Number *")
@@ -901,11 +903,45 @@ def register_device_tab():
         notes = st.text_area("Notes", height=80)
 
         st.divider()
-        c_download = st.form_submit_button("Download register new device")
-
-        st.markdown("**Signed ICT Equipment Form (PDF)**")
         pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf")
         submitted = st.form_submit_button("Save Device", type="primary")
+
+    # --- Download prefilled PDF (outside form) ---
+    if st.button("Download register new device"):
+        if not serial.strip() or not device.strip():
+            st.error("Serial and Device Type required.")
+        else:
+            now_str = datetime.now().strftime(DATE_FMT)
+            actor = st.session_state.get("username", "")
+            row = {
+                "Serial Number": serial.strip(),
+                "Device Type": device.strip(),
+                "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
+                "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
+                "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
+                "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
+                "Previous User": "", "TO": "",
+                "Department": st.session_state.get("reg_dept", "").strip(),
+                "Email Address": st.session_state.get("reg_email", "").strip(),
+                "Contact Number": st.session_state.get("reg_contact", "").strip(),
+                "Location": st.session_state.get("reg_location", "").strip(),
+                "Office": st.session_state.get("reg_office", "").strip(),
+                "Notes": notes.strip(),
+                "Date issued": now_str, "Registered by": actor,
+            }
+            tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
+            if not tpl_bytes:
+                st.error("⚠️ Could not load ICT Registration PDF template.")
+                return
+            reg_vals = build_registration_values(row, actor_name=actor, emp_df=emp_df)
+            filled   = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
+
+            st.download_button(
+                "📄 Download ICT Registration Form",
+                data=filled,
+                file_name=_ict_filename(serial)
+            )
+)
 
 
 # (transfer_tab, approvals_tab, _approve_device_row, _approve_transfer_row, _reject_row)
