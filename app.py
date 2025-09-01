@@ -402,7 +402,7 @@ def upload_pdf_and_get_link(file_obj, *, prefix: str, office: str, city_code: st
 
     except Exception as e:
         st.error(f"Error uploading PDF: {e}")
-        st.stop() "", ""
+        st.stop()
 
 
 
