@@ -895,7 +895,7 @@ def build_transfer_values(row: dict, new_owner: str, emp_df: pd.DataFrame):
     return {
         # From Section
         "From_Name": from_name,
-        "From_Email": from_email,
+        "From_email": from_email,
         "From_Mobile": from_phone,
         "From_Department": from_dept,
         "From_Date": now_str,
