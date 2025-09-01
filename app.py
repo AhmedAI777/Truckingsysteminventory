@@ -1006,7 +1006,7 @@ if st.button("Download register new device"):
         tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
         if not tpl_bytes:
             st.error("⚠️ Could not load ICT Registration PDF template.")
-            return
+            st.stop()
         reg_vals = build_registration_values(row, actor_name=actor, emp_df=emp_df)
         filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
         st.download_button(
