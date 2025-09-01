@@ -472,11 +472,11 @@ def _mark_decision(ws_name: str, row: dict, *, status: str):
     now_str = datetime.now().strftime(DATE_FMT)
     actor = st.session_state.get("username", "")
 
-    # Read the current sheet
-   def read_worksheet(mainlists: str):
-    ws = sh.worksheet(mainlists)
-    return pd.DataFrame(ws.get_all_records())
-EXPECTED_HEADERS = [
+  # =============================
+# Worksheet readers
+# =============================
+
+EXPECTED_EMPLOYEE_HEADERS = [
     "Name",
     "Email",
     "APLUS",
@@ -489,9 +489,15 @@ EXPECTED_HEADERS = [
     "Mobile Number",
 ]
 
+def read_worksheet(sheet_name: str):
+    """Generic worksheet reader for sheets other than 'mainlists'."""
+    ws = get_sh().worksheet(sheet_name)
+    return pd.DataFrame(ws.get_all_records())
+
 def read_employee_sheet():
+    """Special reader for 'mainlists' with enforced headers."""
     ws = get_sh().worksheet("mainlists")
-    records = ws.get_all_records(expected_headers=EXPECTED_HEADERS)
+    records = ws.get_all_records(expected_headers=EXPECTED_EMPLOYEE_HEADERS)
     return pd.DataFrame(records)
 
 
@@ -514,8 +520,6 @@ def read_employee_sheet():
 
     # Write back to sheet
     write_worksheet(ws_name, df)
-
-
 
 
 # =============================================================================
@@ -966,41 +970,60 @@ def employee_register_tab():
     "Mobile Number",
 ]
 
-def read_employee_sheet():
-    ws = get_sh().worksheet("mainlists")
-    records = ws.get_all_records(expected_headers=EXPECTED_HEADERS)
-    return pd.DataFrame(records)
+# =============================
+# Employee Register Tab
+# =============================
 
+def employee_register_tab():
+    st.subheader("👨‍💼 Register New Employee")
 
-    with st.form("employee_register", clear_on_submit=True):
-        name   = st.text_input("Full Name *")
-        emp_id = st.text_input("Employee ID *")
-        email  = st.text_input("Email Address")
+    # Load employee sheet with enforced headers
+    try:
+        emp_df = read_employee_sheet()
+    except Exception as e:
+        st.error(f"Error reading employee sheet: {e}")
+        return
+
+    with st.form("employee_register_form", clear_on_submit=True):
+        name = st.text_input("Full Name *")
+        emp_id = st.text_input("Employee ID *")  # Optional: if you want unique ID
+        email = st.text_input("Email Address")
         mobile = st.text_input("Mobile Number")
-        dept   = st.text_input("Department")
-        loc    = st.text_input("Location (KSA)")
-        proj   = st.text_input("Project / Office")
+        position = st.text_input("Position")
+        department = st.text_input("Department")
+        location = st.text_input("Location (KSA)")
+        project = st.text_input("Project / Office")
+        teams = st.text_input("Microsoft Teams")
 
         submitted = st.form_submit_button("Save Employee", type="primary")
 
-    if submitted:
-        if not name.strip() or not emp_id.strip():
-            st.error("Name and Employee ID are required.")
-            st.stop()
+        if submitted:
+            if not name.strip() or not emp_id.strip():
+                st.error("Full Name and Employee ID are required.")
+                st.stop()
 
-        new_row = {
-            "New Employeer": name.strip(),
-            "Employee ID": emp_id.strip(),
-            "Email": email.strip(),
-            "Mobile Number": mobile.strip(),
-            "Department": dept.strip(),
-            "Location (KSA)": loc.strip(),
-            "Project": proj.strip(),
-            "Active": "Yes",
-        }
+            # Build the row exactly to match headers
+            new_row = {
+                "Name": name.strip(),
+                "Email": email.strip(),
+                "APLUS": emp_id.strip(),
+                "Active": "Yes",  # default, could be Yes/No toggle later
+                "Position": position.strip(),
+                "Department": department.strip(),
+                "Location (KSA)": location.strip(),
+                "Project": project.strip(),
+                "Microsoft Teams": teams.strip(),
+                "Mobile Number": mobile.strip(),
+            }
 
-        append_to_worksheet(EMPLOYEE_WS, pd.DataFrame([new_row]))
-        st.success(f"✅ Employee '{name}' registered.")
+            # Append row to Google Sheet
+            try:
+                ws = get_sh().worksheet("mainlists")
+                ws.append_row(list(new_row.values()))
+                st.success(f"Employee {name} registered successfully!")
+            except Exception as e:
+                st.error(f"Error saving employee: {e}")
+
 
 def employees_view_tab():
     st.subheader("📇 Employees (mainlists)")
