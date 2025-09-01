@@ -377,7 +377,7 @@ def upload_pdf_and_get_link(file_obj, *, prefix: str, office: str, city_code: st
         root_id = st.secrets.get("drive", {}).get("approvals", "")
         if not root_id:
             st.error("Drive approvals folder not configured in secrets.")
-            st.stop() "", ""
+            return "", ""
 
         # Ensure folder structure exists
         city_folder = city_folder_name(city_code)
