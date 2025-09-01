@@ -1238,6 +1238,61 @@ def employee_register_tab():
         append_to_worksheet(EMPLOYEE_WS, pd.DataFrame([new_row]))
         st.success(f"✅ Employee '{name}' registered.")
 
+
+def build_transfer_pdf_values(row: dict, new_owner: str, emp_df: pd.DataFrame) -> dict[str, str]:
+    """Build values for filling the transfer PDF form."""
+    now_str = datetime.now().strftime("%Y-%m-%d")
+
+    # --- From (current owner from inventory row)
+    from_name  = row.get("Current user", "")
+    from_email = row.get("Email Address", "")
+    from_phone = row.get("Contact Number", "")
+    from_dept  = row.get("Department", "")
+    from_loc   = row.get("Location", "")
+
+    # --- To (new owner from employee sheet)
+    emp_row = emp_df.loc[
+        (emp_df["New Employeer"] == new_owner) | (emp_df["Name"] == new_owner)
+    ]
+    if not emp_row.empty:
+        emp = emp_row.iloc[0]
+        to_name  = emp.get("Name", new_owner)
+        to_email = emp.get("Email Address", "")
+        to_phone = emp.get("Mobile Number", "")
+        to_dept  = emp.get("Department", "")
+        to_loc   = emp.get("Location (KSA)", "")
+    else:
+        to_name, to_email, to_phone, to_dept, to_loc = new_owner, "", "", "", ""
+
+    # --- Equipment (always from registration row)
+    equip = f"CPU: {row.get('CPU','')} | Memory: {row.get('Memory','')} | GPU: {row.get('GPU','')} | HDD1: {row.get('Hard Drive 1','')} | HDD2: {row.get('Hard Drive 2','')} | Screen: {row.get('Screen Size','')} | Office: {row.get('Office','')}"
+
+    return {
+        # From Section
+        "from_name": from_name,
+        "from_mobile": from_phone,
+        "from_email": from_email,
+        "from_department": from_dept,
+        "from_date": now_str,
+        "from_location": from_loc,
+
+        # To Section
+        "to_name": to_name,
+        "to_mobile": to_phone,
+        "to_email": to_email,
+        "to_department": to_dept,
+        "to_date": now_str,
+        "to_location": to_loc,
+
+        # Equipment
+        "eq_type": row.get("Device Type", ""),
+        "eq_brand": row.get("Brand", ""),
+        "eq_model": row.get("Model", ""),
+        "eq_specs": equip,
+        "eq_serial": row.get("Serial Number", ""),
+    }
+
+
 # =============================================================================
 # TRANSFER TAB
 # =============================================================================
