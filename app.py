@@ -336,128 +336,77 @@ def ensure_drive_subfolder(root_id: str, path_parts: list[str], drive_cli=None) 
     return parent
 
 def move_drive_file(file_id: str, office: str, city_code: str, action: str, decision: str):
-    """Move file Pending → Approved/Rejected with renamed suffix."""
     drive_cli = _get_drive()
     root_id = st.secrets.get("drive", {}).get("approvals", "")
     city_folder = city_folder_name(city_code)
-    path_parts = [office, city_folder, action, decision]
+    path_parts = [office or "Head Office (HO)", city_folder, action, decision]
     new_folder_id = ensure_drive_subfolder(root_id, path_parts, drive_cli)
-
-    # Fetch current file
-    file = drive_cli.files().get(
-        fileId=file_id, fields="name, parents", supportsAllDrives=True
-    ).execute()
+    file = drive_cli.files().get(fileId=file_id, fields="parents", supportsAllDrives=True).execute()
     prev_parents = ",".join(file.get("parents", []))
-    old_name = file.get("name", "")
-
-    # Append decision suffix
-    if old_name.lower().endswith(".pdf"):
-        base = old_name[:-4]
-        new_name = f"{base}-{decision.upper()}.pdf"
-    else:
-        new_name = f"{old_name}-{decision.upper()}"
-
-    # Move + rename
     drive_cli.files().update(
         fileId=file_id,
         addParents=new_folder_id,
         removeParents=prev_parents,
-        body={"name": new_name},
-        fields="id, parents, name",
+        fields="id, parents",
         supportsAllDrives=True,
     ).execute()
 
-def upload_pdf_and_get_link(
-    uploaded_file,
-    *,
-    serial: str,
-    project: str,
-    office: str,
-    city_code: str,           # e.g., "Jeddah"
-    action: str               # "REG" or "TRN"
-) -> Tuple[str, str]:
-    """
-    Upload a signed PDF into: approvals / <office> / <City Folder> / (Register|Transfer) / Pending
-    Returns: (share_link, file_id)
-    """
-    def upload_pdf_and_get_link(
-    uploaded_file,
-    *,
-    serial: str,
-    project: str,
-    office: str,
-    city_code: str,           # e.g., "Jeddah"
-    action: str               # "REG" or "TRN"
-) -> Tuple[str, str]:
-    """
-    Upload a signed PDF into: approvals / <office> / <City Folder> / (Register|Transfer) / Pending
-    Returns: (share_link, file_id)
-    """
+def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_code: str, action: str) -> Tuple[str, str]:
     if uploaded_file is None:
-        st.error("No file selected."); return "", ""
-
+        st.error("No file selected.")
+        return "", ""
     try:
         data = uploaded_file.getvalue()
     except Exception as e:
-        st.error(f"Failed reading the uploaded file: {e}"); return "", ""
+        st.error(f"Failed reading the uploaded file: {e}")
+        return "", ""
     if not data:
-        st.error("Uploaded file is empty."); return "", ""
+        st.error("Uploaded file is empty.")
+        return "", ""
     if data[:4] != b"%PDF":
-        st.warning("⚠️ File doesn't start with %PDF header — continuing, but may be invalid.")
-
+        st.warning("File doesn't start with %PDF header — continuing.")
     try:
         drive_cli = _get_drive()
         root_id = st.secrets.get("drive", {}).get("approvals", "")
         if not root_id:
-            st.error("Drive approvals folder not configured in secrets."); return "", ""
-
-        # Folder path
-        action_fs = "Register" if action == "REG" else "Transfer"
-        folder_id = ensure_drive_subfolder(
-            root_id,
-            [office or "Head Office (HO)", city_folder_name(city_code), action_fs, "Pending"],
-            drive_cli
-        )
-
-        # Filename
-        seq = next_seq(serial, project, city_code, action)
-        fname = make_filename(project, city_code, action, serial, seq)
-
-        meta = {"name": fname, "parents": [folder_id], "mimeType": "application/pdf"}
+            st.error("Drive approvals folder not configured in secrets.")
+            return "", ""
+        city_folder = city_folder_name(city_code)
+        folder_id = ensure_drive_subfolder(root_id, [office or "Head Office (HO)", city_folder, action, "Pending"], drive_cli)
+        today = datetime.now().strftime("%Y%m%d")
+        meta = {"name": f"{prefix}_{today}.pdf", "parents": [folder_id], "mimeType": "application/pdf"}
         media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
-
         file = drive_cli.files().create(
             body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
         ).execute()
-
     except HttpError as e:
         if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
             if not ALLOW_OAUTH_FALLBACK:
-                st.error("Service Account quota exceeded and OAuth fallback disabled."); return "", ""
+                st.error("Service Account quota exceeded and OAuth fallback disabled.")
+                return "", ""
             try:
                 drive_cli = _get_user_drive()
-                file = drive_cli.files().create(
-                    body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=False
-                ).execute()
+                file = drive_cli.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
             except Exception as e2:
-                st.error(f"OAuth upload failed: {e2}"); return "", ""
+                st.error(f"OAuth upload failed: {e2}")
+                return "", ""
         else:
-            st.error(f"Drive upload failed: {e}"); return "", ""
+            st.error(f"Drive upload failed: {e}")
+            return "", ""
     except Exception as e:
-        st.error(f"Unexpected error uploading to Drive: {e}"); return "", ""
-
-    file_id = file.get("id", ""); link = file.get("webViewLink", "")
+        st.error(f"Unexpected error uploading to Drive: {e}")
+        return "", ""
+    file_id = file.get("id", "")
+    link = file.get("webViewLink", "")
     if not file_id:
-        st.error("Drive did not return a file id."); return "", ""
-
+        st.error("Drive did not return a file id.")
+        return "", ""
     try:
         if st.secrets.get("drive", {}).get("public", True):
             _drive_make_public(file_id, drive_client=drive_cli)
     except Exception:
         pass
-
     return link, file_id
-
 
 # =========================
 # Sheets helpers
@@ -1002,58 +951,60 @@ def employee_register_tab():
 
 def register_device_tab():
     st.subheader("📝 Register New Device")
-
     st.session_state.setdefault("current_owner", UNASSIGNED_LABEL)
-
     emp_df = read_worksheet(EMPLOYEE_WS)
-    employee_names = sorted({
-        *unique_nonempty(emp_df, "New Employeer"),
-        *unique_nonempty(emp_df, "Name")
-    })
+    employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
     owner_options = [UNASSIGNED_LABEL] + employee_names
-
     st.selectbox(
         "Current owner (at registration)",
         owner_options,
         index=owner_options.index(st.session_state["current_owner"])
-        if st.session_state["current_owner"] in owner_options else 0,
+        if st.session_state["current_owner"] in owner_options
+        else 0,
         key="current_owner",
         on_change=_owner_changed,
         args=(emp_df,),
     )
-
     with st.form("register_device", clear_on_submit=False):
         r1c1, r1c2, r1c3 = st.columns(3)
-        with r1c1: st.text_input("Serial Number *", key="reg_serial")
-        with r1c2: st.text_input("Device Type *", key="reg_device")
-        with r1c3: st.text_input("Brand", key="reg_brand")
-
+        with r1c1:
+            st.text_input("Serial Number *", key="reg_serial")
+        with r1c2:
+            st.text_input("Device Type *", key="reg_device")
+        with r1c3:
+            st.text_input("Brand", key="reg_brand")
         r2c1, r2c2, r2c3 = st.columns(3)
-        with r2c1: st.text_input("Model", key="reg_model")
-        with r2c2: st.text_input("CPU", key="reg_cpu")
-        with r2c3: st.text_input("Memory", key="reg_mem")
-
+        with r2c1:
+            st.text_input("Model", key="reg_model")
+        with r2c2:
+            st.text_input("CPU", key="reg_cpu")
+        with r2c3:
+            st.text_input("Memory", key="reg_mem")
         r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1: st.text_input("Hard Drive 1", key="reg_hdd1")
-        with r3c2: st.text_input("Hard Drive 2", key="reg_hdd2")
-        with r3c3: st.text_input("GPU", key="reg_gpu")
-
+        with r3c1:
+            st.text_input("Hard Drive 1", key="reg_hdd1")
+        with r3c2:
+            st.text_input("Hard Drive 2", key="reg_hdd2")
+        with r3c3:
+            st.text_input("GPU", key="reg_gpu")
         r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1: st.text_input("Screen Size", key="reg_screen")
-        with r4c2: st.text_input("Email Address", key="reg_email")
-        with r4c3: st.text_input("Contact Number", key="reg_contact")
-
+        with r4c1:
+            st.text_input("Screen Size", key="reg_screen")
+        with r4c2:
+            st.text_input("Email Address", key="reg_email")
+        with r4c3:
+            st.text_input("Contact Number", key="reg_contact")
         r5c1, r5c2, r5c3 = st.columns(3)
-        with r5c1: st.text_input("Department", key="reg_dept")
-        with r5c2: st.text_input("Location", key="reg_location")
-        with r5c3: st.text_input("Office", key="reg_office")
-
+        with r5c1:
+            st.text_input("Department", key="reg_dept")
+        with r5c2:
+            st.text_input("Location", key="reg_location")
+        with r5c3:
+            st.text_input("Office", key="reg_office")
         st.text_area("Notes", height=80, key="reg_notes")
-
         st.divider()
         pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf")
-
-        c1, c2 = st.columns([1,1])
+        c1, c2 = st.columns([1, 1])
         with c1:
             download_btn = st.form_submit_button("📄 Download Prefilled PDF")
         with c2:
@@ -1091,23 +1042,13 @@ def register_device_tab():
             now_str = datetime.now().strftime(DATE_FMT)
             actor = st.session_state.get("username", "")
             row = build_row(now_str, actor)
-
             tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
             if not tpl_bytes:
-                st.error("⚠️ Could not load ICT Registration PDF template.")
+                st.error("Could not load ICT Registration PDF template.")
             else:
                 reg_vals = build_registration_values(row, actor_name=actor, emp_df=emp_df)
                 filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
-
-                seq = next_seq(serial, "HO", "JED", "REG")
-                fname = make_filename("HO", "JED", "REG", serial, seq)
-
-                st.download_button(
-                    "⬇️ Download ICT Registration Form",
-                    data=filled,
-                    file_name=fname,
-                    mime="application/pdf",
-                )
+                st.download_button("⬇️ Download ICT Registration Form", data=filled, file_name=_ict_filename(serial))
 
     if submitted:
         serial = st.session_state.get("reg_serial", "")
@@ -1115,100 +1056,77 @@ def register_device_tab():
         if not serial or not device:
             st.error("Serial Number and Device Type are required.")
             return
-
         inv_df = read_worksheet(INVENTORY_WS)
         pending_df = read_worksheet(PENDING_DEVICE_WS)
         if serial in inv_df.get("Serial Number", []).tolist() or serial in pending_df.get("Serial Number", []).tolist():
             st.error(f"Serial {serial} already exists in Inventory or Pending.")
             return
-
         pdf_file_obj = pdf_file or st.session_state.get("reg_pdf")
         if pdf_file_obj is None:
-            st.error("Signed ICT Registration PDF is required for submission.")
+            st.error("Signed ICT Registration PDF is required.")
             return
-
         now_str = datetime.now().strftime(DATE_FMT)
         actor = st.session_state.get("username", "")
         row = build_row(now_str, actor)
-
-        seq = next_seq(serial, "HO", row.get("Location", ""), "REG")
-        fname = make_filename("HO", row.get("Location", ""), "REG", serial, seq)
-
         link, fid = upload_pdf_and_get_link(
             pdf_file_obj,
-            serial=serial,
-            project="HO",
+            prefix=f"device_{normalize_serial(serial)}",
             office="Head Office (HO)",
-            city_code=row.get("Location", ""),   # e.g., "Jeddah"
-            action="REG",
+            city_code=row.get("Location", ""),
+            action="Register",
         )
-
         if not fid:
             return
-
-        pending = {**row,
-                   "Approval Status": "Pending",
-                   "Approval PDF": link,
-                   "Approval File ID": fid,
-                   "Submitted by": actor,
-                   "Submitted at": now_str,
-                   "Approver": "",
-                   "Decision at": ""}
+        pending = {
+            **row,
+            "Approval Status": "Pending",
+            "Approval PDF": link,
+            "Approval File ID": fid,
+            "Submitted by": actor,
+            "Submitted at": now_str,
+            "Approver": "",
+            "Decision at": "",
+        }
         append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
         st.success("🕒 Device registration submitted for Admin approval.")
 
-
 def transfer_tab():
     st.subheader("🔄 Device Transfer")
-
     inv_df = read_worksheet(INVENTORY_WS)
     emp_df = read_worksheet(EMPLOYEE_WS)
-
     if inv_df.empty:
         st.info("No devices in inventory.")
         return
-
     serials = inv_df["Serial Number"].dropna().tolist()
-    employees = sorted({*unique_nonempty(emp_df, "New Employeer"),
-                        *unique_nonempty(emp_df, "Name")})
-
+    employees = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
     with st.form("transfer_form", clear_on_submit=False):
         serial = st.selectbox("Select Serial Number", serials, key="trf_serial")
         new_owner = st.selectbox("Select New Owner", employees, key="trf_new_owner")
         pdf_file = st.file_uploader("Upload signed transfer PDF", type=["pdf"], key="trf_pdf")
-
         c1, c2 = st.columns([1, 1])
         with c1:
             dl = st.form_submit_button("📄 Download Prefilled Transfer PDF")
         with c2:
             submitted = st.form_submit_button("💾 Submit Transfer Request", type="primary")
-
     if dl:
         if not serial or not new_owner:
             st.error("Serial number and new owner are required.")
         else:
             row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
-
             transfer_vals = build_transfer_pdf_values(row, new_owner, emp_df)
             field_map = _transfer_field_map()
             mapped_vals = {field_map[k]: v for k, v in transfer_vals.items() if k in field_map}
-
             tpl_bytes = _download_template_bytes_or_public(TRANSFER_TEMPLATE_FILE_ID)
             if not tpl_bytes:
-                st.error("⚠️ Could not load transfer PDF template.")
+                st.error("Could not load transfer PDF template.")
             else:
                 pdf_bytes = fill_pdf_form(tpl_bytes, mapped_vals)
-
-                seq = next_seq(serial, "HO", "JED", "TRN")
-                fname = make_filename("HO", "JED", "TRN", serial, seq)
-
                 st.download_button(
                     "📥 Download Prefilled Transfer PDF",
                     data=pdf_bytes,
-                    file_name=fname,
+                    file_name=_transfer_filename(serial),
                     mime="application/pdf",
                 )
-
     if submitted:
         if not serial or not new_owner:
             st.error("Serial number and new owner required.")
@@ -1216,29 +1134,21 @@ def transfer_tab():
         if pdf_file is None:
             st.error("Signed ICT Transfer PDF is required.")
             return
-
         row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
         now_str = datetime.now().strftime(DATE_FMT)
         actor = st.session_state.get("username", "")
-
-        seq = next_seq(serial, "HO", row.get("Location", ""), "TRN")
-        fname = make_filename("HO", row.get("Location", ""), "TRN", serial, seq)
-
-        llink, fid = upload_pdf_and_get_link(
+        link, fid = upload_pdf_and_get_link(
             pdf_file,
-            serial=serial,
-            project="HO",
+            prefix=f"transfer_{normalize_serial(serial)}",
             office=row.get("Office", ""),
-            city_code=row.get("Location", ""),   # e.g., "Jeddah"
-            action="TRN",
+            city_code=row.get("Location", ""),
+            action="Transfer",
         )
-
         if not fid:
             return
-
         pending = {
             **row,
-            "From owner": row.get("Current user", ""),
+            "From owner": row.get("Current user", ""),  # include actual current owner
             "To owner": new_owner,
             "Approval Status": "Pending",
             "Approval PDF": link,
@@ -1336,7 +1246,7 @@ def _approve_transfer_row(row: pd.Series):
         file_id = str(row.get("Approval File ID", "")).strip()
         city_code = str(inv.loc[idx, "Location"]).strip() if "Location" in inv.columns else ""
         if file_id and city_code:
-           move_drive_file(file_id, "Head Office (HO)", city_code, "Register", "Approved")
+            move_drive_file(file_id, "Head Office (HO)", city_code, "Transfer", "Approved")
     except Exception as e:
         st.warning(f"Approved, but couldn’t move PDF in Drive: {e}")
     st.success(f"✅ Transfer approved. {prev_user or '(blank)'} → {new_user}. Contact details updated.")
@@ -1371,8 +1281,7 @@ def _reject_row(ws_title: str, row: pd.Series):
             if not hit.empty and "Location" in hit.columns:
                 city_code = str(hit.iloc[0]["Location"]).strip()
         if file_id and city_code:
-            move_drive_file(file_id, "Head Office (HO)", city_code, "Transfer", "Rejected")
-
+            move_drive_file(file_id, "Head Office (HO)", city_code, action, "Rejected")
     except Exception as e:
         st.warning(f"Rejected, but couldn’t move PDF in Drive: {e}")
     st.success("❌ Request rejected. PDF stored under Rejected for evidence.")
