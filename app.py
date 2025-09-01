@@ -907,7 +907,9 @@ def history_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-
+# =========================
+# Register Device Tab
+# =========================
 def register_device_tab():
     st.subheader("📝 Register New Device")
 
@@ -939,22 +941,22 @@ def register_device_tab():
     # --- Form for input ---
     with st.form("register_device", clear_on_submit=False):
         r1c1, r1c2, r1c3 = st.columns(3)
-        with r1c1: serial = st.text_input("Serial Number *")
-        with r1c2: device = st.text_input("Device Type *")
-        with r1c3: brand  = st.text_input("Brand")
+        with r1c1: st.text_input("Serial Number *", key="reg_serial")
+        with r1c2: st.text_input("Device Type *", key="reg_device")
+        with r1c3: st.text_input("Brand", key="reg_brand")
 
         r2c1, r2c2, r2c3 = st.columns(3)
-        with r2c1: model  = st.text_input("Model")
-        with r2c2: cpu    = st.text_input("CPU")
-        with r2c3: mem    = st.text_input("Memory")
+        with r2c1: st.text_input("Model", key="reg_model")
+        with r2c2: st.text_input("CPU", key="reg_cpu")
+        with r2c3: st.text_input("Memory", key="reg_mem")
 
         r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1: hdd1 = st.text_input("Hard Drive 1")
-        with r3c2: hdd2 = st.text_input("Hard Drive 2")
-        with r3c3: gpu  = st.text_input("GPU")
+        with r3c1: st.text_input("Hard Drive 1", key="reg_hdd1")
+        with r3c2: st.text_input("Hard Drive 2", key="reg_hdd2")
+        with r3c3: st.text_input("GPU", key="reg_gpu")
 
         r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1: screen = st.text_input("Screen Size")
+        with r4c1: st.text_input("Screen Size", key="reg_screen")
         with r4c2: st.text_input("Email Address", key="reg_email")
         with r4c3: st.text_input("Contact Number", key="reg_contact")
 
@@ -963,66 +965,65 @@ def register_device_tab():
         with r5c2: st.text_input("Location", key="reg_location")
         with r5c3: st.text_input("Office", key="reg_office")
 
-        notes = st.text_area("Notes", height=80)
+        notes = st.text_area("Notes", height=80, key="reg_notes")
 
         st.divider()
         pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf")
         submitted = st.form_submit_button("Save Device", type="primary")
 
     # --- Download prefilled PDF ---
-   # --- Download prefilled PDF ---
-if st.button("Download register new device"):
-    serial = st.session_state.get("reg_serial", "")
-    device = st.session_state.get("reg_device", "")
+    if st.button("Download register new device"):
+        serial = st.session_state.get("reg_serial", "")
+        device = st.session_state.get("reg_device", "")
 
-    if not serial.strip() or not device.strip():
-        st.error("Serial and Device Type required.")
-    else:
-        now_str = datetime.now().strftime(DATE_FMT)
-        actor = st.session_state.get("username", "")
-        row = {
-    "Serial Number": serial.strip(),
-    "Device Type": device.strip(),
-    "Brand": brand.strip(),
-    "Model": model.strip(),
-    "CPU": cpu.strip(),
-    "Hard Drive 1": hdd1.strip(),
-    "Hard Drive 2": hdd2.strip(),
-    "Memory": mem.strip(),
-    "GPU": gpu.strip(),
-    "Screen Size": screen.strip(),
-    "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-    "Previous User": "",
-    "TO": "",
-    "Department": st.session_state.get("reg_dept", "").strip(),
-    "Email Address": st.session_state.get("reg_email", "").strip(),
-    "Contact Number": st.session_state.get("reg_contact", "").strip(),
-    "Location": st.session_state.get("reg_location", "").strip(),
-    "Office": st.session_state.get("reg_office", "").strip(),
-    "Notes": notes.strip(),
-    "Date issued": now_str,
-    "Registered by": actor,
-}
-        tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
-        if not tpl_bytes:
-            st.error("⚠️ Could not load ICT Registration PDF template.")
-            st.stop()
-        reg_vals = build_registration_values(row, actor_name=actor, emp_df=emp_df)
-        filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
-        st.download_button(
-            "📄 Download ICT Registration Form",
-            data=filled,
-            file_name=_ict_filename(serial)
-        )
-
+        if not serial.strip() or not device.strip():
+            st.error("Serial and Device Type required.")
+        else:
+            now_str = datetime.now().strftime(DATE_FMT)
+            actor = st.session_state.get("username", "")
+            row = {
+                "Serial Number": serial.strip(),
+                "Device Type": device.strip(),
+                "Brand": st.session_state.get("reg_brand", "").strip(),
+                "Model": st.session_state.get("reg_model", "").strip(),
+                "CPU": st.session_state.get("reg_cpu", "").strip(),
+                "Hard Drive 1": st.session_state.get("reg_hdd1", "").strip(),
+                "Hard Drive 2": st.session_state.get("reg_hdd2", "").strip(),
+                "Memory": st.session_state.get("reg_mem", "").strip(),
+                "GPU": st.session_state.get("reg_gpu", "").strip(),
+                "Screen Size": st.session_state.get("reg_screen", "").strip(),
+                "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
+                "Department": st.session_state.get("reg_dept", "").strip(),
+                "Email Address": st.session_state.get("reg_email", "").strip(),
+                "Contact Number": st.session_state.get("reg_contact", "").strip(),
+                "Location": st.session_state.get("reg_location", "").strip(),
+                "Office": st.session_state.get("reg_office", "").strip(),
+                "Notes": st.session_state.get("reg_notes", "").strip(),
+                "Date issued": now_str,
+                "Registered by": actor,
+            }
+            tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
+            if not tpl_bytes:
+                st.error("⚠️ Could not load ICT Registration PDF template.")
+            else:
+                reg_vals = build_registration_values(row, actor_name=actor, emp_df=emp_df)
+                filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
+                st.download_button(
+                    "📄 Download ICT Registration Form",
+                    data=filled,
+                    file_name=_ict_filename(serial)
+                )
 
     # --- Save device (with signed PDF) ---
     if submitted:
+        serial = st.session_state.get("reg_serial", "")
+        device = st.session_state.get("reg_device", "")
+
         if not serial.strip() or not device.strip():
             st.error("Serial Number and Device Type are required.")
-            st.stop()
+            return
 
-        pdf_file_obj = pdf_file or ss.get("reg_pdf")
+        pdf_file_obj = pdf_file or st.session_state.get("reg_pdf")
         if pdf_file_obj is None:
             st.error("Signed ICT Registration PDF is required for submission.")
             return
@@ -1031,29 +1032,26 @@ if st.button("Download register new device"):
         actor = st.session_state.get("username", "")
 
         row = {
-    "Serial Number": serial.strip(),
-    "Device Type": device.strip(),
-    "Brand": brand.strip(),
-    "Model": model.strip(),
-    "CPU": cpu.strip(),
-    "Hard Drive 1": hdd1.strip(),
-    "Hard Drive 2": hdd2.strip(),
-    "Memory": mem.strip(),
-    "GPU": gpu.strip(),
-    "Screen Size": screen.strip(),
-    "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-    "Previous User": "",
-    "TO": "",
-    "Department": st.session_state.get("reg_dept", "").strip(),
-    "Email Address": st.session_state.get("reg_email", "").strip(),
-    "Contact Number": st.session_state.get("reg_contact", "").strip(),
-    "Location": st.session_state.get("reg_location", "").strip(),
-    "Office": st.session_state.get("reg_office", "").strip(),
-    "Notes": notes.strip(),
-    "Date issued": now_str,
-    "Registered by": actor,
-}
-
+            "Serial Number": serial.strip(),
+            "Device Type": device.strip(),
+            "Brand": st.session_state.get("reg_brand", "").strip(),
+            "Model": st.session_state.get("reg_model", "").strip(),
+            "CPU": st.session_state.get("reg_cpu", "").strip(),
+            "Hard Drive 1": st.session_state.get("reg_hdd1", "").strip(),
+            "Hard Drive 2": st.session_state.get("reg_hdd2", "").strip(),
+            "Memory": st.session_state.get("reg_mem", "").strip(),
+            "GPU": st.session_state.get("reg_gpu", "").strip(),
+            "Screen Size": st.session_state.get("reg_screen", "").strip(),
+            "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
+            "Department": st.session_state.get("reg_dept", "").strip(),
+            "Email Address": st.session_state.get("reg_email", "").strip(),
+            "Contact Number": st.session_state.get("reg_contact", "").strip(),
+            "Location": st.session_state.get("reg_location", "").strip(),
+            "Office": st.session_state.get("reg_office", "").strip(),
+            "Notes": st.session_state.get("reg_notes", "").strip(),
+            "Date issued": now_str,
+            "Registered by": actor,
+        }
 
         link, fid = upload_pdf_and_get_link(
             pdf_file_obj,
@@ -1062,11 +1060,9 @@ if st.button("Download register new device"):
             city_code=row.get("Location", ""),
             action="Register",
         )
-
         if not fid:
             return
 
-        # Append to Pending Devices sheet
         pending = {**row,
                    "Approval Status": "Pending",
                    "Approval PDF": link,
@@ -1077,9 +1073,6 @@ if st.button("Download register new device"):
                    "Decision at": ""}
         append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
         st.success("🕒 Device registration submitted for Admin approval.")
-
-
-
 
 # (transfer_tab, approvals_tab, _approve_device_row, _approve_transfer_row, _reject_row)
 # In these functions, after writing to Sheets, call:
