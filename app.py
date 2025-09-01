@@ -997,7 +997,7 @@ def register_device_tab():
     if c_download:
         if not serial.strip() or not device.strip():
             st.error("Serial Number and Device Type are required.")
-        else:
+        return
             now_str = datetime.now().strftime(DATE_FMT)
             actor = st.session_state.get("username", "")
             row = {
