@@ -491,7 +491,7 @@ def read_worksheet(ws_title):
         if ws_title == PENDING_DEVICE_WS: return pd.DataFrame(columns=PENDING_DEVICE_COLS)
         if ws_title == PENDING_TRANSFER_WS: return pd.DataFrame(columns=PENDING_TRANSFER_COLS)
         if ws_title == DEVICE_CATALOG_WS:  return pd.DataFrame(columns=CATALOG_COLS)
-        st.stop() pd.DataFrame()
+        return pd.DataFrame()
 
 def write_worksheet(ws_title, df):
     if ws_title == INVENTORY_WS:
