@@ -908,13 +908,10 @@ def history_tab():
         st.dataframe(df, use_container_width=True, hide_index=True)
 
 
-# =========================
-# Full register_device_tab
-# =========================
 def register_device_tab():
     st.subheader("📝 Register New Device")
 
-    # Safe defaults to avoid selectbox/index errors
+    # defaults
     st.session_state.setdefault("reg_email", "")
     st.session_state.setdefault("reg_contact", "")
     st.session_state.setdefault("reg_dept", "")
@@ -922,24 +919,24 @@ def register_device_tab():
     st.session_state.setdefault("reg_office", "")
     st.session_state.setdefault("current_owner", UNASSIGNED_LABEL)
 
-    # Employees → owner options
     emp_df = read_worksheet(EMPLOYEE_WS)
-    employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
+    employee_names = sorted({
+        *unique_nonempty(emp_df, "New Employeer"),
+        *unique_nonempty(emp_df, "Name")
+    })
     owner_options = [UNASSIGNED_LABEL] + employee_names
 
-    # Owner selector OUTSIDE the form so it auto-fills instantly
     st.selectbox(
         "Current owner (at registration)",
         owner_options,
         index=owner_options.index(st.session_state["current_owner"])
-            if st.session_state["current_owner"] in owner_options else 0,
+        if st.session_state["current_owner"] in owner_options else 0,
         key="current_owner",
         on_change=_owner_changed,
         args=(emp_df,),
-        help="Choosing an employee auto-fills Contact, Email, Department, Location, and Office."
     )
 
-    # --- Form with two submit actions
+    # --- Form for input ---
     with st.form("register_device", clear_on_submit=False):
         r1c1, r1c2, r1c3 = st.columns(3)
         with r1c1: serial = st.text_input("Serial Number *")
@@ -969,123 +966,112 @@ def register_device_tab():
         notes = st.text_area("Notes", height=80)
 
         st.divider()
-        c_download = st.form_submit_button("Download register new device", use_container_width=True)
+        pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf")
+        submitted = st.form_submit_button("Save Device", type="primary")
 
-        st.markdown("**Signed ICT Equipment Form (PDF)** — required for submission")
-        pdf_file = st.file_uploader("Drag & drop signed PDF here", type=["pdf"], key="reg_pdf")
-        submitted = st.form_submit_button("Save Device", type="primary", use_container_width=True)
-
-    # Tiny hint that a file is selected
-    if ss.get("reg_pdf") is not None:
-        st.toast("PDF selected. Click Save Device to submit.", icon="📄")
-
-    # ---- Optional preview of uploaded PDF (opt-in to avoid UI lag with large files)
-    preview_pdf = st.checkbox("Preview uploaded PDF (may be slow for large files)", value=False)
-    if preview_pdf and ss.get("reg_pdf"):
-        ss.reg_pdf_ref = ss.reg_pdf
-        try:
-            # Guard: don't try to render >8MB to keep UI snappy
-            if getattr(ss.reg_pdf_ref, "size", 0) and ss.reg_pdf_ref.size > 8 * 1024 * 1024:
-                st.info("PDF is large; preview disabled to avoid lag. You can still submit.")
-            else:
-                st.caption("Preview: Uploaded signed PDF")
-                pdf_viewer(input=ss.reg_pdf_ref.getvalue(), width=700, key="viewer_reg")
-        except Exception as e:
-            st.warning(f"Preview failed: {e}")
-
-    # --- Generate pre-filled PDF (TO blank)
-    if c_download:
+    # --- Download prefilled PDF ---
+    if st.button("Download register new device"):
         if not serial.strip() or not device.strip():
-            st.error("Serial Number and Device Type are required.")
-        return
+            st.error("Serial and Device Type required.")
+        else:
             now_str = datetime.now().strftime(DATE_FMT)
             actor = st.session_state.get("username", "")
             row = {
                 "Serial Number": serial.strip(),
                 "Device Type": device.strip(),
-                "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
-                "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
-                "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
+                "Brand": brand.strip(),
+                "Model": model.strip(),
+                "CPU": cpu.strip(),
+                "Hard Drive 1": hdd1.strip(),
+                "Hard Drive 2": hdd2.strip(),
+                "Memory": mem.strip(),
+                "GPU": gpu.strip(),
+                "Screen Size": screen.strip(),
                 "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-                "Previous User": "", "TO": "",
-                "Department": st.session_state.get("reg_dept","").strip(),
-                "Email Address": st.session_state.get("reg_email","").strip(),
-                "Contact Number": st.session_state.get("reg_contact","").strip(),
-                "Location": st.session_state.get("reg_location","").strip(),
-                "Office": st.session_state.get("reg_office","").strip(),
+                "Previous User": "",
+                "TO": "",
+                "Department": st.session_state.get("reg_dept", "").strip(),
+                "Email Address": st.session_state.get("reg_email", "").strip(),
+                "Contact Number": st.session_state.get("reg_contact", "").strip(),
+                "Location": st.session_state.get("reg_location", "").strip(),
+                "Office": st.session_state.get("reg_office", "").strip(),
                 "Notes": notes.strip(),
-                "Date issued": now_str, "Registered by": actor,
+                "Date issued": now_str,
+                "Registered by": actor,
             }
-            try:
-                tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
-                if not tpl_bytes:
-                    sa_email = ""
-                    try:
-                        sa_email = _load_sa_info().get("client_email","")
-                    except Exception:
-                        pass
-                    raise RuntimeError(
-                        f"Template not reachable. Share file ID {ICT_TEMPLATE_FILE_ID} with {sa_email}, "
-                        "or enable public access / OAuth fallback."
-                    )
-                reg_vals  = build_registration_values(row, actor_name=actor, emp_df=emp_df)
-                filled    = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
-                st.success("Registration form generated. Sign it and upload below, then click Save Device.")
-                st.download_button(
-                    "📄 Download ICT Registration Form (pre-filled, TO blank)",
-                    data=filled, file_name=_ict_filename(serial), mime="application/pdf",
-                )
-            except Exception as e:
-                st.error("Could not generate the registration PDF.")
-                st.caption(str(e))
+            tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
+            if not tpl_bytes:
+                st.error("⚠️ Could not load ICT Registration PDF template.")
+                return
+            reg_vals = build_registration_values(row, actor_name=actor, emp_df=emp_df)
+            filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
+            st.download_button(
+                "📄 Download ICT Registration Form",
+                data=filled,
+                file_name=_ict_filename(serial)
+            )
 
-    # --- Save (PDF required for all roles)
+    # --- Save device (with signed PDF) ---
     if submitted:
-    if not serial.strip() or not device.strip():
-        st.error("Serial Number and Device Type are required.")
-        return
+        if not serial.strip() or not device.strip():
+            st.error("Serial Number and Device Type are required.")
+            return
 
-    pdf_file_obj = pdf_file or ss.get("reg_pdf")
-    if pdf_file_obj is None:
-        st.error("Signed ICT Registration PDF is required for submission.")
-        return
+        pdf_file_obj = pdf_file or ss.get("reg_pdf")
+        if pdf_file_obj is None:
+            st.error("Signed ICT Registration PDF is required for submission.")
+            return
 
-    now_str = datetime.now().strftime(DATE_FMT)
-    actor   = st.session_state.get("username", "")
+        now_str = datetime.now().strftime(DATE_FMT)
+        actor = st.session_state.get("username", "")
 
-    # ✅ Rebuild row here (same as in c_download)
-    row = {
-        "Serial Number": serial.strip(),
-        "Device Type": device.strip(),
-        "Brand": brand.strip(),
-        "Model": model.strip(),
-        "CPU": cpu.strip(),
-        "Hard Drive 1": hdd1.strip(),
-        "Hard Drive 2": hdd2.strip(),
-        "Memory": mem.strip(),
-        "GPU": gpu.strip(),
-        "Screen Size": screen.strip(),
-        "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-        "Previous User": "",
-        "TO": "",
-        "Department": st.session_state.get("reg_dept", "").strip(),
-        "Email Address": st.session_state.get("reg_email", "").strip(),
-        "Contact Number": st.session_state.get("reg_contact", "").strip(),
-        "Location": st.session_state.get("reg_location", "").strip(),
-        "Office": st.session_state.get("reg_office", "").strip(),
-        "Notes": notes.strip(),
-        "Date issued": now_str,
-        "Registered by": actor,
-    }
+        row = {
+            "Serial Number": serial.strip(),
+            "Device Type": device.strip(),
+            "Brand": brand.strip(),
+            "Model": model.strip(),
+            "CPU": cpu.strip(),
+            "Hard Drive 1": hdd1.strip(),
+            "Hard Drive 2": hdd2.strip(),
+            "Memory": mem.strip(),
+            "GPU": gpu.strip(),
+            "Screen Size": screen.strip(),
+            "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
+            "Previous User": "",
+            "TO": "",
+            "Department": st.session_state.get("reg_dept", "").strip(),
+            "Email Address": st.session_state.get("reg_email", "").strip(),
+            "Contact Number": st.session_state.get("reg_contact", "").strip(),
+            "Location": st.session_state.get("reg_location", "").strip(),
+            "Office": st.session_state.get("reg_office", "").strip(),
+            "Notes": notes.strip(),
+            "Date issued": now_str,
+            "Registered by": actor,
+        }
 
-    # Now row exists ✅
-    link, fid = upload_pdf_and_get_link(
-        pdf_file_obj,
-        prefix=f"device_{normalize_serial(serial)}",
-        office="Head Office (HO)",
-        city_code=row.get("Location", ""),
-        action="Register",
-    )
+        link, fid = upload_pdf_and_get_link(
+            pdf_file_obj,
+            prefix=f"device_{normalize_serial(serial)}",
+            office="Head Office (HO)",
+            city_code=row.get("Location", ""),
+            action="Register",
+        )
+
+        if not fid:
+            return
+
+        # Append to Pending Devices sheet
+        pending = {**row,
+                   "Approval Status": "Pending",
+                   "Approval PDF": link,
+                   "Approval File ID": fid,
+                   "Submitted by": actor,
+                   "Submitted at": now_str,
+                   "Approver": "",
+                   "Decision at": ""}
+        append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+        st.success("🕒 Device registration submitted for Admin approval.")
+
 
 
 
