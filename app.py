@@ -971,14 +971,20 @@ def register_device_tab():
             action="Register",
         )
         if not fid: return
-        pending = {**row,
-                   "Approval Status": "Pending",
-                   "Approval PDF": link,
-                   "Approval File ID": fid,
-                   "Submitted by": st.session_state.get("username", ""),
-                   "Submitted at": now_str,
-                   "Approver": "",
-                   "Decision at": ""}
+            # transfer_tab()  → when building `pending`
+    pending = {
+        **row,  # inventory row
+        "From owner": row.get("Current user", ""),     
+        "To owner": new_owner,
+        "Approval Status": "Pending",
+        "Approval PDF": link,
+        "Approval File ID": fid,
+        "Submitted by": actor,
+        "Submitted at": now_str,
+        "Approver": "",
+        "Decision at": "",
+    }
+
         append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
         st.success("🕒 Device registration submitted for Admin approval.")
 
@@ -1059,27 +1065,59 @@ def _approve_device_row(row: pd.Series):
     st.success("✅ Device approved, added to Inventory, and PDF moved to Register/Approved.")
 
 def _approve_transfer_row(row: pd.Series):
+    """Approve a transfer: log correct prev owner and refresh all person fields."""
     inv = read_worksheet(INVENTORY_WS)
     if inv.empty:
-        st.error("Inventory is empty; cannot apply transfer."); st.stop()
+        st.error("Inventory is empty; cannot apply transfer.")
+        st.stop()
+
     sn = str(row.get("Serial Number", ""))
     match = inv[inv["Serial Number"].astype(str) == sn]
     if match.empty:
-        st.error("Serial not found in Inventory."); st.stop()
+        st.error("Serial not found in Inventory.")
+        st.stop()
+
     idx = match.index[0]
     now_str = datetime.now().strftime(DATE_FMT)
     approver = st.session_state.get("username", "")
+
+    # Source of truth for previous owner = current user in inventory right now
     prev_user = str(inv.loc[idx, "Current user"] or "")
-    inv.loc[idx, "Previous User"] = prev_user
-    inv.loc[idx, "Current user"]  = str(row.get("To owner", ""))
-    inv.loc[idx, "TO"]            = str(row.get("To owner", ""))
-    inv.loc[idx, "Date issued"]   = now_str
-    inv.loc[idx, "Registered by"] = approver
+    new_user  = str(row.get("To owner", ""))
+
+    # Pull new owner's details from Employees
+    emp_df  = read_worksheet(EMPLOYEE_WS)
+    emp_row = _find_emp_row_by_name(emp_df, new_user)
+
+    def _val(*cols: str) -> str:
+        return _get_emp_value(emp_row, *cols) if emp_row is not None else ""
+
+    # Update inventory ownership + all person-linked fields
+    inv.loc[idx, "Previous User"]  = prev_user
+    inv.loc[idx, "Current user"]   = new_user
+    inv.loc[idx, "TO"]             = new_user
+    inv.loc[idx, "Email Address"]  = _val("Email Address", "Email", "E-mail")
+    inv.loc[idx, "Contact Number"] = _val("Mobile Number", "Phone", "Mobile")
+    inv.loc[idx, "Department"]     = _val("Department", "Dept")
+    inv.loc[idx, "Location"]       = _val("Location (KSA)", "Location", "City")
+    inv.loc[idx, "Office"]         = _val("Office", "Project", "Site")
+    inv.loc[idx, "Date issued"]    = now_str
+    inv.loc[idx, "Registered by"]  = approver
+
     write_worksheet(INVENTORY_WS, inv)
-    log_row = {k: row.get(k, "") for k in LOG_COLS}
-    log_row["Date issued"]   = now_str
-    log_row["Registered by"] = approver
+
+    # Append accurate log entry (prev_user → new_user)
+    log_row = {
+        "Device Type": row.get("Device Type", ""),
+        "Serial Number": sn,
+        "From owner": prev_user,          
+        "To owner": new_user,
+        "Date issued": now_str,
+        "Registered by": approver,
+    }
     append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
+
+    # Mark decision + move PDF
     _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
     try:
         file_id   = str(row.get("Approval File ID", "")).strip()
@@ -1088,41 +1126,8 @@ def _approve_transfer_row(row: pd.Series):
             move_drive_file(file_id, "Head Office (HO)", city_code, "Transfer", "Approved")
     except Exception as e:
         st.warning(f"Approved, but couldn’t move PDF in Drive: {e}")
-    st.success(f"✅ Transfer approved and applied. PDF moved to Transfer/Approved. {prev_user or '(blank)'} → {row.get('To owner','')}")
 
-def _reject_row(ws_title: str, row: pd.Series):
-    df = read_worksheet(ws_title)
-    key_cols = [c for c in ["Serial Number","Submitted at","Submitted by","To owner"] if c in df.columns]
-    mask = pd.Series([True] * len(df))
-    for c in key_cols:
-        mask &= df[c].astype(str) == str(row.get(c, ""))
-    idxs = df[mask].index.tolist()
-    if not idxs and "Serial Number" in df.columns:
-        idxs = df[df["Serial Number"].astype(str) == str(row.get("Serial Number",""))].index.tolist()
-    if not idxs:
-        st.warning("Could not locate row to mark as Rejected."); return
-    idx = idxs[0]
-    df.loc[idx, "Approval Status"] = "Rejected"
-    df.loc[idx, "Approver"] = st.session_state.get("username","")
-    df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
-    write_worksheet(ws_title, df)
-    try:
-        action   = "Register" if ws_title == PENDING_DEVICE_WS else "Transfer"
-        file_id  = str(row.get("Approval File ID", "")).strip()
-        city_code = ""
-        if action == "Register":
-            city_code = str(row.get("Location", "")).strip()
-        else:
-            sn = str(row.get("Serial Number",""))
-            inv = read_worksheet(INVENTORY_WS)
-            hit = inv[inv["Serial Number"].astype(str) == sn]
-            if not hit.empty and "Location" in hit.columns:
-                city_code = str(hit.iloc[0]["Location"]).strip()
-        if file_id and city_code:
-            move_drive_file(file_id, "Head Office (HO)", city_code, action, "Rejected")
-    except Exception as e:
-        st.warning(f"Rejected, but couldn’t move PDF in Drive: {e}")
-    st.success("❌ Request rejected. PDF stored under Rejected for evidence.")
+    st.success(f"✅ Transfer approved. {prev_user or '(blank)'} → {new_user}. Contact details updated.")
 
 def approvals_tab():
     st.subheader("✅ Approvals")
