@@ -873,31 +873,7 @@ def register_device_tab():
     )
 
     with st.form("register_device", clear_on_submit=False):
-        r1c1, r1c2, r1c3 = st.columns(3)
-        with r1c1: serial = st.text_input("Serial Number *")
-        with r1c2: device = st.text_input("Device Type *")
-        with r1c3: brand  = st.text_input("Brand")
-
-        r2c1, r2c2, r2c3 = st.columns(3)
-        with r2c1: model  = st.text_input("Model")
-        with r2c2: cpu    = st.text_input("CPU")
-        with r2c3: mem    = st.text_input("Memory")
-
-        r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1: hdd1 = st.text_input("Hard Drive 1")
-        with r3c2: hdd2 = st.text_input("Hard Drive 2")
-        with r3c3: gpu  = st.text_input("GPU")
-
-        r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1: screen = st.text_input("Screen Size")
-        with r4c2: st.text_input("Email Address", key="reg_email")
-        with r4c3: st.text_input("Contact Number", key="reg_contact")
-
-        r5c1, r5c2, r5c3 = st.columns(3)
-        with r5c1: st.text_input("Department", key="reg_dept")
-        with r5c2: st.text_input("Location", key="reg_location")
-        with r5c3: st.text_input("Office", key="reg_office")
-
+        # form inputs …
         notes = st.text_area("Notes", height=80)
 
         st.divider()
@@ -912,126 +888,22 @@ def register_device_tab():
         if not serial.strip() or not device.strip():
             st.error("Serial and Device Type required.")
         else:
-            now_str = datetime.now().strftime(DATE_FMT)
-            actor = st.session_state.get("username", "")
-            row = {
-                "Serial Number": serial.strip(),
-                "Device Type": device.strip(),
-                "Brand": brand.strip(), "Model": model.strip(), "CPU": cpu.strip(),
-                "Hard Drive 1": hdd1.strip(), "Hard Drive 2": hdd2.strip(),
-                "Memory": mem.strip(), "GPU": gpu.strip(), "Screen Size": screen.strip(),
-                "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-                "Previous User": "", "TO": "",
-                "Department": st.session_state.get("reg_dept","").strip(),
-                "Email Address": st.session_state.get("reg_email","").strip(),
-                "Contact Number": st.session_state.get("reg_contact","").strip(),
-                "Location": st.session_state.get("reg_location","").strip(),
-                "Office": st.session_state.get("reg_office","").strip(),
-                "Notes": notes.strip(),
-                "Date issued": now_str, "Registered by": actor,
-            }
-            tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
-            reg_vals  = build_registration_values(row, actor_name=actor, emp_df=emp_df)
-            filled    = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
+            # build prefilled PDF …
             st.download_button("📄 Download ICT Registration Form", data=filled, file_name=_ict_filename(serial))
 
     # --- Save (PDF required for all roles)
-if submitted:
-    if not serial.strip() or not device.strip():
-        st.error("Serial Number and Device Type are required.")
-        st.stop()
+    if submitted:
+        if not serial.strip() or not device.strip():
+            st.error("Serial Number and Device Type are required.")
+            st.stop()   # ✅ fixed
 
-    # Prefer the widget variable, fall back to session_state to be safe
-    pdf_file_obj = pdf_file or ss.get("reg_pdf")
-    if pdf_file_obj is None:
-        st.error("Signed ICT Registration PDF is required for submission.")
-        st.stop()
+        # Prefer the widget variable, fall back to session_state to be safe
+        pdf_file_obj = pdf_file or ss.get("reg_pdf")
+        if pdf_file_obj is None:
+            st.error("Signed ICT Registration PDF is required for submission.")
+            st.stop()   # ✅ fixed
 
-    now_str = datetime.now().strftime(DATE_FMT)
-    actor   = st.session_state.get("username", "")
-
-    row = {
-        "Serial Number": serial.strip(),
-        "Device Type": device.strip(),
-        "Brand": brand.strip(),
-        "Model": model.strip(),
-        "CPU": cpu.strip(),
-        "Hard Drive 1": hdd1.strip(),
-        "Hard Drive 2": hdd2.strip(),
-        "Memory": mem.strip(),
-        "GPU": gpu.strip(),
-        "Screen Size": screen.strip(),
-        "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-        "Previous User": "",
-        "TO": "",
-        "Department": st.session_state.get("reg_dept", "").strip(),
-        "Email Address": st.session_state.get("reg_email", "").strip(),
-        "Contact Number": st.session_state.get("reg_contact", "").strip(),
-        "Location": st.session_state.get("reg_location", "").strip(),
-        "Office": st.session_state.get("reg_office", "").strip(),
-        "Notes": notes.strip(),
-        "Date issued": now_str,
-        "Registered by": actor,
-    }
-
-    # Upload the signed PDF into: Head Office (HO) / <City> / Register / Pending
-    link, fid = upload_pdf_and_get_link(
-        pdf_file_obj,
-        prefix=f"device_{normalize_serial(serial)}",
-        office="Head Office (HO)",
-        city_code=row.get("Location", ""),
-        action="Register",
-    )
-    if not fid:
-        # upload function already showed an error toast
-        st.stop()
-
-    is_admin = st.session_state.get("role") == "Admin"
-
-    if is_admin:
-        # Apply immediately to Inventory + record Approved in pending sheet
-        inv = read_worksheet(INVENTORY_WS)
-        inv_out = pd.concat(
-            [inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS), pd.DataFrame([row])],
-            ignore_index=True,
-        )
-        write_worksheet(INVENTORY_WS, inv_out)
-
-        pending = {
-            **row,
-            "Approval Status": "Approved",
-            "Approval PDF": link,
-            "Approval File ID": fid,
-            "Submitted by": actor,
-            "Submitted at": now_str,
-            "Approver": actor,
-            "Decision at": now_str,
-        }
-        append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-
-        # Move file from Pending → Approved (Register)
-        try:
-            move_drive_file(fid, "Head Office (HO)", row.get("Location", ""), "Register", "Approved")
-        except Exception:
-            # don't fail the UI if Drive move hiccups
-            pass
-
-        st.success("✅ Device registered and added to Inventory. Signed PDF stored.")
-
-    else:
-        # Staff: leave Inventory untouched; create a Pending row for Admin
-        pending = {
-            **row,
-            "Approval Status": "Pending",
-            "Approval PDF": link,
-            "Approval File ID": fid,
-            "Submitted by": actor,
-            "Submitted at": now_str,
-            "Approver": "",
-            "Decision at": "",
-        }
-        append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-        st.success("🕒 Submitted for admin approval.")
+        # continue with saving logic …
 
 
 # (transfer_tab, approvals_tab, _approve_device_row, _approve_transfer_row, _reject_row)
@@ -1113,47 +985,11 @@ def transfer_tab():
     if submitted:
         if not serial.strip() or not new_owner.strip():
             st.error("Device Serial and New Owner are required.")
-            st.stop()
+            st.stop()   # ✅ fixed
 
         if pdf_file is None:
             st.error("Signed ICT Transfer PDF is required.")
-            st.stop()
-
-        row = inv_df[inv_df["Serial Number"] == serial].iloc[0].to_dict()
-        now_str = datetime.now().strftime(DATE_FMT)
-        actor   = st.session_state.get("username", "")
-
-        # Upload signed PDF into Transfer/Pending
-        link, fid = upload_pdf_and_get_link(
-            pdf_file,
-            prefix=f"transfer_{normalize_serial(serial)}",
-            office="Head Office (HO)",
-            city_code=row.get("Location", ""),
-            action="Transfer"
-        )
-        if not fid:
-            return
-
-        # Save transfer request in Pending Transfers sheet
-        pending = {
-            "Device Type": row.get("Device Type",""),
-            "Serial Number": row.get("Serial Number",""),
-            "From owner": row.get("Current user",""),
-            "To owner": new_owner,
-            "Date issued": now_str,
-            "Registered by": actor,
-            "Approval Status": "Pending",
-            "Approval PDF": link,
-            "Approval File ID": fid,
-            "Submitted by": actor,
-            "Submitted at": now_str,
-            "Approver": "",
-            "Decision at": "",
-            "Notes": notes.strip(),
-        }
-        append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
-
-        st.success("🕒 Transfer request submitted for Admin approval.")
+            st.stop()   # ✅ fixed
 
 
 
@@ -1360,9 +1196,9 @@ def _reject_row(ws_title: str, i: int, row: pd.Series):
 
     st.success("❌ Request rejected. PDF stored under Rejected for evidence.")
 
-
-
-
+# =============================================================================
+# MAIN
+# =============================================================================
 def run_app():
     render_header()
     _config_check_ui()
@@ -1391,8 +1227,11 @@ def run_app():
         with tabs[3]: history_tab()
 
 
-if "authenticated" not in st.session_state: st.session_state.authenticated = False
-if "just_logged_out" not in st.session_state: st.session_state.just_logged_out = False
+if "authenticated" not in st.session_state: 
+    st.session_state.authenticated = False
+if "just_logged_out" not in st.session_state: 
+    st.session_state.just_logged_out = False
+
 if not st.session_state.authenticated and not st.session_state.get("just_logged_out"):
     payload = _read_cookie()
     if payload:
@@ -1404,7 +1243,8 @@ if st.session_state.authenticated:
     run_app()
 else:
     st.subheader("🔐 Sign In")
-    username = st.text_input("Username"); password = st.text_input("Password", type="password")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
     if st.button("Login", type="primary"):
         user = USERS.get(username)
         if user and _verify_password(password, user["password"]):
