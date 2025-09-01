@@ -1105,18 +1105,17 @@ def _approve_transfer_row(row: pd.Series):
     now_str = datetime.now().strftime(DATE_FMT)
     approver = st.session_state.get("username", "")
 
-    # Source of truth for previous owner = current user in inventory right now
     prev_user = str(inv.loc[idx, "Current user"] or "")
     new_user  = str(row.get("To owner", ""))
 
-    # Pull new owner's details from Employees
+    # Pull new owner's details
     emp_df  = read_worksheet(EMPLOYEE_WS)
     emp_row = _find_emp_row_by_name(emp_df, new_user)
 
     def _val(*cols: str) -> str:
         return _get_emp_value(emp_row, *cols) if emp_row is not None else ""
 
-    # Update inventory ownership + all person-linked fields
+    # Update inventory
     inv.loc[idx, "Previous User"]  = prev_user
     inv.loc[idx, "Current user"]   = new_user
     inv.loc[idx, "TO"]             = new_user
@@ -1127,14 +1126,13 @@ def _approve_transfer_row(row: pd.Series):
     inv.loc[idx, "Office"]         = _val("Office", "Project", "Site")
     inv.loc[idx, "Date issued"]    = now_str
     inv.loc[idx, "Registered by"]  = approver
-
     write_worksheet(INVENTORY_WS, inv)
 
-    # Append accurate log entry (prev_user → new_user)
+    # Log transfer
     log_row = {
         "Device Type": row.get("Device Type", ""),
         "Serial Number": sn,
-        "From owner": prev_user,          
+        "From owner": prev_user,
         "To owner": new_user,
         "Date issued": now_str,
         "Registered by": approver,
@@ -1152,6 +1150,7 @@ def _approve_transfer_row(row: pd.Series):
         st.warning(f"Approved, but couldn’t move PDF in Drive: {e}")
 
     st.success(f"✅ Transfer approved. {prev_user or '(blank)'} → {new_user}. Contact details updated.")
+
 
 def approvals_tab():
     st.subheader("✅ Approvals")
