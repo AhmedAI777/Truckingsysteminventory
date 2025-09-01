@@ -970,46 +970,33 @@ def register_device_tab():
         submitted = st.form_submit_button("Save Device", type="primary")
 
     # --- Download prefilled PDF ---
-    if st.button("Download register new device"):
-        if not serial.strip() or not device.strip():
-            st.error("Serial and Device Type required.")
-        else:
-            now_str = datetime.now().strftime(DATE_FMT)
-            actor = st.session_state.get("username", "")
-            row = {
-                "Serial Number": serial.strip(),
-                "Device Type": device.strip(),
-                "Brand": brand.strip(),
-                "Model": model.strip(),
-                "CPU": cpu.strip(),
-                "Hard Drive 1": hdd1.strip(),
-                "Hard Drive 2": hdd2.strip(),
-                "Memory": mem.strip(),
-                "GPU": gpu.strip(),
-                "Screen Size": screen.strip(),
-                "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-                "Previous User": "",
-                "TO": "",
-                "Department": st.session_state.get("reg_dept", "").strip(),
-                "Email Address": st.session_state.get("reg_email", "").strip(),
-                "Contact Number": st.session_state.get("reg_contact", "").strip(),
-                "Location": st.session_state.get("reg_location", "").strip(),
-                "Office": st.session_state.get("reg_office", "").strip(),
-                "Notes": notes.strip(),
-                "Date issued": now_str,
-                "Registered by": actor,
-            }
-            tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
-            if not tpl_bytes:
-                st.error("⚠️ Could not load ICT Registration PDF template.")
-                return
-            reg_vals = build_registration_values(row, actor_name=actor, emp_df=emp_df)
-            filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
-            st.download_button(
-                "📄 Download ICT Registration Form",
-                data=filled,
-                file_name=_ict_filename(serial)
-            )
+   # --- Download prefilled PDF ---
+if st.button("Download register new device"):
+    serial = st.session_state.get("reg_serial", "")
+    device = st.session_state.get("reg_device", "")
+
+    if not serial.strip() or not device.strip():
+        st.error("Serial and Device Type required.")
+    else:
+        now_str = datetime.now().strftime(DATE_FMT)
+        actor = st.session_state.get("username", "")
+        row = {
+            "Serial Number": serial.strip(),
+            "Device Type": device.strip(),
+            ...
+        }
+        tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
+        if not tpl_bytes:
+            st.error("⚠️ Could not load ICT Registration PDF template.")
+            return
+        reg_vals = build_registration_values(row, actor_name=actor, emp_df=emp_df)
+        filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
+        st.download_button(
+            "📄 Download ICT Registration Form",
+            data=filled,
+            file_name=_ict_filename(serial)
+        )
+
 
     # --- Save device (with signed PDF) ---
     if submitted:
