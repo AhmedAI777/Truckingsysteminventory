@@ -1020,7 +1020,7 @@ if st.button("Download register new device"):
     if submitted:
         if not serial.strip() or not device.strip():
             st.error("Serial Number and Device Type are required.")
-            return
+            st.stop()
 
         pdf_file_obj = pdf_file or ss.get("reg_pdf")
         if pdf_file_obj is None:
