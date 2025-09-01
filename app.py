@@ -473,9 +473,9 @@ def _mark_decision(ws_name: str, row: dict, *, status: str):
     actor = st.session_state.get("username", "")
 
     # Read the current sheet
-    df = read_worksheet(ws_name)
+    df = read_worksheet(mainlists)
     if df.empty:
-        st.error(f"Worksheet {ws_name} is empty, cannot update.")
+        st.error(f"Worksheet {mainlists} is empty, cannot update.")
         return
 
     # Locate the row by unique Serial Number + File ID if available
