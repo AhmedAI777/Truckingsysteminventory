@@ -981,10 +981,28 @@ if st.button("Download register new device"):
         now_str = datetime.now().strftime(DATE_FMT)
         actor = st.session_state.get("username", "")
         row = {
-            "Serial Number": serial.strip(),
-            "Device Type": device.strip(),
-            ...
-        }
+    "Serial Number": serial.strip(),
+    "Device Type": device.strip(),
+    "Brand": brand.strip(),
+    "Model": model.strip(),
+    "CPU": cpu.strip(),
+    "Hard Drive 1": hdd1.strip(),
+    "Hard Drive 2": hdd2.strip(),
+    "Memory": mem.strip(),
+    "GPU": gpu.strip(),
+    "Screen Size": screen.strip(),
+    "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
+    "Previous User": "",
+    "TO": "",
+    "Department": st.session_state.get("reg_dept", "").strip(),
+    "Email Address": st.session_state.get("reg_email", "").strip(),
+    "Contact Number": st.session_state.get("reg_contact", "").strip(),
+    "Location": st.session_state.get("reg_location", "").strip(),
+    "Office": st.session_state.get("reg_office", "").strip(),
+    "Notes": notes.strip(),
+    "Date issued": now_str,
+    "Registered by": actor,
+}
         tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
         if not tpl_bytes:
             st.error("⚠️ Could not load ICT Registration PDF template.")
