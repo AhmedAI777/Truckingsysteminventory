@@ -1245,7 +1245,7 @@ def build_transfer_pdf_values(row: dict, new_owner: str, emp_df: pd.DataFrame) -
 
     # --- From (current owner from inventory row)
     from_name  = row.get("Current user", "")
-    from_email = row.get("Email Address", "")
+    from_email = row.get("Email", "")
     from_phone = row.get("Contact Number", "")
     from_dept  = row.get("Department", "")
     from_loc   = row.get("Location", "")
