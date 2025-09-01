@@ -467,6 +467,36 @@ def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_cod
 
     return link, file_id
 
+def _mark_decision(ws_name: str, row: dict, *, status: str):
+    """Mark a decision (Approved/Rejected) in the given pending worksheet row."""
+    now_str = datetime.now().strftime(DATE_FMT)
+    actor = st.session_state.get("username", "")
+
+    # Read the current sheet
+    df = read_worksheet(ws_name)
+    if df.empty:
+        st.error(f"Worksheet {ws_name} is empty, cannot update.")
+        return
+
+    # Locate the row by unique Serial Number + File ID if available
+    serial = row.get("Serial Number", "")
+    fid = row.get("Approval File ID", "")
+
+    mask = (df["Serial Number"] == serial)
+    if fid:
+        mask &= (df["Approval File ID"] == fid)
+
+    if not mask.any():
+        st.warning(f"Could not locate row for Serial {serial} in {ws_name}.")
+        return
+
+    # Update fields
+    df.loc[mask, "Approval Status"] = status
+    df.loc[mask, "Approver"] = actor
+    df.loc[mask, "Decision at"] = now_str
+
+    # Write back to sheet
+    write_worksheet(ws_name, df)
 
 
 
@@ -1068,6 +1098,44 @@ def register_device_tab():
 # In these functions, after writing to Sheets, call:
 #   move_drive_file(fid, "Head Office (HO)", city_code, "Register"/"Transfer", "Approved"/"Rejected")
 
+def _approve_device_row(row: dict):
+    """Approve a pending device registration."""
+    # 1) Move to Inventory
+    inv_df = read_worksheet(INVENTORY_WS)
+    new_row = {**row}  # copy all fields
+    new_row["Approval Status"] = "Approved"
+    new_row["Approved at"] = datetime.now().strftime(DATE_FMT)
+    new_row["Approved by"] = st.session_state.get("username", "")
+    inv_out = pd.concat([inv_df, pd.DataFrame([new_row])], ignore_index=True)
+    write_worksheet(INVENTORY_WS, inv_out)
+
+    # 2) Mark decision in Pending sheet
+    _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
+
+    # 3) Move PDF from Pending → Approved folder
+    try:
+        _move_drive_file(
+            row.get("Approval File ID", ""),
+            dest_folder=st.secrets["drive"].get("approved", "")
+        )
+    except Exception as e:
+        st.warning(f"Could not move PDF to Approved folder: {e}")
+
+
+def _reject_device_row(row: dict):
+    """Reject a pending device registration."""
+    # Just mark decision in Pending sheet
+    _mark_decision(PENDING_DEVICE_WS, row, status="Rejected")
+
+    # Move PDF to Rejected folder
+    try:
+        _move_drive_file(
+            row.get("Approval File ID", ""),
+            dest_folder=st.secrets["drive"].get("rejected", "")
+        )
+    except Exception as e:
+        st.warning(f"Could not move PDF to Rejected folder: {e}")
+
 # =============================================================================
 # MAIN
 # =============================================================================
@@ -1188,116 +1256,231 @@ def transfer_tab():
 
         st.success("🕒 Transfer request submitted for Admin approval.")
 
+# =============================================================================
+# TRANSFER APPROVAL LOGIC
+# =============================================================================
 
-# =========================
-# Approvals Tab
-# =========================
+def _approve_transfer_row(row: dict):
+    """Approve a pending transfer request."""
+    inv_df = read_worksheet(INVENTORY_WS)
+    serial = row.get("Serial Number", "")
+
+    if inv_df.empty or serial not in inv_df["Serial Number"].values:
+        st.error(f"Device with Serial {serial} not found in inventory.")
+        return
+
+    # Update inventory: change owner
+    mask = inv_df["Serial Number"] == serial
+    inv_df.loc[mask, "Current user"] = row.get("To owner", "")
+    inv_df.loc[mask, "Last Transfer Date"] = datetime.now().strftime(DATE_FMT)
+    inv_df.loc[mask, "Last Transfer By"] = st.session_state.get("username", "")
+
+    write_worksheet(INVENTORY_WS, inv_df)
+
+    # Mark decision in Pending Transfers sheet
+    _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
+
+    # Move PDF from Pending → Approved
+    try:
+        _move_drive_file(
+            row.get("Approval File ID", ""),
+            dest_folder=st.secrets["drive"].get("approved", "")
+        )
+    except Exception as e:
+        st.warning(f"Could not move Transfer PDF to Approved folder: {e}")
+
+
+def _reject_transfer_row(row: dict):
+    """Reject a pending transfer request."""
+    # Mark decision in Pending Transfers sheet
+    _mark_decision(PENDING_TRANSFER_WS, row, status="Rejected")
+
+    # Move PDF from Pending → Rejected
+    try:
+        _move_drive_file(
+            row.get("Approval File ID", ""),
+            dest_folder=st.secrets["drive"].get("rejected", "")
+        )
+    except Exception as e:
+        st.warning(f"Could not move Transfer PDF to Rejected folder: {e}")
+
+
+# =============================================================================
+# APPROVALS TAB
+# =============================================================================
 def approvals_tab():
     st.subheader("✅ Approvals")
 
-    # Pending Device Registrations
-    st.markdown("### 📥 Device Registrations")
-    dev_df = read_worksheet(PENDING_DEVICE_WS)
-    if dev_df.empty:
+    # Pending device registrations
+    st.markdown("### 📦 Pending Device Registrations")
+    pend_df = read_worksheet(PENDING_DEVICE_WS)
+
+    if pend_df.empty:
         st.info("No pending device registrations.")
     else:
-        for i, row in dev_df.iterrows():
-            if row.get("Approval Status") == "Pending":
-                st.markdown(
-                    f"**Serial:** {row.get('Serial Number','')} — {row.get('Device Type','')}"
-                )
-                if row.get("Approval PDF"):
-                    st.markdown(f"[View PDF]({row['Approval PDF']})")
+        for i, row in pend_df.iterrows():
+            if row.get("Approval Status", "") != "Pending":
+                continue
+
+            with st.expander(f"Serial: {row.get('Serial Number')} — {row.get('Device Type')}"):
+                st.write(row.to_dict())
+                pdf_link = row.get("Approval PDF", "")
+                if pdf_link:
+                    st.markdown(f"[📄 View PDF]({pdf_link})")
+
                 c1, c2 = st.columns(2)
                 with c1:
-                    if st.button("Approve", key=f"approve_device_{i}"):
+                    if st.button("✅ Approve", key=f"approve_device_{i}"):
                         _approve_device_row(row)
                         st.rerun()
                 with c2:
-                    if st.button("Reject", key=f"reject_device_{i}"):
-                        _reject_row(PENDING_DEVICE_WS, i, row)
+                    if st.button("❌ Reject", key=f"reject_device_{i}"):
+                        _reject_device_row(row)
                         st.rerun()
 
-    # Pending Transfers
-    st.markdown("### 🔄 Device Transfers")
-    trf_df = read_worksheet(PENDING_TRANSFER_WS)
-    if trf_df.empty:
+    st.divider()
+
+    # Pending transfers
+    st.markdown("### 🔄 Pending Transfers")
+    pend_trf = read_worksheet(PENDING_TRANSFER_WS)
+
+    if pend_trf.empty:
         st.info("No pending transfers.")
     else:
-        for i, row in trf_df.iterrows():
-            if row.get("Approval Status") == "Pending":
-                st.markdown(
-                    f"**Serial:** {row.get('Serial Number','')} — "
-                    f"{row.get('From owner','')} → {row.get('To owner','')}"
-                )
-                if row.get("Approval PDF"):
-                    st.markdown(f"[View PDF]({row['Approval PDF']})")
+        for i, row in pend_trf.iterrows():
+            if row.get("Approval Status", "") != "Pending":
+                continue
+
+            with st.expander(f"Serial: {row.get('Serial Number')} — Transfer to {row.get('To owner')}"):
+                st.write(row.to_dict())
+                pdf_link = row.get("Approval PDF", "")
+                if pdf_link:
+                    st.markdown(f"[📄 View PDF]({pdf_link})")
+
                 c1, c2 = st.columns(2)
                 with c1:
-                    if st.button("Approve", key=f"approve_transfer_{i}"):
+                    if st.button("✅ Approve Transfer", key=f"approve_transfer_{i}"):
                         _approve_transfer_row(row)
                         st.rerun()
                 with c2:
-                    if st.button("Reject", key=f"reject_transfer_{i}"):
-                        _reject_row(PENDING_TRANSFER_WS, i, row)
+                    if st.button("❌ Reject Transfer", key=f"reject_transfer_{i}"):
+                        _reject_transfer_row(row)
                         st.rerun()
 
-def _reject_row(ws_title: str, i: int, row: pd.Series):
-    """
-    Admin rejects a pending request → mark Rejected and move PDF to Rejected.
-    Works for both Device (Register) and Transfer.
-    """
-    # 1) Mark Rejected in the corresponding Pending sheet
-    df = read_worksheet(ws_title)
-    key_cols = [
-        c
-        for c in ["Serial Number", "Submitted at", "Submitted by", "To owner"]
-        if c in df.columns
-    ]
-    mask = pd.Series([True] * len(df))
-    for c in key_cols:
-        mask &= df[c].astype(str) == str(row.get(c, ""))
-    idxs = df[mask].index.tolist()
 
-    if not idxs and "Serial Number" in df.columns:
-        idxs = df[
-            df["Serial Number"].astype(str) == str(row.get("Serial Number", ""))
-        ].index.tolist()
 
-    if not idxs:
-        st.warning("Could not locate row to mark as Rejected.")
-        return
 
-    idx = idxs[0]
-    df.loc[idx, "Approval Status"] = "Rejected"
-    df.loc[idx, "Approver"] = st.session_state.get("username", "")
-    df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
-    write_worksheet(ws_title, df)
+#the correct is  after this sentence
 
-    # 2) Move the PDF to Rejected
-    try:
-        action = "Register" if ws_title == PENDING_DEVICE_WS else "Transfer"
-        file_id = str(row.get("Approval File ID", "")).strip()
+# # =========================
+# # Approvals Tab
+# # =========================
+# def approvals_tab():
+#     st.subheader("✅ Approvals")
 
-        # Determine city code
-        city_code = ""
-        if action == "Register":
-            city_code = str(row.get("Location", "")).strip()
-        else:
-            # For transfers, fetch city from Inventory via Serial Number
-            sn = str(row.get("Serial Number", ""))
-            inv = read_worksheet(INVENTORY_WS)
-            hit = inv[inv["Serial Number"].astype(str) == sn]
-            if not hit.empty and "Location" in hit.columns:
-                city_code = str(hit.iloc[0]["Location"]).strip()
+#     # Pending Device Registrations
+#     st.markdown("### 📥 Device Registrations")
+#     dev_df = read_worksheet(PENDING_DEVICE_WS)
+#     if dev_df.empty:
+#         st.info("No pending device registrations.")
+#     else:
+#         for i, row in dev_df.iterrows():
+#             if row.get("Approval Status") == "Pending":
+#                 st.markdown(
+#                     f"**Serial:** {row.get('Serial Number','')} — {row.get('Device Type','')}"
+#                 )
+#                 if row.get("Approval PDF"):
+#                     st.markdown(f"[View PDF]({row['Approval PDF']})")
+#                 c1, c2 = st.columns(2)
+#                 with c1:
+#                     if st.button("Approve", key=f"approve_device_{i}"):
+#                         _approve_device_row(row)
+#                         st.rerun()
+#                 with c2:
+#                     if st.button("Reject", key=f"reject_device_{i}"):
+#                         _reject_row(PENDING_DEVICE_WS, i, row)
+#                         st.rerun()
 
-        if file_id and city_code:
-            move_drive_file(file_id, "Head Office (HO)", city_code, action, "Rejected")
+#     # Pending Transfers
+#     st.markdown("### 🔄 Device Transfers")
+#     trf_df = read_worksheet(PENDING_TRANSFER_WS)
+#     if trf_df.empty:
+#         st.info("No pending transfers.")
+#     else:
+#         for i, row in trf_df.iterrows():
+#             if row.get("Approval Status") == "Pending":
+#                 st.markdown(
+#                     f"**Serial:** {row.get('Serial Number','')} — "
+#                     f"{row.get('From owner','')} → {row.get('To owner','')}"
+#                 )
+#                 if row.get("Approval PDF"):
+#                     st.markdown(f"[View PDF]({row['Approval PDF']})")
+#                 c1, c2 = st.columns(2)
+#                 with c1:
+#                     if st.button("Approve", key=f"approve_transfer_{i}"):
+#                         _approve_transfer_row(row)
+#                         st.rerun()
+#                 with c2:
+#                     if st.button("Reject", key=f"reject_transfer_{i}"):
+#                         _reject_row(PENDING_TRANSFER_WS, i, row)
+#                         st.rerun()
 
-    except Exception as e:
-        st.warning(f"Rejected, but couldn’t move PDF in Drive: {e}")
+# def _reject_row(ws_title: str, i: int, row: pd.Series):
+#     """
+#     Admin rejects a pending request → mark Rejected and move PDF to Rejected.
+#     Works for both Device (Register) and Transfer.
+#     """
+#     # 1) Mark Rejected in the corresponding Pending sheet
+#     df = read_worksheet(ws_title)
+#     key_cols = [
+#         c
+#         for c in ["Serial Number", "Submitted at", "Submitted by", "To owner"]
+#         if c in df.columns
+#     ]
+#     mask = pd.Series([True] * len(df))
+#     for c in key_cols:
+#         mask &= df[c].astype(str) == str(row.get(c, ""))
+#     idxs = df[mask].index.tolist()
 
-    st.success("❌ Request rejected. PDF stored under Rejected for evidence.")
+#     if not idxs and "Serial Number" in df.columns:
+#         idxs = df[
+#             df["Serial Number"].astype(str) == str(row.get("Serial Number", ""))
+#         ].index.tolist()
+
+#     if not idxs:
+#         st.warning("Could not locate row to mark as Rejected.")
+#         return
+
+#     idx = idxs[0]
+#     df.loc[idx, "Approval Status"] = "Rejected"
+#     df.loc[idx, "Approver"] = st.session_state.get("username", "")
+#     df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
+#     write_worksheet(ws_title, df)
+
+#     # 2) Move the PDF to Rejected
+#     try:
+#         action = "Register" if ws_title == PENDING_DEVICE_WS else "Transfer"
+#         file_id = str(row.get("Approval File ID", "")).strip()
+
+#         # Determine city code
+#         city_code = ""
+#         if action == "Register":
+#             city_code = str(row.get("Location", "")).strip()
+#         else:
+#             # For transfers, fetch city from Inventory via Serial Number
+#             sn = str(row.get("Serial Number", ""))
+#             inv = read_worksheet(INVENTORY_WS)
+#             hit = inv[inv["Serial Number"].astype(str) == sn]
+#             if not hit.empty and "Location" in hit.columns:
+#                 city_code = str(hit.iloc[0]["Location"]).strip()
+
+#         if file_id and city_code:
+#             move_drive_file(file_id, "Head Office (HO)", city_code, action, "Rejected")
+
+#     except Exception as e:
+#         st.warning(f"Rejected, but couldn’t move PDF in Drive: {e}")
+
+#     st.success("❌ Request rejected. PDF stored under Rejected for evidence.")
 
 
 def export_tab():
