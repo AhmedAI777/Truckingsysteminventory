@@ -949,44 +949,52 @@ def register_device_tab():
                 filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
                 st.download_button("⬇️ Download ICT Registration Form", data=filled, file_name=_ict_filename(serial))
 
-    if submitted:
-        serial = st.session_state.get("reg_serial", "")
-        device = st.session_state.get("reg_device", "")
-        if not serial or not device:
-            st.error("Serial Number and Device Type are required."); return
-        inv_df = read_worksheet(INVENTORY_WS)
-        pending_df = read_worksheet(PENDING_DEVICE_WS)
-        if serial in inv_df.get("Serial Number", []).tolist() or serial in pending_df.get("Serial Number", []).tolist():
-            st.error(f"Serial {serial} already exists in Inventory or Pending."); return
-        pdf_file_obj = pdf_file or st.session_state.get("reg_pdf")
-        if pdf_file_obj is None:
-            st.error("Signed ICT Registration PDF is required."); return
-        now_str = datetime.now().strftime(DATE_FMT)
-        row = build_row(now_str, st.session_state.get("username", ""))
-        link, fid = upload_pdf_and_get_link(
-            pdf_file_obj,
-            prefix=f"device_{normalize_serial(serial)}",
-            office="Head Office (HO)",
-            city_code=row.get("Location", ""),
-            action="Register",
-        )
-        if not fid: return
-            
-        # Save in Pending Transfers sheet
-        pending = {
-            **row,  # copy inventory row
-            "From owner": row.get("Current user", ""), 
-            "To owner": new_owner,
-            "Approval Status": "Pending",
-            "Approval PDF": link,
-            "Approval File ID": fid,
-            "Submitted by": actor,
-            "Submitted at": now_str,
-            "Approver": "",
-            "Decision at": "",
-        }
-        append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
-        st.success("🕒 Transfer request submitted for Admin approval.")
+    # --- Handle Save Device ---
+if submitted:
+    serial = st.session_state.get("reg_serial", "")
+    device = st.session_state.get("reg_device", "")
+    if not serial or not device:
+        st.error("Serial Number and Device Type are required.")
+        return
+
+    inv_df = read_worksheet(INVENTORY_WS)
+    pending_df = read_worksheet(PENDING_DEVICE_WS)
+    if serial in inv_df.get("Serial Number", []).tolist() or serial in pending_df.get("Serial Number", []).tolist():
+        st.error(f"Serial {serial} already exists in Inventory or Pending.")
+        return
+
+    pdf_file_obj = pdf_file or st.session_state.get("reg_pdf")
+    if pdf_file_obj is None:
+        st.error("Signed ICT Registration PDF is required for submission.")
+        return
+
+    now_str = datetime.now().strftime(DATE_FMT)
+    actor = st.session_state.get("username", "")
+    row = build_row(now_str, actor)
+
+    link, fid = upload_pdf_and_get_link(
+        pdf_file_obj,
+        prefix=f"device_{normalize_serial(serial)}",
+        office="Head Office (HO)",
+        city_code=row.get("Location", ""),
+        action="Register",
+    )
+    if not fid:
+        return
+
+    
+    pending = {
+        **row,
+        "Approval Status": "Pending",
+        "Approval PDF": link,
+        "Approval File ID": fid,
+        "Submitted by": actor,
+        "Submitted at": now_str,
+        "Approver": "",
+        "Decision at": "",
+    }
+    append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+    st.success("🕒 Device registration submitted for Admin approval.")
 
 def transfer_tab():
     st.subheader("🔄 Device Transfer")
@@ -1018,29 +1026,45 @@ def transfer_tab():
                 pdf_bytes = fill_pdf_form(tpl_bytes, mapped_vals)
                 st.download_button("📥 Download Prefilled Transfer PDF", data=pdf_bytes,
                                    file_name=_transfer_filename(serial), mime="application/pdf")
-    if submitted:
-        if not serial or not new_owner:
-            st.error("Serial number and new owner required."); return
-        if pdf_file is None:
-            st.error("Signed ICT Transfer PDF is required."); return
-        row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
-        now_str = datetime.now().strftime(DATE_FMT)
-        link, fid = upload_pdf_and_get_link(
-            pdf_file,
-            prefix=f"transfer_{normalize_serial(serial)}",
-            office=row.get("Office", ""),
-            city_code=row.get("Location", ""),
-            action="Transfer",
-        )
-        if not fid: return
-        pending = {
-            **row, "To owner": new_owner,
-            "Approval Status": "Pending", "Approval PDF": link, "Approval File ID": fid,
-            "Submitted by": st.session_state.get("username", ""), "Submitted at": now_str,
-            "Approver": "", "Decision at": "",
-        }
-        append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
-        st.success("🕒 Transfer request submitted for Admin approval.")
+    # --- Save transfer request ---
+if submitted:
+    if not serial or not new_owner:
+        st.error("Serial number and new owner required.")
+        return
+    if pdf_file is None:
+        st.error("Signed ICT Transfer PDF is required.")
+        return
+
+    row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
+    now_str = datetime.now().strftime(DATE_FMT)
+    actor = st.session_state.get("username", "")
+
+    link, fid = upload_pdf_and_get_link(
+        pdf_file,
+        prefix=f"transfer_{normalize_serial(serial)}",
+        office=row.get("Office", ""),
+        city_code=row.get("Location", ""),
+        action="Transfer",
+    )
+    if not fid:
+        return
+
+    # ✅ Include actual current owner so logs are correct later
+    pending = {
+        **row,
+        "From owner": row.get("Current user", ""),
+        "To owner": new_owner,
+        "Approval Status": "Pending",
+        "Approval PDF": link,
+        "Approval File ID": fid,
+        "Submitted by": actor,
+        "Submitted at": now_str,
+        "Approver": "",
+        "Decision at": "",
+    }
+    append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
+    st.success("🕒 Transfer request submitted for Admin approval.")
+
 
 def _approve_device_row(row: pd.Series):
     inv = read_worksheet(INVENTORY_WS)
