@@ -872,39 +872,40 @@ def register_device_tab():
         args=(emp_df,),
     )
 
-    with st.form("register_device", clear_on_submit=False):
-        # form inputs …
-        notes = st.text_area("Notes", height=80)
+   with st.form("register_device", clear_on_submit=False):
+    r1c1, r1c2, r1c3 = st.columns(3)
+    with r1c1: serial = st.text_input("Serial Number *")
+    with r1c2: device = st.text_input("Device Type *")
+    with r1c3: brand  = st.text_input("Brand")
 
-        st.divider()
-        c_download = st.form_submit_button("Download register new device")
+    r2c1, r2c2, r2c3 = st.columns(3)
+    with r2c1: model  = st.text_input("Model")
+    with r2c2: cpu    = st.text_input("CPU")
+    with r2c3: mem    = st.text_input("Memory")
 
-        st.markdown("**Signed ICT Equipment Form (PDF)**")
-        pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf")
-        submitted = st.form_submit_button("Save Device", type="primary")
+    r3c1, r3c2, r3c3 = st.columns(3)
+    with r3c1: hdd1 = st.text_input("Hard Drive 1")
+    with r3c2: hdd2 = st.text_input("Hard Drive 2")
+    with r3c3: gpu  = st.text_input("GPU")
 
-    # Generate prefilled form
-    if c_download:
-        if not serial.strip() or not device.strip():
-            st.error("Serial and Device Type required.")
-        else:
-            # build prefilled PDF …
-            st.download_button("📄 Download ICT Registration Form", data=filled, file_name=_ict_filename(serial))
+    r4c1, r4c2, r4c3 = st.columns(3)
+    with r4c1: screen = st.text_input("Screen Size")
+    with r4c2: st.text_input("Email Address", key="reg_email")
+    with r4c3: st.text_input("Contact Number", key="reg_contact")
 
-    # --- Save (PDF required for all roles)
-    if submitted:
-        if not serial.strip() or not device.strip():
-            st.error("Serial Number and Device Type are required.")
-            st.stop()   # ✅ fixed
+    r5c1, r5c2, r5c3 = st.columns(3)
+    with r5c1: st.text_input("Department", key="reg_dept")
+    with r5c2: st.text_input("Location", key="reg_location")
+    with r5c3: st.text_input("Office", key="reg_office")
 
-        # Prefer the widget variable, fall back to session_state to be safe
-        pdf_file_obj = pdf_file or ss.get("reg_pdf")
-        if pdf_file_obj is None:
-            st.error("Signed ICT Registration PDF is required for submission.")
-            st.stop()   # ✅ fixed
+    notes = st.text_area("Notes", height=80)
 
-        # continue with saving logic …
+    st.divider()
+    c_download = st.form_submit_button("Download register new device")
 
+    st.markdown("**Signed ICT Equipment Form (PDF)**")
+    pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf")
+    submitted = st.form_submit_button("Save Device", type="primary")
 
 # (transfer_tab, approvals_tab, _approve_device_row, _approve_transfer_row, _reject_row)
 # In these functions, after writing to Sheets, call:
