@@ -362,7 +362,7 @@ def move_drive_file(file_id: str, office: str, city_code: str, action: str, deci
         supportsAllDrives=True
     ).execute()
 
-def upload_pdf_and_get_link(file_obj, *, prefix: str, office: str, city_code: str, action: str) -> tuple[str, str]:
+def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_code: str, action: str) -> Tuple[str, str]:
     """
     Upload a signed PDF to Google Drive into:
         approvals / <office> / <city> / <action> / Pending
@@ -372,6 +372,39 @@ def upload_pdf_and_get_link(file_obj, *, prefix: str, office: str, city_code: st
     Returns:
         (share_link, file_id)
     """
+    if uploaded_file is None:
+        st.error("No file selected.")
+        return "", ""
+
+    # --- Validate MIME & header ---
+    allowed = {
+        "application/pdf",
+        "application/x-pdf",
+        "application/octet-stream",
+        "binary/octet-stream",
+    }
+    mime = getattr(uploaded_file, "type", "") or ""
+    name = getattr(uploaded_file, "name", "file.pdf")
+
+    try:
+        data = uploaded_file.getvalue()
+    except Exception as e:
+        st.error(f"Failed reading the uploaded file: {e}")
+        return "", ""
+
+    if not data:
+        st.error("Uploaded file is empty.")
+        return "", ""
+
+    is_pdf_magic = data[:4] == b"%PDF"
+    looks_like_pdf = name.lower().endswith(".pdf") or is_pdf_magic
+    if mime not in allowed and not looks_like_pdf:
+        st.error(f"Only PDF files are allowed. Got type '{mime}' and name '{name}'.")
+        return "", ""
+    if not is_pdf_magic:
+        st.warning("⚠️ File doesn't start with %PDF header — continuing, but may be invalid.")
+
+    # --- Organized folder structure ---
     try:
         drive_cli = _get_drive()
         root_id = st.secrets.get("drive", {}).get("approvals", "")
@@ -379,30 +412,61 @@ def upload_pdf_and_get_link(file_obj, *, prefix: str, office: str, city_code: st
             st.error("Drive approvals folder not configured in secrets.")
             return "", ""
 
-        # Ensure folder structure exists
         city_folder = city_folder_name(city_code)
         path_parts = [office, city_folder, action, "Pending"]
         folder_id = ensure_drive_subfolder(root_id, path_parts, drive_cli)
 
-        # Prepare file metadata
         today = datetime.now().strftime("%Y%m%d")
         fname = f"{prefix}_{today}.pdf"
         meta = {"name": fname, "parents": [folder_id], "mimeType": "application/pdf"}
 
-        # Upload file
-        media = MediaIoBaseUpload(file_obj, mimetype="application/pdf", resumable=True)
-        f = drive_cli.files().create(
+        media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
+
+        file = drive_cli.files().create(
             body=meta,
             media_body=media,
             fields="id, webViewLink",
             supportsAllDrives=True,
         ).execute()
 
-        return f.get("webViewLink", ""), f.get("id", "")
-
+    except HttpError as e:
+        if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
+            if not ALLOW_OAUTH_FALLBACK:
+                st.error("Service Account quota exceeded and OAuth fallback disabled.")
+                return "", ""
+            try:
+                drive_cli = _get_user_drive()
+                file = drive_cli.files().create(
+                    body=meta,
+                    media_body=media,
+                    fields="id, webViewLink",
+                    supportsAllDrives=False,
+                ).execute()
+            except Exception as e2:
+                st.error(f"OAuth upload failed: {e2}")
+                return "", ""
+        else:
+            st.error(f"Drive upload failed: {e}")
+            return "", ""
     except Exception as e:
-        st.error(f"Error uploading PDF: {e}")
-        st.stop()
+        st.error(f"Unexpected error uploading to Drive: {e}")
+        return "", ""
+
+    file_id = file.get("id", "")
+    link = file.get("webViewLink", "")
+    if not file_id:
+        st.error("Drive did not return a file id.")
+        return "", ""
+
+    # --- Optional: Make file public ---
+    try:
+        if st.secrets.get("drive", {}).get("public", True):
+            _drive_make_public(file_id, drive_client=drive_cli)
+    except Exception:
+        pass
+
+    return link, file_id
+
 
 
 
@@ -981,6 +1045,15 @@ def register_device_tab():
             st.error("Serial Number and Device Type are required.")
             return
 
+        link, fid = upload_pdf_and_get_link(
+            pdf_file,
+            prefix=f"device_{normalize_serial(serial)}",
+            office="Head Office (HO)",
+            city_code=row.get("Location", ""),
+            action="Register",
+        )
+
+
         # Prefer the widget variable, fall back to session_state to be safe
         pdf_file_obj = pdf_file or ss.get("reg_pdf")
         if pdf_file_obj is None:
@@ -1166,7 +1239,7 @@ def transfer_tab():
             prefix=f"transfer_{normalize_serial(serial)}",
             office="Head Office (HO)",
             city_code=row.get("Location", ""),
-            action="Transfer"
+             action="Transfer",
         )
         if not fid:
             return
