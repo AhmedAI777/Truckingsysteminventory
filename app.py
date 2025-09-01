@@ -377,7 +377,7 @@ def upload_pdf_and_get_link(file_obj, *, prefix: str, office: str, city_code: st
         root_id = st.secrets.get("drive", {}).get("approvals", "")
         if not root_id:
             st.error("Drive approvals folder not configured in secrets.")
-            return "", ""
+            st.stop() "", ""
 
         # Ensure folder structure exists
         city_folder = city_folder_name(city_code)
@@ -402,7 +402,7 @@ def upload_pdf_and_get_link(file_obj, *, prefix: str, office: str, city_code: st
 
     except Exception as e:
         st.error(f"Error uploading PDF: {e}")
-        return "", ""
+        st.stop() "", ""
 
 
 
@@ -491,7 +491,7 @@ def read_worksheet(ws_title):
         if ws_title == PENDING_DEVICE_WS: return pd.DataFrame(columns=PENDING_DEVICE_COLS)
         if ws_title == PENDING_TRANSFER_WS: return pd.DataFrame(columns=PENDING_TRANSFER_COLS)
         if ws_title == DEVICE_CATALOG_WS:  return pd.DataFrame(columns=CATALOG_COLS)
-        return pd.DataFrame()
+        st.stop() pd.DataFrame()
 
 def write_worksheet(ws_title, df):
     if ws_title == INVENTORY_WS:
@@ -803,7 +803,7 @@ def employee_register_tab():
     if submitted:
         if not name.strip() or not emp_id.strip():
             st.error("Name and Employee ID are required.")
-            return
+            st.stop()
 
         new_row = {
             "New Employeer": name.strip(),
@@ -1270,13 +1270,13 @@ def _approve_transfer_row(row: pd.Series):
     inv = read_worksheet(INVENTORY_WS)
     if inv.empty:
         st.error("Inventory is empty; cannot apply transfer.")
-        return
+        st.stop()
 
     sn = str(row.get("Serial Number", ""))
     match = inv[inv["Serial Number"].astype(str) == sn]
     if match.empty:
         st.error("Serial not found in Inventory.")
-        return
+        st.stop()
 
     idx = match.index[0]
     now_str = datetime.now().strftime(DATE_FMT)
