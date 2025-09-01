@@ -313,10 +313,10 @@ def _drive_download_bytes(file_id: str) -> bytes:
 # =============================================================================
 
 CITY_MAP = {
-    "JED": "Jeddah (JED)",
-    "RUH": "Riyadh (RUH)",
-    "TIF": "TAIF (TIF)",
-    "MED": "Medina (MED)",
+    "Jeddah": "(JED)",
+    "Riyadh": "(RUH)",
+    "Taif":   "(TIF)",
+    "Madinah":"(MED)",
     # Add more mappings if needed
 }
 
@@ -699,6 +699,50 @@ def fill_pdf_form(template_bytes: bytes, values: dict[str,str], *, flatten: bool
         except Exception:
             pass
     out = io.BytesIO(); writer.write(out); out.seek(0); return out.read()
+
+def _transfer_field_map() -> dict[str, str]:
+    """Map logical field names to actual PDF field names for the transfer form."""
+    fm: dict[str, str] = {
+        "from_name":       "Text Field0",
+        "from_mobile":     "Text Field1",
+        "from_email":      "Text Field2",
+        "from_department": "Text Field3",
+        "from_date":       "Text Field4",
+        "from_location":   "Text Field5",
+
+        "to_name":         "Text Field6",
+        "to_mobile":       "Text Field7",
+        "to_email":        "Text Field8",
+        "to_department":   "Text Field9",
+        "to_date":         "Text Field10",
+        "to_location":     "Text Field11",
+    }
+
+    # Equipment block – usually same layout as register
+    for blk in range(4):
+        base = 12 + blk * 5
+        fm[f"eq{blk+1}_type"]   = f"Text Field{base}"
+        fm[f"eq{blk+1}_brand"]  = f"Text Field{base+1}"
+        fm[f"eq{blk+1}_model"]  = f"Text Field{base+2}"
+        fm[f"eq{blk+1}_specs"]  = f"Text Field{base+3}"
+        fm[f"eq{blk+1}_serial"] = f"Text Field{base+4}"
+
+    # Aliases for single-equipment forms
+    fm.update({
+        "eq_type":   fm["eq1_type"],
+        "eq_brand":  fm["eq1_brand"],
+        "eq_model":  fm["eq1_model"],
+        "eq_specs":  fm["eq1_specs"],
+        "eq_serial": fm["eq1_serial"],
+    })
+
+    # Allow overrides from secrets (optional)
+    override = st.secrets.get("pdf", {}).get("transfer_field_map", {})
+    if isinstance(override, dict) and override:
+        fm.update(override)
+
+    return fm
+
 
 # Employee lookup helpers, etc… (continues below in Part 4)
 
@@ -1209,7 +1253,8 @@ def transfer_tab():
         return
 
     serials = inv_df["Serial Number"].dropna().tolist()
-    employees = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
+    employees = sorted({*unique_nonempty(emp_df, "New Employeer"),
+                        *unique_nonempty(emp_df, "Name")})
 
     with st.form("transfer_form", clear_on_submit=False):
         serial = st.selectbox("Select Serial Number", serials, key="trf_serial")
@@ -1218,27 +1263,35 @@ def transfer_tab():
 
         c1, c2 = st.columns([1, 1])
         with c1:
-            download_btn = st.form_submit_button("📄 Download Prefilled Transfer PDF")
+            dl = st.form_submit_button("📄 Download Prefilled Transfer PDF")
         with c2:
             submitted = st.form_submit_button("💾 Submit Transfer Request", type="primary")
 
     # --- Prefilled PDF download ---
-    if download_btn:
+    if dl:
         if not serial or not new_owner:
-            st.error("Serial number and new owner required.")
+            st.error("Serial number and new owner are required.")
         else:
             row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
-            transfer_vals = build_transfer_values(row, new_owner, emp_df)
 
+            # Build values (logical keys)
+            transfer_vals = build_transfer_pdf_values(row, new_owner, emp_df)
+
+            # Map logical keys → actual PDF fields
+            field_map = _transfer_field_map()
+            mapped_vals = {field_map[k]: v for k, v in transfer_vals.items() if k in field_map}
+
+            # Load template + fill
             tpl_bytes = _download_template_bytes_or_public(TRANSFER_TEMPLATE_FILE_ID)
             if not tpl_bytes:
-                st.error("⚠️ Could not load ICT Transfer PDF template.")
+                st.error("⚠️ Could not load transfer PDF template.")
             else:
-                filled = fill_pdf_form(tpl_bytes, transfer_vals, flatten=True)
+                pdf_bytes = fill_pdf_form(tpl_bytes, mapped_vals)
                 st.download_button(
-                    "⬇️ Download ICT Transfer Form",
-                    data=filled,
-                    file_name=_transfer_filename(serial)
+                    "📥 Download Prefilled Transfer PDF",
+                    data=pdf_bytes,
+                    file_name=_transfer_filename(serial),
+                    mime="application/pdf",
                 )
 
     # --- Save transfer request ---
@@ -1255,7 +1308,7 @@ def transfer_tab():
         now_str = datetime.now().strftime(DATE_FMT)
         actor = st.session_state.get("username", "")
 
-        # Upload PDF to Drive
+        # Upload signed PDF to Drive
         link, fid = upload_pdf_and_get_link(
             pdf_file,
             prefix=f"transfer_{normalize_serial(serial)}",
@@ -1266,6 +1319,7 @@ def transfer_tab():
         if not fid:
             return
 
+        # Save in Pending Transfers sheet
         pending = {
             **row,
             "To owner": new_owner,
@@ -1279,6 +1333,7 @@ def transfer_tab():
         }
         append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
         st.success("🕒 Transfer request submitted for Admin approval.")
+
 
 
 # =============================================================================
