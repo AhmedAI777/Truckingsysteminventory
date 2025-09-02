@@ -319,11 +319,15 @@ def _drive_download_bytes(file_id: str) -> bytes:
     return buf.read()
 
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
-    """Upload PDF to Drive. Try SA first; on 403 storage quota, fall back to OAuth user (My Drive)."""
+    """Upload PDF to Drive. Try Service Account first; on SA quota exceeded,
+    optionally fall back to OAuth user (same folder if possible, else user root).
+    Returns (webViewLink, file_id) or ("","") on failure.
+    """
     if uploaded_file is None:
         st.error("No file selected.")
         return "", ""
 
+    # --- read & validate bytes ---
     allowed = {
         "application/pdf",
         "application/x-pdf",
@@ -351,6 +355,7 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
     if not is_pdf_magic:
         st.warning("File doesn't start with %PDF header—but continuing. If Drive rejects it, please re-export the PDF.")
 
+    # --- target file name & folder ---
     fname = f"{prefix}_{int(time.time())}.pdf"
     folder_id = st.secrets.get("drive", {}).get("approvals", "")
     metadata = {"name": fname}
@@ -359,21 +364,47 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
 
     media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
 
+    # --- 1) Try Service Account upload ---
     drive_cli = _get_drive()
     try:
         file = drive_cli.files().create(
-            body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=True,
+            body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=True
         ).execute()
     except HttpError as e:
+        # SA quota exceeded? optionally fall back to OAuth user
         if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
             if not ALLOW_OAUTH_FALLBACK:
                 st.error("Service Account quota exceeded and OAuth fallback disabled.")
                 return "", ""
+
+            user_cli = _get_user_drive()
+            if user_cli is None:
+                st.error("Service Account quota exceeded and no OAuth token configured.")
+                return "", ""
+
+            # 2a) Try uploading to the same approvals folder as OAuth user
             try:
-                drive_cli = _get_user_drive()
-                file = drive_cli.files().create(
-                    body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=False,
+                file = user_cli.files().create(
+                    body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=False
                 ).execute()
+            except HttpError as e2:
+                # If user can't write to that folder, retry to user's My Drive root
+                if e2.resp.status in (403, 404):
+                    try:
+                        meta2 = {"name": fname}  # no parents -> goes to user's My Drive
+                        file = user_cli.files().create(
+                            body=meta2, media_body=media, fields="id, webViewLink", supportsAllDrives=False
+                        ).execute()
+                        st.warning(
+                            "Uploaded to your My Drive (OAuth user) because the approvals folder "
+                            "wasn't writable by the OAuth user."
+                        )
+                    except Exception as e3:
+                        st.error(f"OAuth upload failed (root retry): {e3}")
+                        return "", ""
+                else:
+                    st.error(f"OAuth upload failed: {e2}")
+                    return "", ""
             except Exception as e2:
                 st.error(f"OAuth upload failed: {e2}")
                 return "", ""
@@ -384,14 +415,24 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
         st.error(f"Unexpected error uploading to Drive: {e}")
         return "", ""
 
-    file_id = file.get("id", ""); link = file.get("webViewLink", "")
+    # --- success -> make public if configured ---
+    file_id = file.get("id", "")
+    link = file.get("webViewLink", "")
     if not file_id:
         st.error("Drive did not return a file id.")
         return "", ""
 
     try:
         if st.secrets.get("drive", {}).get("public", True):
-            _drive_make_public(file_id, drive_client=drive_cli)
+            # Try to use the same client that actually uploaded (drive_cli or user_cli)
+            try:
+                # If we fell back to OAuth above, 'file' came from user_cli; permissions via SA would error.
+                # Use a generic attempt: first SA, then OAuth if SA fails.
+                _drive_make_public(file_id, drive_client=drive_cli)
+            except Exception:
+                user_cli = _get_user_drive()
+                if user_cli:
+                    _drive_make_public(file_id, drive_client=user_cli)
     except Exception:
         pass
 
