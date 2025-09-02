@@ -301,6 +301,43 @@ def ensure_drive_subfolder(root_id: str, path_parts: list[str], drive_cli=None) 
             parent = newf["id"]
     return parent
 
+def _drive_folder_id(v: str) -> str:
+    """Accept a Drive folder ID or a full URL and return the ID."""
+    v = (v or "").strip()
+    m = re.search(r"/folders/([A-Za-z0-9_-]{10,})", v) or re.search(r"[?&]id=([A-Za-z0-9_-]{10,})", v)
+    return m.group(1) if m else v
+
+
+def ensure_drive_subfolder(root_id: str, path_parts: list[str], drive_cli=None) -> str:
+    """Create (if missing) nested folders under a Shared Drive or normal Drive."""
+    cli = drive_cli or _get_drive()
+    parent = root_id
+    for part in path_parts:
+        q = (
+            f"'{parent}' in parents and name='{part}' "
+            "and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        )
+        res = cli.files().list(
+            q=q,
+            spaces="drive",
+            fields="files(id,name,driveId)",
+            supportsAllDrives=True,
+            includeItemsFromAllDrives=True,
+        ).execute()
+        items = res.get("files", [])
+        if items:
+            parent = items[0]["id"]
+        else:
+            meta = {"name": part, "mimeType": "application/vnd.google-apps.folder", "parents": [parent]}
+            newf = cli.files().create(
+                body=meta,
+                fields="id",
+                supportsAllDrives=True,
+            ).execute()
+            parent = newf["id"]
+    return parent
+
+
 def upload_pdf_and_get_link(uploaded_file, *, office: str, city_text: str, action: str, serial: str, status: str = "Pending") -> Tuple[str, str, int, str]:
     if uploaded_file is None:
         st.error("No file selected.")
@@ -316,20 +353,23 @@ def upload_pdf_and_get_link(uploaded_file, *, office: str, city_text: str, actio
         return "", "", 0, ""
 
     drive_cli = _get_drive()
-    root_id = st.secrets.get("drive", {}).get("approvals", "")
+
+    # Use folder ID from secrets (accept URL or ID)
+    raw_root = st.secrets.get("drive", {}).get("approvals", "")
+    root_id = _drive_folder_id(raw_root)
     if not root_id:
         st.error("Drive approvals folder not configured in secrets.")
         return "", "", 0, ""
 
+    # Figure out counter key
     project_code = project_code_from_office(office)
     location_code = location_code_for_filename(city_text)
     type_code = type_code_from_action(action)
 
-    # Use reserved order number if available
-    order_no = ss.get("reserved_order_no")
-    if not order_no:
-        order_no = get_next_order_number(project_code, location_code, type_code)
+    # Reserve/advance order number
+    order_no = ss.get("reserved_order_no") or get_next_order_number(project_code, location_code, type_code)
 
+    # Final filename (matches the prefilled one)
     now = datetime.now()
     filename = build_compliant_filename(
         office=office or "Head Office (HO)",
@@ -340,14 +380,26 @@ def upload_pdf_and_get_link(uploaded_file, *, office: str, city_text: str, actio
         order_no=order_no,
     )
 
-    # Reset reservation after use
-    ss["reserved_order_no"] = None
-    ss["reserved_filename"] = None
+    # Ensure your tree: Office / City / Action / Status
+    status_folder = status if status in ("Pending", "Approved", "Rejected") else "Pending"
+    city_leaf = city_text if city_text else location_code  # show raw city if provided, else code
+    folder_id = ensure_drive_subfolder(
+        root_id,
+        [office or "Head Office (HO)", city_leaf, action, status_folder],
+        drive_cli,
+    )
 
-    meta = {"name": filename, "parents": [root_id], "mimeType": "application/pdf"}
+    # Clear reservation so next prefill/uploads reserve a new one
+    ss["reserved_order_no"] = ss["reserved_filename"] = ss["reserved_key"] = ss["reserved_when"] = None
+
+    # Upload into the Shared Drive folder
+    meta = {"name": filename, "parents": [folder_id], "mimeType": "application/pdf"}
     media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
     file = drive_cli.files().create(
-        body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
+        body=meta,
+        media_body=media,
+        fields="id, webViewLink",
+        supportsAllDrives=True,
     ).execute()
 
     return file.get("webViewLink", ""), file.get("id", ""), order_no, filename
@@ -849,49 +901,6 @@ def _mark_decision(ws_name: str, row: dict, *, status: str):
 # =========================
 # UI (fixed with reserved order numbers)
 # =========================
-def reserve_order_number(office: str, city: str, action: str, serial: str, when: datetime | None = None) -> tuple[int, str]:
-    """Reserve the next order number for (project, location, type, serial) and build the filename.
-    Reuses the same reservation within the session so Prefill and Upload stay consistent.
-    """
-    when = when or datetime.now()
-
-    project_code = project_code_from_office(office or "Head Office (HO)")
-    location_code = location_code_for_filename(city or "")
-    type_code = type_code_from_action(action or "")
-    snorm = re.sub(r"[^A-Z0-9]", "", (serial or "").upper())
-
-    key = f"{project_code}|{location_code}|{type_code}|{snorm}"
-
-    # Reuse an existing reservation for the same key
-    if ss.get("reserved_order_no") and ss.get("reserved_key") == key:
-        when_used = ss.get("reserved_when") or when
-        filename = ss.get("reserved_filename") or build_compliant_filename(
-            office=office or "Head Office (HO)",
-            city_text=city,
-            action=action,
-            serial=serial,
-            when=when_used,
-            order_no=ss["reserved_order_no"],
-        )
-        ss["reserved_filename"] = filename
-        return ss["reserved_order_no"], filename
-
-    # No reservation yet — advance the counter and reserve
-    order_no = get_next_order_number(project_code, location_code, type_code)
-    filename = build_compliant_filename(
-        office=office or "Head Office (HO)",
-        city_text=city,
-        action=action,
-        serial=serial,
-        when=when,
-        order_no=order_no,
-    )
-    ss["reserved_order_no"] = order_no
-    ss["reserved_filename"] = filename
-    ss["reserved_key"] = key
-    ss["reserved_when"] = when
-    return order_no, filename
-
 def reserve_and_build_filename(serial: str, office: str, city: str, action: str) -> Tuple[int, str]:
     order_no, filename = reserve_order_number(office, city, action, serial)
     return order_no, filename
