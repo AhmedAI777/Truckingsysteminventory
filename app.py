@@ -1,5 +1,3 @@
-
-
 # 🔹 app.py (Part 1/3)
 # app.py — Tracking Inventory Management System (Streamlit + Google Sheets/Drive)
 
@@ -1038,6 +1036,7 @@ def run_app():
             inventory_tab()
         with tabs[3]:
             history_tab()
+
 # =========================
 # Entry
 # =========================
@@ -1065,3 +1064,4 @@ else:
             do_login(username, user.get("role", "Staff"))
         else:
             st.error("❌ Invalid username or password.")
+
