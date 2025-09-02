@@ -75,7 +75,7 @@ PENDING_TRANSFER_COLS = LOG_COLS + APPROVAL_META_COLS
 
 UNASSIGNED_LABEL = "Unassigned (Stock)"
 
-ICT_TEMPLATE_FILE_ID = st.secrets.get("drive", {}).get("template_file_id", "1BdbeVEpDuS_hpQgxNLGij5sl01azT_zG")
+ICT_TEMPLATE_FILE_ID = st.secrets.get("drive", {}).get("template_file_id", "1S6mW2sdLWsXNDfltdvLFwt3kFyQaGqjC")
 TRANSFER_TEMPLATE_FILE_ID = st.secrets.get("drive", {}).get("transfer_template_file_id", ICT_TEMPLATE_FILE_ID)
 
 INVENTORY_HEADER_SYNONYMS = {
