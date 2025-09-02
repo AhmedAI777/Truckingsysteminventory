@@ -994,145 +994,104 @@ def register_device_tab():
         args=(emp_df,),
     )
 
-    # Full original field set with unique keys
-    with st.form("register_device_form", clear_on_submit=False):
-        r1c1, r1c2, r1c3 = st.columns(3)
-        with r1c1:
-            st.text_input("Serial Number *", key="reg_serial_input")
-        with r1c2:
-            st.text_input("Device Type *", key="reg_device_input")
-        with r1c3:
-            st.text_input("Brand", key="reg_brand")
+    # Input fields
+    r1c1, r1c2, r1c3 = st.columns(3)
+    with r1c1:
+        st.text_input("Serial Number *", key="reg_serial_input")
+    with r1c2:
+        st.text_input("Device Type *", key="reg_device_input")
+    with r1c3:
+        st.text_input("Brand", key="reg_brand")
 
-        r2c1, r2c2, r2c3 = st.columns(3)
-        with r2c1:
-            st.text_input("Model", key="reg_model")
-        with r2c2:
-            st.text_input("CPU", key="reg_cpu")
-        with r2c3:
-            st.text_input("Memory", key="reg_mem")
+    r2c1, r2c2, r2c3 = st.columns(3)
+    with r2c1:
+        st.text_input("Model", key="reg_model")
+    with r2c2:
+        st.text_input("CPU", key="reg_cpu")
+    with r2c3:
+        st.text_input("Memory", key="reg_mem")
 
-        r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1:
-            st.text_input("Hard Drive 1", key="reg_hdd1")
-        with r3c2:
-            st.text_input("Hard Drive 2", key="reg_hdd2")
-        with r3c3:
-            st.text_input("GPU", key="reg_gpu")
+    r3c1, r3c2, r3c3 = st.columns(3)
+    with r3c1:
+        st.text_input("Hard Drive 1", key="reg_hdd1")
+    with r3c2:
+        st.text_input("Hard Drive 2", key="reg_hdd2")
+    with r3c3:
+        st.text_input("GPU", key="reg_gpu")
 
-        r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1:
-            st.text_input("Screen Size", key="reg_screen")
-        with r4c2:
-            st.text_input("Email Address", key="reg_email")
-        with r4c3:
-            st.text_input("Contact Number", key="reg_contact")
+    r4c1, r4c2, r4c3 = st.columns(3)
+    with r4c1:
+        st.text_input("Screen Size", key="reg_screen")
+    with r4c2:
+        st.text_input("Email Address", key="reg_email")
+    with r4c3:
+        st.text_input("Contact Number", key="reg_contact")
 
-        r5c1, r5c2, r5c3 = st.columns(3)
-        with r5c1:
-            st.text_input("Department", key="reg_dept")
-        with r5c2:
-            st.text_input("Location", key="reg_location")
-        with r5c3:
-            st.text_input("Office", key="reg_office")
+    r5c1, r5c2, r5c3 = st.columns(3)
+    with r5c1:
+        st.text_input("Department", key="reg_dept")
+    with r5c2:
+        st.text_input("Location", key="reg_location")
+    with r5c3:
+        st.text_input("Office", key="reg_office")
 
-        st.text_area("Notes", height=80, key="reg_notes")
-        st.divider()
-        pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf_upload")
+    st.text_area("Notes", height=80, key="reg_notes")
+    pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf_upload")
 
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            prefill = st.form_submit_button("📄 Download Prefilled PDF", key="reg_prefill_btn")
-        with c2:
-            submitted = st.form_submit_button("💾 Save Device", type="primary", key="reg_save_btn")
+    # Two buttons (NOT inside the same form anymore)
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if st.button("📄 Download Prefilled PDF", key="btn_prefill"):
+            serial = st.session_state.get("reg_serial_input", "")
+            device_type = st.session_state.get("reg_device_input", "")
+            office = st.session_state.get("reg_office", "Head Office (HO)")
+            city = st.session_state.get("reg_location", "")
+            if not serial or not device_type:
+                st.error("Serial Number and Device Type required.")
+            else:
+                order_no, filename = reserve_and_build_filename(serial, office, city, "Register")
+                tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
+                if tpl_bytes:
+                    now_str = datetime.now().strftime(DATE_FMT)
+                    actor = st.session_state.get("username", "")
+                    reg_vals = build_registration_values({
+                        "Serial Number": serial,
+                        "Device Type": device_type,
+                        "Office": office,
+                        "Location": city,
+                    }, actor_name=actor, emp_df=emp_df)
+                    pdf_bytes = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
+                    st.download_button(
+                        "⬇️ Download ICT Registration Form",
+                        data=pdf_bytes,
+                        file_name=filename,
+                        mime="application/pdf",
+                        key="download_prefill_pdf"
+                    )
 
-    def _build_reg_row(now_str: str, actor: str) -> dict:
-        return {
-            "Serial Number": st.session_state.get("reg_serial_input", "").strip(),
-            "Device Type": st.session_state.get("reg_device_input", "").strip(),
-            "Brand": st.session_state.get("reg_brand", "").strip(),
-            "Model": st.session_state.get("reg_model", "").strip(),
-            "CPU": st.session_state.get("reg_cpu", "").strip(),
-            "Hard Drive 1": st.session_state.get("reg_hdd1", "").strip(),
-            "Hard Drive 2": st.session_state.get("reg_hdd2", "").strip(),
-            "Memory": st.session_state.get("reg_mem", "").strip(),
-            "GPU": st.session_state.get("reg_gpu", "").strip(),
-            "Screen Size": st.session_state.get("reg_screen", "").strip(),
-            "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-            "Department": st.session_state.get("reg_dept", "").strip(),
-            "Email Address": st.session_state.get("reg_email", "").strip(),
-            "Contact Number": st.session_state.get("reg_contact", "").strip(),
-            "Location": st.session_state.get("reg_location", "").strip(),
-            "Office": st.session_state.get("reg_office", "").strip(),
-            "Notes": st.session_state.get("reg_notes", "").strip(),
-            "Date issued": now_str,
-            "Registered by": actor,
-        }
-
-    if prefill:
-        serial = st.session_state.get("reg_serial_input", "")
-        device_type = st.session_state.get("reg_device_input", "")
-        office = st.session_state.get("reg_office", "Head Office (HO)")
-        city = st.session_state.get("reg_location", "")
-        if not serial or not device_type:
-            st.error("Serial Number and Device Type required.")
-            st.stop()
-        # Reserve number + filename (SHEETS only)
-        order_no, filename = reserve_and_build_filename(serial, office, city, "Register")
-        # Fill the PDF from template (LOCAL)
-        tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
-        if not tpl_bytes:
-            st.error("Could not load ICT Registration PDF template.")
-            st.stop()
-        now_str = datetime.now().strftime(DATE_FMT)
-        actor = st.session_state.get("username", "")
-        reg_vals = build_registration_values(_build_reg_row(now_str, actor), actor_name=actor, emp_df=emp_df)
-        pdf_bytes = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
-        st.download_button(
-            "⬇️ Download ICT Registration Form",
-            data=pdf_bytes,
-            file_name=filename,
-            mime="application/pdf",
-            key="reg_prefill_download",
-        )
-        st.info(f"Reserved Order: {order_no:04d} — {filename}")
-        st.stop()  # IMPORTANT: prevent falling through to upload
-
-    if submitted:
-        serial = st.session_state.get("reg_serial_input", "")
-        device_type = st.session_state.get("reg_device_input", "")
-        if not serial or not device_type:
-            st.error("Serial Number and Device Type are required.")
-            return
-        if pdf_file is None:
-            st.error("Signed ICT Registration PDF is required.")
-            return
-        now_str = datetime.now().strftime(DATE_FMT)
-        actor = st.session_state.get("username", "")
-        link, fid, order_no, fname = upload_pdf_and_get_link(
-            pdf_file,
-            office=st.session_state.get("reg_office", "Head Office (HO)"),
-            city_text=st.session_state.get("reg_location", ""),
-            action="Register",
-            serial=serial,
-            status="Pending",
-        )
-        if not fid:
-            return
-        row = _build_reg_row(now_str, actor)
-        pending = {
-            **row,
-            "Approval Status": "Pending",
-            "Approval PDF": link,
-            "Approval File ID": fid,
-            ORDER_NO_COL: f"{order_no:04d}",
-            "Submitted by": actor,
-            "Submitted at": now_str,
-            "Approver": "",
-            "Decision at": "",
-        }
-        append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-        st.success("🕒 Device registration submitted for Admin approval.")
+    with col2:
+        if st.button("💾 Save Device", type="primary", key="btn_save"):
+            serial = st.session_state.get("reg_serial_input", "")
+            device_type = st.session_state.get("reg_device_input", "")
+            if not serial or not device_type:
+                st.error("Serial Number and Device Type are required.")
+                return
+            if pdf_file is None:
+                st.error("Signed ICT Registration PDF is required.")
+                return
+            now_str = datetime.now().strftime(DATE_FMT)
+            actor = st.session_state.get("username", "")
+            link, fid, order_no, fname = upload_pdf_and_get_link(
+                pdf_file,
+                office=st.session_state.get("reg_office", "Head Office (HO)"),
+                city_text=st.session_state.get("reg_location", ""),
+                action="Register",
+                serial=serial,
+                status="Pending",
+            )
+            if not fid:
+                return
+            st.success(f"🕒 Device {serial} submitted with Order {order_no:04d}.")
 
 # =========================
 # Transfer Device Tab (fixed)
