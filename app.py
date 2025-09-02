@@ -1,6 +1,4 @@
 # app.py — Tracking Inventory Management System (Streamlit + Google Sheets/Drive)
-# deps: streamlit gspread gspread-dataframe extra-streamlit-components pandas
-#       google-auth google-api-python-client requests PyPDF2 xlsxwriter
 
 import os, re, io, json, hmac, time, base64, hashlib
 from datetime import datetime, timedelta
@@ -28,6 +26,7 @@ from googleapiclient.errors import HttpError
 from PyPDF2 import PdfReader, PdfWriter
 from PyPDF2.generic import NameObject, DictionaryObject, BooleanObject, ArrayObject
 
+
 # =========================
 # Config
 # =========================
@@ -47,6 +46,9 @@ EMPLOYEE_WS = "mainlists"
 PENDING_DEVICE_WS = "pending_device_reg"
 PENDING_TRANSFER_WS = "pending_transfers"
 DEVICE_CATALOG_WS = st.secrets.get("sheets", {}).get("catalog_ws", "truckingsysteminventory")
+COUNTERS_WS = "counters"   # NEW
+
+ORDER_NO_COL = "Order Number"   # NEW
 
 INVENTORY_COLS = [
     "Serial Number", "Device Type", "Brand", "Model", "CPU",
@@ -68,10 +70,9 @@ EMPLOYEE_HEADERS = [
 
 APPROVAL_META_COLS = [
     "Approval Status", "Approval PDF", "Approval File ID",
-    "Submitted by", "Submitted at", "Approver", "Decision at"
+    "Submitted by", "Submitted at", "Approver", "Decision at",
+    ORDER_NO_COL,   # NEW
 ]
-PENDING_DEVICE_COLS = INVENTORY_COLS + APPROVAL_META_COLS
-PENDING_TRANSFER_COLS = LOG_COLS + APPROVAL_META_COLS
 
 UNASSIGNED_LABEL = "Unassigned (Stock)"
 
@@ -89,6 +90,7 @@ INVENTORY_HEADER_SYNONYMS = {
 COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 for k in ("reg_pdf_ref", "transfer_pdf_ref"):
     ss.setdefault(k, None)
+
 
 # =========================
 # Auth (cookie)
@@ -150,29 +152,6 @@ def _read_cookie():
         COOKIE_MGR.delete(COOKIE_NAME)
         return None
 
-def do_login(username: str, role: str):
-    st.session_state.authenticated = True
-    st.session_state.username = username
-    st.session_state.role = role
-    st.session_state.just_logged_out = False
-    _issue_session_cookie(username, role)
-    st.rerun()
-
-def do_logout():
-    try:
-        COOKIE_MGR.delete(COOKIE_NAME)
-        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1))
-    except Exception:
-        pass
-    for k in ["authenticated", "role", "username"]:
-        st.session_state.pop(k, None)
-    st.session_state.just_logged_out = True
-    st.rerun()
-
-if "cookie_bootstrapped" not in st.session_state:
-    st.session_state.cookie_bootstrapped = True
-    _ = COOKIE_MGR.get_all()
-    st.rerun()
 
 # =========================
 # Google APIs
@@ -277,136 +256,160 @@ def get_sh():
     raise last_exc
 
 # =========================
-# Drive helpers
+# Filename + Counter Helpers
 # =========================
-def _drive_make_public(file_id: str, drive_client=None):
+def project_code_from_office(office: str) -> str:
+    office = (office or "").strip()
+    m = re.search(r"\(([A-Za-z0-9]+)\)", office)
+    if m:
+        return m.group(1).upper()
+    parts = re.findall(r"[A-Za-z]+", office)
+    if parts:
+        return "".join(p[0] for p in parts).upper()
+    return "PRJ"
+
+def project_folder_label(office: str) -> str:
+    office = (office or "").strip() or "Head Office (HO)"
+    if "(" in office and ")" in office:
+        return office
+    return f"{office} ({project_code_from_office(office)})"
+
+def location_code_for_filename(city_text: str) -> str:
+    txt = (city_text or "").strip()
+    m = re.search(r"\(([A-Za-z0-9]{3,5})\)", txt)
+    if m:
+        return m.group(1).upper()
+    v = CITY_MAP.get(txt) or CITY_MAP.get(txt.title()) or CITY_MAP.get(txt.upper())
+    if v:
+        m2 = re.search(r"\(([A-Za-z0-9]{3,5})\)", v)
+        if m2:
+            return m2.group(1).upper()
+    return (txt[:3] or "UNK").upper()
+
+def location_folder_label(city_text: str) -> str:
+    code = location_code_for_filename(city_text)
+    name = re.sub(r"\s+", " ", (city_text or "")).strip().upper() or "UNKNOWN"
+    return f"{name} ({code})"
+
+def type_code_from_action(action: str) -> str:
+    a = (action or "").strip().lower()
+    if a.startswith("reg"):
+        return "REG"
+    if a.startswith("tran") or a.startswith("trf"):
+        return "TRF"
+    return "UNK"
+
+def type_folder_from_action(action: str) -> str:
+    a = (action or "").strip().lower()
+    if a.startswith("reg"):
+        return "Register"
+    if a.startswith("tran") or a.startswith("trf"):
+        return "Transfer"
+    return "Unknown"
+
+def _ensure_counters_header(ws):
+    headers = ["Project", "Location", "Type", "LastUsed"]
     try:
-        cli = drive_client or _get_drive()
-        cli.permissions().create(
-            fileId=file_id, body={"role": "reader", "type": "anyone"},
-            fields="id", supportsAllDrives=True,
-        ).execute()
+        first = ws.row_values(1)
+        if [h.strip() for h in first] != headers:
+            ws.clear()
+            ws.append_row(headers)
     except Exception:
-        pass
+        ws.clear()
+        ws.append_row(headers)
 
-def _fetch_public_pdf_bytes(file_id: str, link: str) -> bytes:
-    try:
-        if file_id:
-            url = f"https://drive.google.com/uc?export=download&id={file_id}"
-            r = requests.get(url, timeout=15)
-            if r.ok and r.content[:4] == b"%PDF":
-                return r.content
-    except Exception:
-        pass
-    return b""
+def get_next_order_number(project_code: str, location_code: str, type_code: str) -> int:
+    ws = get_or_create_ws(COUNTERS_WS)
+    _ensure_counters_header(ws)
 
-def _drive_download_bytes(file_id: str) -> bytes:
-    buf = io.BytesIO()
-    request = _get_drive().files().get_media(fileId=file_id, supportsAllDrives=True)
-    downloader = MediaIoBaseDownload(buf, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    buf.seek(0)
-    return buf.read()
+    records = ws.get_all_records()
+    row_idx = None
+    last_used = 0
+    for i, r in enumerate(records, start=2):
+        if (str(r.get("Project")).upper() == project_code.upper() and
+            str(r.get("Location")).upper() == location_code.upper() and
+            str(r.get("Type")).upper() == type_code.upper()):
+            row_idx = i
+            try:
+                last_used = int(r.get("LastUsed", 0))
+            except Exception:
+                last_used = 0
+            break
 
-CITY_MAP = {"Jeddah": "(JED)", "Riyadh": "(RUH)", "Taif": "(TIF)", "Madinah": "(MED)"}
+    next_val = last_used + 1
+    if row_idx is None:
+        ws.append_row([project_code.upper(), location_code.upper(), type_code.upper(), next_val])
+    else:
+        ws.update_cell(row_idx, 4, next_val)
 
-def city_folder_name(code: str) -> str:
-    if not code:
-        return "Unknown"
-    return CITY_MAP.get(code.upper(), f"{code.upper()} ({code.upper()})")
+    return next_val
 
-def ensure_drive_subfolder(root_id: str, path_parts: list[str], drive_cli=None) -> str:
-    cli = drive_cli or _get_drive()
-    parent = root_id
-    for part in path_parts:
-        q = (
-            f"'{parent}' in parents and name='{part}' "
-            "and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        )
-        res = cli.files().list(q=q, spaces="drive", fields="files(id,name)", supportsAllDrives=True).execute()
-        items = res.get("files", [])
-        if items:
-            parent = items[0]["id"]
-        else:
-            meta = {"name": part, "mimeType": "application/vnd.google-apps.folder", "parents": [parent]}
-            newf = cli.files().create(body=meta, fields="id", supportsAllDrives=True).execute()
-            parent = newf["id"]
-    return parent
+def build_compliant_filename(*, office: str, city_text: str, action: str, serial: str, when: datetime, order_no: int) -> str:
+    proj = project_code_from_office(office)
+    loc  = location_code_for_filename(city_text)
+    typ  = type_code_from_action(action)
+    sn   = re.sub(r"[^A-Z0-9]", "", (serial or "").upper())
+    return f"{proj}-{loc}-{typ}-{sn}-{order_no:04d}-{when.strftime('%Y%m%d')}.pdf"
 
-def move_drive_file(file_id: str, office: str, city_code: str, action: str, decision: str):
-    drive_cli = _get_drive()
-    root_id = st.secrets.get("drive", {}).get("approvals", "")
-    city_folder = city_folder_name(city_code)
-    path_parts = [office or "Head Office (HO)", city_folder, action, decision]
-    new_folder_id = ensure_drive_subfolder(root_id, path_parts, drive_cli)
-    file = drive_cli.files().get(fileId=file_id, fields="parents", supportsAllDrives=True).execute()
-    prev_parents = ",".join(file.get("parents", []))
-    drive_cli.files().update(
-        fileId=file_id,
-        addParents=new_folder_id,
-        removeParents=prev_parents,
-        fields="id, parents",
-        supportsAllDrives=True,
-    ).execute()
 
-def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_code: str, action: str) -> Tuple[str, str]:
+# =========================
+# Drive upload helper (UPDATED)
+# =========================
+def upload_pdf_and_get_link(uploaded_file, *, office: str, city_text: str, action: str, serial: str, status: str = "Pending") -> Tuple[str, str, int, str]:
     if uploaded_file is None:
         st.error("No file selected.")
-        return "", ""
+        return "", "", 0, ""
+
     try:
         data = uploaded_file.getvalue()
     except Exception as e:
-        st.error(f"Failed reading the uploaded file: {e}")
-        return "", ""
+        st.error(f"Failed reading uploaded file: {e}")
+        return "", "", 0, ""
     if not data:
         st.error("Uploaded file is empty.")
-        return "", ""
-    if data[:4] != b"%PDF":
-        st.warning("File doesn't start with %PDF header — continuing.")
+        return "", "", 0, ""
+
+    drive_cli = _get_drive()
+    root_id = st.secrets.get("drive", {}).get("approvals", "")
+    if not root_id:
+        st.error("Drive approvals folder not configured in secrets.")
+        return "", "", 0, ""
+
+    project_folder = project_folder_label(office or "Head Office (HO)")
+    location_folder = location_folder_label(city_text)
+    action_folder = type_folder_from_action(action)
+    status_folder = (status or "Pending").title()
+
+    folder_id = ensure_drive_subfolder(root_id, [project_folder, location_folder, action_folder, status_folder], drive_cli)
+
+    proj_code = project_code_from_office(office or "Head Office (HO)")
+    loc_code  = location_code_for_filename(city_text)
+    type_code = type_code_from_action(action)
+    order_no  = get_next_order_number(proj_code, loc_code, type_code)
+
+    now = datetime.now()
+    filename = build_compliant_filename(
+        office=office or "Head Office (HO)",
+        city_text=city_text,
+        action=action,
+        serial=serial,
+        when=now,
+        order_no=order_no,
+    )
+
+    meta = {"name": filename, "parents": [folder_id], "mimeType": "application/pdf"}
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
     try:
-        drive_cli = _get_drive()
-        root_id = st.secrets.get("drive", {}).get("approvals", "")
-        if not root_id:
-            st.error("Drive approvals folder not configured in secrets.")
-            return "", ""
-        city_folder = city_folder_name(city_code)
-        folder_id = ensure_drive_subfolder(root_id, [office or "Head Office (HO)", city_folder, action, "Pending"], drive_cli)
-        today = datetime.now().strftime("%Y%m%d")
-        meta = {"name": f"{prefix}_{today}.pdf", "parents": [folder_id], "mimeType": "application/pdf"}
-        media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
         file = drive_cli.files().create(
             body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
         ).execute()
-    except HttpError as e:
-        if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
-            if not ALLOW_OAUTH_FALLBACK:
-                st.error("Service Account quota exceeded and OAuth fallback disabled.")
-                return "", ""
-            try:
-                drive_cli = _get_user_drive()
-                file = drive_cli.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
-            except Exception as e2:
-                st.error(f"OAuth upload failed: {e2}")
-                return "", ""
-        else:
-            st.error(f"Drive upload failed: {e}")
-            return "", ""
     except Exception as e:
-        st.error(f"Unexpected error uploading to Drive: {e}")
-        return "", ""
+        st.error(f"Drive upload failed: {e}")
+        return "", "", 0, ""
+
     file_id = file.get("id", "")
     link = file.get("webViewLink", "")
-    if not file_id:
-        st.error("Drive did not return a file id.")
-        return "", ""
-    try:
-        if st.secrets.get("drive", {}).get("public", True):
-            _drive_make_public(file_id, drive_client=drive_cli)
-    except Exception:
-        pass
-    return link, file_id
+    return link, file_id, order_no, filename
 
 # =========================
 # Sheets helpers
@@ -955,100 +958,27 @@ def register_device_tab():
     emp_df = read_worksheet(EMPLOYEE_WS)
     employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
     owner_options = [UNASSIGNED_LABEL] + employee_names
-    st.selectbox(
-        "Current owner (at registration)",
-        owner_options,
-        index=owner_options.index(st.session_state["current_owner"])
-        if st.session_state["current_owner"] in owner_options
-        else 0,
-        key="current_owner",
-        on_change=_owner_changed,
-        args=(emp_df,),
-    )
+    st.selectbox("Current owner (at registration)", owner_options, key="current_owner")
+
     with st.form("register_device", clear_on_submit=False):
-        r1c1, r1c2, r1c3 = st.columns(3)
-        with r1c1:
-            st.text_input("Serial Number *", key="reg_serial")
-        with r1c2:
-            st.text_input("Device Type *", key="reg_device")
-        with r1c3:
-            st.text_input("Brand", key="reg_brand")
-        r2c1, r2c2, r2c3 = st.columns(3)
-        with r2c1:
-            st.text_input("Model", key="reg_model")
-        with r2c2:
-            st.text_input("CPU", key="reg_cpu")
-        with r2c3:
-            st.text_input("Memory", key="reg_mem")
-        r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1:
-            st.text_input("Hard Drive 1", key="reg_hdd1")
-        with r3c2:
-            st.text_input("Hard Drive 2", key="reg_hdd2")
-        with r3c3:
-            st.text_input("GPU", key="reg_gpu")
-        r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1:
-            st.text_input("Screen Size", key="reg_screen")
-        with r4c2:
-            st.text_input("Email Address", key="reg_email")
-        with r4c3:
-            st.text_input("Contact Number", key="reg_contact")
-        r5c1, r5c2, r5c3 = st.columns(3)
-        with r5c1:
-            st.text_input("Department", key="reg_dept")
-        with r5c2:
-            st.text_input("Location", key="reg_location")
-        with r5c3:
-            st.text_input("Office", key="reg_office")
+        st.text_input("Serial Number *", key="reg_serial")
+        st.text_input("Device Type *", key="reg_device")
+        st.text_input("Brand", key="reg_brand")
+        st.text_input("Model", key="reg_model")
+        st.text_input("CPU", key="reg_cpu")
+        st.text_input("Memory", key="reg_mem")
+        st.text_input("Hard Drive 1", key="reg_hdd1")
+        st.text_input("Hard Drive 2", key="reg_hdd2")
+        st.text_input("GPU", key="reg_gpu")
+        st.text_input("Screen Size", key="reg_screen")
+        st.text_input("Email Address", key="reg_email")
+        st.text_input("Contact Number", key="reg_contact")
+        st.text_input("Department", key="reg_dept")
+        st.text_input("Location", key="reg_location")
+        st.text_input("Office", key="reg_office")
         st.text_area("Notes", height=80, key="reg_notes")
-        st.divider()
         pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf")
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            download_btn = st.form_submit_button("📄 Download Prefilled PDF")
-        with c2:
-            submitted = st.form_submit_button("💾 Save Device", type="primary")
-
-    def build_row(now_str, actor):
-        return {
-            "Serial Number": st.session_state.get("reg_serial", "").strip(),
-            "Device Type": st.session_state.get("reg_device", "").strip(),
-            "Brand": st.session_state.get("reg_brand", "").strip(),
-            "Model": st.session_state.get("reg_model", "").strip(),
-            "CPU": st.session_state.get("reg_cpu", "").strip(),
-            "Hard Drive 1": st.session_state.get("reg_hdd1", "").strip(),
-            "Hard Drive 2": st.session_state.get("reg_hdd2", "").strip(),
-            "Memory": st.session_state.get("reg_mem", "").strip(),
-            "GPU": st.session_state.get("reg_gpu", "").strip(),
-            "Screen Size": st.session_state.get("reg_screen", "").strip(),
-            "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-            "Department": st.session_state.get("reg_dept", "").strip(),
-            "Email Address": st.session_state.get("reg_email", "").strip(),
-            "Contact Number": st.session_state.get("reg_contact", "").strip(),
-            "Location": st.session_state.get("reg_location", "").strip(),
-            "Office": st.session_state.get("reg_office", "").strip(),
-            "Notes": st.session_state.get("reg_notes", "").strip(),
-            "Date issued": now_str,
-            "Registered by": actor,
-        }
-
-    if download_btn:
-        serial = st.session_state.get("reg_serial", "")
-        device = st.session_state.get("reg_device", "")
-        if not serial or not device:
-            st.error("Serial and Device Type required.")
-        else:
-            now_str = datetime.now().strftime(DATE_FMT)
-            actor = st.session_state.get("username", "")
-            row = build_row(now_str, actor)
-            tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
-            if not tpl_bytes:
-                st.error("Could not load ICT Registration PDF template.")
-            else:
-                reg_vals = build_registration_values(row, actor_name=actor, emp_df=emp_df)
-                filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
-                st.download_button("⬇️ Download ICT Registration Form", data=filled, file_name=_ict_filename(serial))
+        submitted = st.form_submit_button("💾 Save Device", type="primary")
 
     if submitted:
         serial = st.session_state.get("reg_serial", "")
@@ -1056,24 +986,37 @@ def register_device_tab():
         if not serial or not device:
             st.error("Serial Number and Device Type are required.")
             return
-        inv_df = read_worksheet(INVENTORY_WS)
-        pending_df = read_worksheet(PENDING_DEVICE_WS)
-        if serial in inv_df.get("Serial Number", []).tolist() or serial in pending_df.get("Serial Number", []).tolist():
-            st.error(f"Serial {serial} already exists in Inventory or Pending.")
-            return
-        pdf_file_obj = pdf_file or st.session_state.get("reg_pdf")
-        if pdf_file_obj is None:
-            st.error("Signed ICT Registration PDF is required.")
-            return
         now_str = datetime.now().strftime(DATE_FMT)
         actor = st.session_state.get("username", "")
-        row = build_row(now_str, actor)
-        link, fid = upload_pdf_and_get_link(
+        row = {
+            "Serial Number": serial,
+            "Device Type": device,
+            "Brand": st.session_state.get("reg_brand", ""),
+            "Model": st.session_state.get("reg_model", ""),
+            "CPU": st.session_state.get("reg_cpu", ""),
+            "Hard Drive 1": st.session_state.get("reg_hdd1", ""),
+            "Hard Drive 2": st.session_state.get("reg_hdd2", ""),
+            "Memory": st.session_state.get("reg_mem", ""),
+            "GPU": st.session_state.get("reg_gpu", ""),
+            "Screen Size": st.session_state.get("reg_screen", ""),
+            "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL),
+            "Department": st.session_state.get("reg_dept", ""),
+            "Email Address": st.session_state.get("reg_email", ""),
+            "Contact Number": st.session_state.get("reg_contact", ""),
+            "Location": st.session_state.get("reg_location", ""),
+            "Office": st.session_state.get("reg_office", ""),
+            "Notes": st.session_state.get("reg_notes", ""),
+            "Date issued": now_str,
+            "Registered by": actor,
+        }
+        pdf_file_obj = pdf_file or st.session_state.get("reg_pdf")
+        link, fid, order_no, fname = upload_pdf_and_get_link(
             pdf_file_obj,
-            prefix=f"device_{normalize_serial(serial)}",
-            office="Head Office (HO)",
-            city_code=row.get("Location", ""),
+            office=row.get("Office", "Head Office (HO)"),
+            city_text=row.get("Location", ""),
             action="Register",
+            serial=row.get("Serial Number", ""),
+            status="Pending",
         )
         if not fid:
             return
@@ -1082,6 +1025,7 @@ def register_device_tab():
             "Approval Status": "Pending",
             "Approval PDF": link,
             "Approval File ID": fid,
+            ORDER_NO_COL: f"{order_no:04d}",
             "Submitted by": actor,
             "Submitted at": now_str,
             "Approver": "",
@@ -1103,56 +1047,30 @@ def transfer_tab():
         serial = st.selectbox("Select Serial Number", serials, key="trf_serial")
         new_owner = st.selectbox("Select New Owner", employees, key="trf_new_owner")
         pdf_file = st.file_uploader("Upload signed transfer PDF", type=["pdf"], key="trf_pdf")
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            dl = st.form_submit_button("📄 Download Prefilled Transfer PDF")
-        with c2:
-            submitted = st.form_submit_button("💾 Submit Transfer Request", type="primary")
-    if dl:
-        if not serial or not new_owner:
-            st.error("Serial number and new owner are required.")
-        else:
-            row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
-            transfer_vals = build_transfer_pdf_values(row, new_owner, emp_df)
-            field_map = _transfer_field_map()
-            mapped_vals = {field_map[k]: v for k, v in transfer_vals.items() if k in field_map}
-            tpl_bytes = _download_template_bytes_or_public(TRANSFER_TEMPLATE_FILE_ID)
-            if not tpl_bytes:
-                st.error("Could not load transfer PDF template.")
-            else:
-                pdf_bytes = fill_pdf_form(tpl_bytes, mapped_vals)
-                st.download_button(
-                    "📥 Download Prefilled Transfer PDF",
-                    data=pdf_bytes,
-                    file_name=_transfer_filename(serial),
-                    mime="application/pdf",
-                )
+        submitted = st.form_submit_button("💾 Submit Transfer Request", type="primary")
+
     if submitted:
-        if not serial or not new_owner:
-            st.error("Serial number and new owner required.")
-            return
-        if pdf_file is None:
-            st.error("Signed ICT Transfer PDF is required.")
-            return
         row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
         now_str = datetime.now().strftime(DATE_FMT)
         actor = st.session_state.get("username", "")
-        link, fid = upload_pdf_and_get_link(
+        link, fid, order_no, fname = upload_pdf_and_get_link(
             pdf_file,
-            prefix=f"transfer_{normalize_serial(serial)}",
             office=row.get("Office", ""),
-            city_code=row.get("Location", ""),
+            city_text=row.get("Location", ""),
             action="Transfer",
+            serial=row.get("Serial Number", ""),
+            status="Pending",
         )
         if not fid:
             return
         pending = {
             **row,
-            "From owner": row.get("Current user", ""),  # include actual current owner
+            "From owner": row.get("Current user", ""),
             "To owner": new_owner,
             "Approval Status": "Pending",
             "Approval PDF": link,
             "Approval File ID": fid,
+            ORDER_NO_COL: f"{order_no:04d}",
             "Submitted by": actor,
             "Submitted at": now_str,
             "Approver": "",
