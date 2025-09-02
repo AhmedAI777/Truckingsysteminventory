@@ -1459,6 +1459,28 @@ def export_tab():
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
+# =========================
+# App
+# =========================
+def _config_check_ui():
+    """Check that service account and spreadsheet access are working."""
+    try:
+        sa = _load_sa_info()
+        sa_email = sa.get("client_email", "(unknown)")
+        st.caption(f"🔑 Service Account: {sa_email}")
+    except Exception as e:
+        st.error("❌ Google Service Account credentials missing.")
+        st.code(str(e))
+        st.stop()
+
+    try:
+        _ = get_sh()  # try open spreadsheet
+    except Exception as e:
+        st.error("❌ Cannot open spreadsheet with Service Account.")
+        st.code(str(e))
+        st.stop()
+
+
 def run_app():
     render_header()
     _config_check_ui()
