@@ -290,6 +290,64 @@ def get_sh():
 # =========================
 # Drive helpers
 # =========================
+
+# =========================
+# Drive helpers (additions)
+# =========================
+def city_folder_name(city_val: str) -> str:
+    """
+    Normalize the city/location value into a stable folder name.
+    Keep it human-readable; sanitize whitespace.
+    """
+    s = str(city_val or "").strip()
+    if not s:
+        return "Unknown"
+    return re.sub(r"\s+", " ", s)
+
+def ensure_drive_subfolder(parent_id: str, parts: list[str], drive_cli=None) -> str:
+    """
+    Ensure a nested set of subfolders exists under `parent_id`.
+    Returns the final leaf folder id.
+    Works in My Drive and Shared Drives.
+    """
+    drive = drive_cli or _get_drive()
+    current = parent_id
+    for raw in parts:
+        name = (str(raw or "").strip()) or "Unknown"
+        # Find existing folder
+        # NOTE: escape single quotes in the name used in query
+        q_name = name.replace("'", "\\'")
+        q = (
+            f"mimeType='application/vnd.google-apps.folder' "
+            f"and name='{q_name}' and '{current}' in parents and trashed=false"
+        )
+        resp = drive.files().list(
+            q=q,
+            spaces="drive",
+            fields="files(id,name)",
+            corpora="allDrives",
+            includeItemsFromAllDrives=True,
+            supportsAllDrives=True,
+        ).execute()
+        files = resp.get("files", []) or []
+        if files:
+            current = files[0]["id"]
+            continue
+        # Create if not found
+        meta = {
+            "name": name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [current],
+        }
+        newf = drive.files().create(
+            body=meta,
+            fields="id",
+            supportsAllDrives=True,
+        ).execute()
+        current = newf["id"]
+    return current
+
+
 def _drive_make_public(file_id: str, drive_client=None):
     try:
         cli = drive_client or _get_drive()
@@ -446,14 +504,8 @@ def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_cod
                     _drive_make_public(file_id, drive_client=drive_user)
     except Exception:
         pass
-
-    return upload_pdf_and_get_link(
-        uploaded_file,
-        prefix=prefix,
-        office=office,
-        city_code=city_code,
-        action=action,
-    )
+        
+        return link, file_id
 
 
 # =========================
