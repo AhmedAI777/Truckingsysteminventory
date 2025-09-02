@@ -1428,11 +1428,12 @@ def export_tab():
     choice = st.selectbox("Select sheet to export", list(sheets.keys()))
     if not choice:
         return
+
     df = read_worksheet(sheets[choice])
 
-    # ✅ Always include Order Number column if missing
-    if "Order Number" not in df.columns:
-        df["Order Number"] = ""
+    # ✅ Remove "Order Number" for Employees export (not relevant there)
+    if choice == "Employees" and "Order Number" in df.columns:
+        df = df.drop(columns=["Order Number"])
 
     if df.empty:
         st.info("No data available to export.")
@@ -1457,7 +1458,6 @@ def export_tab():
         file_name=f"{choice.replace(' ', '_').lower()}_{datetime.now().strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
-
 
 def run_app():
     render_header()
