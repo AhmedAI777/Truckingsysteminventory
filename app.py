@@ -1,6 +1,4 @@
-Got it 👍 — since the file is long, I’ll split your **entire fixed `app.py`** into chunks so you can review it properly. Let’s start with **Part 1/3** (imports, constants, authentication, Google API helpers, counter + filename helpers).
 
----
 
 # 🔹 app.py (Part 1/3)
 
