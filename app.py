@@ -959,20 +959,18 @@ def employee_register_tab():
         if not name.strip() or not emp_id.strip():
             st.error("Name and Employee ID are required.")
             return
-        new_row = pd.DataFrame([
-            {
-                "Name": name.strip(),
-                "Email": email.strip(),
-                "APLUS": emp_id.strip(),
-                "Active": "Yes",
-                "Position": position.strip(),
-                "Department": dept.strip(),
-                "Location (KSA)": loc.strip(),
-                "Project": proj.strip(),
-                "Microsoft Teams": teams.strip(),
-                "Mobile Number": mobile.strip(),
-            }
-        ])
+        new_row = pd.DataFrame([{
+            "Name": name.strip(),
+            "Email": email.strip(),
+            "APLUS": emp_id.strip(),
+            "Active": "Yes",
+            "Position": position.strip(),
+            "Department": dept.strip(),
+            "Location (KSA)": loc.strip(),
+            "Project": proj.strip(),
+            "Microsoft Teams": teams.strip(),
+            "Mobile Number": mobile.strip(),
+        }])
         append_to_worksheet(EMPLOYEE_WS, new_row)
         st.success(f"✅ Employee '{name}' registered.")
 
@@ -1044,9 +1042,9 @@ def register_device_tab():
 
         c1, c2 = st.columns([1, 1])
         with c1:
-            prefill = st.form_submit_button("📄 Download Prefilled PDF")
+            prefill = st.form_submit_button("📄 Download Prefilled PDF", key="reg_prefill_btn")
         with c2:
-            submitted = st.form_submit_button("💾 Save Device", type="primary")
+            submitted = st.form_submit_button("💾 Save Device", type="primary", key="reg_save_btn")
 
     def _build_reg_row(now_str: str, actor: str) -> dict:
         return {
@@ -1078,25 +1076,27 @@ def register_device_tab():
         city = st.session_state.get("reg_location", "")
         if not serial or not device_type:
             st.error("Serial Number and Device Type required.")
-        else:
-            # Reserve number + filename
-            order_no, filename = reserve_and_build_filename(serial, office, city, "Register")
-            # Fill the PDF from template
-            tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
-            if not tpl_bytes:
-                st.error("Could not load ICT Registration PDF template.")
-            else:
-                now_str = datetime.now().strftime(DATE_FMT)
-                actor = st.session_state.get("username", "")
-                reg_vals = build_registration_values(_build_reg_row(now_str, actor), actor_name=actor, emp_df=emp_df)
-                pdf_bytes = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
-                st.download_button(
-                    "⬇️ Download ICT Registration Form",
-                    data=pdf_bytes,
-                    file_name=filename,
-                    mime="application/pdf",
-                    key="reg_prefill_download",
-                )
+            st.stop()
+        # Reserve number + filename (SHEETS only)
+        order_no, filename = reserve_and_build_filename(serial, office, city, "Register")
+        # Fill the PDF from template (LOCAL)
+        tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
+        if not tpl_bytes:
+            st.error("Could not load ICT Registration PDF template.")
+            st.stop()
+        now_str = datetime.now().strftime(DATE_FMT)
+        actor = st.session_state.get("username", "")
+        reg_vals = build_registration_values(_build_reg_row(now_str, actor), actor_name=actor, emp_df=emp_df)
+        pdf_bytes = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
+        st.download_button(
+            "⬇️ Download ICT Registration Form",
+            data=pdf_bytes,
+            file_name=filename,
+            mime="application/pdf",
+            key="reg_prefill_download",
+        )
+        st.info(f"Reserved Order: {order_no:04d} — {filename}")
+        st.stop()  # IMPORTANT: prevent falling through to upload
 
     if submitted:
         serial = st.session_state.get("reg_serial_input", "")
@@ -1136,7 +1136,6 @@ def register_device_tab():
 
 # =========================
 # Transfer Device Tab (fixed)
-
 # =========================
 def transfer_tab():
     st.subheader("🔄 Device Transfer")
@@ -1154,35 +1153,36 @@ def transfer_tab():
         pdf_file = st.file_uploader("Upload signed transfer PDF", type=["pdf"], key="trf_pdf_upload")
         c1, c2 = st.columns([1, 1])
         with c1:
-            dl = st.form_submit_button("📄 Download Prefilled Transfer PDF")
+            dl = st.form_submit_button("📄 Download Prefilled Transfer PDF", key="trf_prefill_btn")
         with c2:
-            submitted = st.form_submit_button("💾 Submit Transfer Request", type="primary")
+            submitted = st.form_submit_button("💾 Submit Transfer Request", type="primary", key="trf_save_btn")
 
     if dl:
         if not serial or not new_owner:
             st.error("Serial number and new owner are required.")
-        else:
-            row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
-            # Reserve number + filename
-            office = row.get("Office", "Head Office (HO)")
-            city = row.get("Location", "")
-            order_no, filename = reserve_and_build_filename(serial, office, city, "Transfer")
-            # Fill PDF
-            transfer_vals = build_transfer_pdf_values(row, new_owner, emp_df)
-            field_map = _transfer_field_map()
-            mapped_vals = {field_map[k]: v for k, v in transfer_vals.items() if k in field_map}
-            tpl_bytes = _download_template_bytes_or_public(TRANSFER_TEMPLATE_FILE_ID)
-            if not tpl_bytes:
-                st.error("Could not load transfer PDF template.")
-            else:
-                pdf_bytes = fill_pdf_form(tpl_bytes, mapped_vals)
-                st.download_button(
-                    "📥 Download Prefilled Transfer PDF",
-                    data=pdf_bytes,
-                    file_name=filename,
-                    mime="application/pdf",
-                    key="trf_prefill_download",
-                )
+            st.stop()
+        row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
+        office = row.get("Office", "Head Office (HO)")
+        city = row.get("Location", "")
+        order_no, filename = reserve_and_build_filename(serial, office, city, "Transfer")
+        # Fill Transfer PDF locally
+        transfer_vals = build_transfer_pdf_values(row, new_owner, emp_df)
+        field_map = _transfer_field_map()
+        mapped_vals = {field_map[k]: v for k, v in transfer_vals.items() if k in field_map}
+        tpl_bytes = _download_template_bytes_or_public(TRANSFER_TEMPLATE_FILE_ID)
+        if not tpl_bytes:
+            st.error("Could not load transfer PDF template.")
+            st.stop()
+        pdf_bytes = fill_pdf_form(tpl_bytes, mapped_vals)
+        st.download_button(
+            "📥 Download Prefilled Transfer PDF",
+            data=pdf_bytes,
+            file_name=filename,
+            mime="application/pdf",
+            key="trf_prefill_download",
+        )
+        st.info(f"Reserved Order: {order_no:04d} — {filename}")
+        st.stop()  # prevent falling through to upload
 
     if submitted:
         if not serial or not new_owner:
@@ -1223,7 +1223,6 @@ def transfer_tab():
 # =========================
 # Approvals Tab (aligned with Order Number)
 # =========================
-
 def approvals_tab():
     st.subheader("✅ Approvals")
 
@@ -1283,11 +1282,9 @@ def approvals_tab():
                         _reject_row(PENDING_TRANSFER_WS, row)
                         st.rerun()
 
-
 # =========================
 # Export Tab (includes Order Number)
 # =========================
-
 def export_tab():
     st.subheader("⬇️ Export Data")
     sheets = {
@@ -1312,7 +1309,7 @@ def export_tab():
         mime="text/csv",
     )
 
-    # Optional Excel export (if xlsxwriter is installed in your env)
+    # Optional Excel export
     try:
         import io
         with pd.ExcelWriter(io.BytesIO(), engine="xlsxwriter") as writer:
@@ -1327,14 +1324,11 @@ def export_tab():
     except Exception:
         st.caption("(Excel export unavailable; ensure xlsxwriter is installed.)")
 
-
 # =========================
 # App Runner (tabs aligned with new flow)
 # =========================
-
 def run_app():
     render_header()
-    tabs = None
     role = st.session_state.get("role", "Staff")
     if role == "Admin":
         tabs = st.tabs([
@@ -1347,37 +1341,20 @@ def run_app():
             "✅ Approvals",
             "⬇️ Export",
         ])
-        with tabs[0]:
-            employee_register_tab()
-        with tabs[1]:
-            employees_view_tab()
-        with tabs[2]:
-            register_device_tab()
-        with tabs[3]:
-            inventory_tab()
-        with tabs[4]:
-            transfer_tab()
-        with tabs[5]:
-            history_tab()
-        with tabs[6]:
-            approvals_tab()
-        with tabs[7]:
-            export_tab()
+        with tabs[0]: employee_register_tab()
+        with tabs[1]: employees_view_tab()
+        with tabs[2]: register_device_tab()
+        with tabs[3]: inventory_tab()
+        with tabs[4]: transfer_tab()
+        with tabs[5]: history_tab()
+        with tabs[6]: approvals_tab()
+        with tabs[7]: export_tab()
     else:
-        tabs = st.tabs([
-            "📝 Register Device",
-            "🔁 Transfer Device",
-            "📋 View Inventory",
-            "📜 Transfer Log",
-        ])
-        with tabs[0]:
-            register_device_tab()
-        with tabs[1]:
-            transfer_tab()
-        with tabs[2]:
-            inventory_tab()
-        with tabs[3]:
-            history_tab()
+        tabs = st.tabs(["📝 Register Device","🔁 Transfer Device","📋 View Inventory","📜 Transfer Log"])
+        with tabs[0]: register_device_tab()
+        with tabs[1]: transfer_tab()
+        with tabs[2]: inventory_tab()
+        with tabs[3]: history_tab()
             
 # =========================
 # Entry
