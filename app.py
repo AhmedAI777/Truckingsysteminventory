@@ -78,6 +78,95 @@ def get_sh():
     return _get_gc().open_by_url(SHEET_URL_DEFAULT)
 
 # =========================
+# Auth (cookie)
+# =========================
+def _load_users_from_secrets():
+    cfg = st.secrets.get("auth", {}).get("users", [])
+    return {u["username"]: {"password": u.get("password", ""), "role": u.get("role", "Staff")} for u in cfg}
+
+USERS = _load_users_from_secrets()
+
+def _verify_password(raw: str, stored: str) -> bool:
+    return hmac.compare_digest(str(stored), str(raw))
+
+def _cookie_keys() -> list[str]:
+    keys = [st.secrets.get("auth", {}).get("cookie_key", "")]
+    keys += st.secrets.get("auth", {}).get("legacy_cookie_keys", [])
+    return [k for k in keys if k]
+
+def _sign(raw: bytes, *, key: str | None = None) -> str:
+    use = key or st.secrets.get("auth", {}).get("cookie_key", "")
+    return hmac.new(use.encode(), raw, hashlib.sha256).hexdigest()
+
+def _verify_sig(sig: str, raw: bytes) -> bool:
+    for k in _cookie_keys():
+        if hmac.compare_digest(sig, _sign(raw, key=k)):
+            return True
+    return False
+
+def _issue_session_cookie(username: str, role: str):
+    iat = int(time.time())
+    exp = iat + (SESSION_TTL_SECONDS if SESSION_TTL_SECONDS > 0 else 0)
+    payload = {"u": username, "r": role, "iat": iat, "exp": exp, "v": 1}
+    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
+    COOKIE_MGR.set(
+        COOKIE_NAME, token,
+        expires_at=(datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS)) if SESSION_TTL_SECONDS > 0 else None,
+        secure=st.secrets.get("auth", {}).get("cookie_secure", True),
+    )
+
+def _read_cookie():
+    token = COOKIE_MGR.get(COOKIE_NAME)
+    if not token:
+        return None
+    try:
+        data_b64, sig = token.split(".", 1)
+        raw = base64.urlsafe_b64decode(data_b64.encode())
+        if not _verify_sig(sig, raw):
+            COOKIE_MGR.delete(COOKIE_NAME)
+            return None
+        payload = json.loads(raw.decode())
+        exp = int(payload.get("exp", 0))
+        now = int(time.time())
+        if exp and now > exp:
+            COOKIE_MGR.delete(COOKIE_NAME)
+            return None
+        return payload
+    except Exception:
+        COOKIE_MGR.delete(COOKIE_NAME)
+        return None
+
+def do_login(username: str, role: str):
+    st.session_state.authenticated = True
+    st.session_state.username = username
+    st.session_state.role = role
+    st.session_state.just_logged_out = False
+    _issue_session_cookie(username, role)
+    st.rerun()
+
+def do_logout():
+    try:
+        COOKIE_MGR.delete(COOKIE_NAME)
+        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1))
+    except Exception:
+        pass
+    for k in ["authenticated", "role", "username"]:
+        st.session_state.pop(k, None)
+    st.session_state.just_logged_out = True
+    st.rerun()
+
+# Optional: harmless bootstrap to ensure CookieManager is initialized
+if "cookie_bootstrapped" not in st.session_state:
+    st.session_state.cookie_bootstrapped = True
+    try:
+        _ = COOKIE_MGR.get_all()
+        st.rerun()
+    except Exception:
+        pass
+
+
+# =========================
 # Counter + Filename Helpers
 # =========================
 CITY_MAP = {"Jeddah": "(JED)", "Riyadh": "(RUH)", "Taif": "(TIF)", "Madinah": "(MED)"}
@@ -1062,95 +1151,6 @@ def run_app():
             inventory_tab()
         with tabs[3]:
             history_tab()
-
-# =========================
-# Auth (cookie)
-# =========================
-def _load_users_from_secrets():
-    cfg = st.secrets.get("auth", {}).get("users", [])
-    return {u["username"]: {"password": u.get("password", ""), "role": u.get("role", "Staff")} for u in cfg}
-
-USERS = _load_users_from_secrets()
-
-def _verify_password(raw: str, stored: str) -> bool:
-    return hmac.compare_digest(str(stored), str(raw))
-
-def _cookie_keys() -> list[str]:
-    keys = [st.secrets.get("auth", {}).get("cookie_key", "")]
-    keys += st.secrets.get("auth", {}).get("legacy_cookie_keys", [])
-    return [k for k in keys if k]
-
-def _sign(raw: bytes, *, key: str | None = None) -> str:
-    use = key or st.secrets.get("auth", {}).get("cookie_key", "")
-    return hmac.new(use.encode(), raw, hashlib.sha256).hexdigest()
-
-def _verify_sig(sig: str, raw: bytes) -> bool:
-    for k in _cookie_keys():
-        if hmac.compare_digest(sig, _sign(raw, key=k)):
-            return True
-    return False
-
-def _issue_session_cookie(username: str, role: str):
-    iat = int(time.time())
-    exp = iat + (SESSION_TTL_SECONDS if SESSION_TTL_SECONDS > 0 else 0)
-    payload = {"u": username, "r": role, "iat": iat, "exp": exp, "v": 1}
-    raw = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
-    token = base64.urlsafe_b64encode(raw).decode() + "." + _sign(raw)
-    COOKIE_MGR.set(
-        COOKIE_NAME, token,
-        expires_at=(datetime.utcnow() + timedelta(seconds=SESSION_TTL_SECONDS)) if SESSION_TTL_SECONDS > 0 else None,
-        secure=st.secrets.get("auth", {}).get("cookie_secure", True),
-    )
-
-def _read_cookie():
-    token = COOKIE_MGR.get(COOKIE_NAME)
-    if not token:
-        return None
-    try:
-        data_b64, sig = token.split(".", 1)
-        raw = base64.urlsafe_b64decode(data_b64.encode())
-        if not _verify_sig(sig, raw):
-            COOKIE_MGR.delete(COOKIE_NAME)
-            return None
-        payload = json.loads(raw.decode())
-        exp = int(payload.get("exp", 0))
-        now = int(time.time())
-        if exp and now > exp:
-            COOKIE_MGR.delete(COOKIE_NAME)
-            return None
-        return payload
-    except Exception:
-        COOKIE_MGR.delete(COOKIE_NAME)
-        return None
-
-def do_login(username: str, role: str):
-    st.session_state.authenticated = True
-    st.session_state.username = username
-    st.session_state.role = role
-    st.session_state.just_logged_out = False
-    _issue_session_cookie(username, role)
-    st.rerun()
-
-def do_logout():
-    try:
-        COOKIE_MGR.delete(COOKIE_NAME)
-        COOKIE_MGR.set(COOKIE_NAME, "", expires_at=datetime.utcnow() - timedelta(days=1))
-    except Exception:
-        pass
-    for k in ["authenticated", "role", "username"]:
-        st.session_state.pop(k, None)
-    st.session_state.just_logged_out = True
-    st.rerun()
-
-# Optional: harmless bootstrap to ensure CookieManager is initialized
-if "cookie_bootstrapped" not in st.session_state:
-    st.session_state.cookie_bootstrapped = True
-    try:
-        _ = COOKIE_MGR.get_all()
-        st.rerun()
-    except Exception:
-        pass
-
             
 # =========================
 # Entry
