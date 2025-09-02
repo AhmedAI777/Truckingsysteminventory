@@ -1006,6 +1006,70 @@ def _mark_decision(ws_name: str, row: dict, *, status: str):
     df.loc[idx, "Approver"] = actor
     df.loc[idx, "Decision at"] = now_str
     write_worksheet(ws_name, df)
+
+# =========================
+# UI: Employee Register + Basic Views
+# =========================
+def employee_register_tab():
+    st.subheader("🧑‍💼 Register New Employee")
+    with st.form("employee_register", clear_on_submit=True):
+        name     = st.text_input("Full Name *")
+        emp_id   = st.text_input("Employee ID (APLUS) *")
+        email    = st.text_input("Email")
+        mobile   = st.text_input("Mobile Number")
+        position = st.text_input("Position")
+        dept     = st.text_input("Department")
+        loc      = st.text_input("Location (KSA)")
+        proj     = st.text_input("Project / Office")
+        teams    = st.text_input("Microsoft Teams")
+        submitted = st.form_submit_button("Save Employee", type="primary")
+
+    if submitted:
+        if not name.strip() or not emp_id.strip():
+            st.error("Name and Employee ID are required.")
+            return
+        new_row = pd.DataFrame([{
+            "Name": name.strip(),
+            "Email": email.strip(),
+            "APLUS": emp_id.strip(),
+            "Active": "Yes",
+            "Position": position.strip(),
+            "Department": dept.strip(),
+            "Location (KSA)": loc.strip(),
+            "Project": proj.strip(),
+            "Microsoft Teams": teams.strip(),
+            "Mobile Number": mobile.strip(),
+        }])
+        append_to_worksheet(EMPLOYEE_WS, new_row)
+        st.success(f"✅ Employee '{name}' registered.")
+
+
+def employees_view_tab():
+    st.subheader("📇 Employees (mainlists)")
+    df = read_worksheet(EMPLOYEE_WS)
+    if df.empty:
+        st.info("No employees found.")
+    else:
+        st.dataframe(df.astype(str), use_container_width=True, hide_index=True)
+
+
+def inventory_tab():
+    st.subheader("📋 Inventory")
+    df = read_worksheet(INVENTORY_WS)
+    if df.empty:
+        st.warning("Inventory is empty.")
+    else:
+        st.dataframe(df.astype(str), use_container_width=True, hide_index=True)
+
+
+def history_tab():
+    st.subheader("📜 Transfer Log")
+    df = read_worksheet(TRANSFERLOG_WS)
+    if df.empty:
+        st.info("No transfer history found.")
+    else:
+        st.dataframe(df.astype(str), use_container_width=True, hide_index=True)
+
     
 # =========================
 # UI: Register Device
