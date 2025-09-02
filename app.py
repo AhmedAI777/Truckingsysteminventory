@@ -1365,6 +1365,19 @@ def _config_check_ui():
         st.code(str(e))
         st.stop()
 
+def render_header():
+    c_title, c_user = st.columns([7, 3], gap="small")
+    with c_title:
+        st.markdown(f"### {APP_TITLE}")
+        st.caption(SUBTITLE)
+    with c_user:
+        username = st.session_state.get("username", "—")
+        role = st.session_state.get("role", "—")
+        st.markdown(f"**User:** {username} &nbsp;&nbsp;&nbsp; **Role:** {role}")
+        if st.session_state.get("authenticated") and st.button("Logout"):
+            do_logout()
+    st.markdown("---")
+
 
 def run_app():
     render_header()
