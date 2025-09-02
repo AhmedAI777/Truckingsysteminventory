@@ -4,6 +4,8 @@
 import os, re, io, json, hmac, time, base64, hashlib
 from datetime import datetime, timedelta
 from typing import Tuple
+from PyPDF2 import PdfReader, PdfWriter
+from PyPDF2.generic import NameObject, DictionaryObject, BooleanObject, ArrayObject
 
 import pandas as pd
 import requests
