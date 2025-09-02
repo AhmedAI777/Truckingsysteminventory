@@ -1,8 +1,6 @@
 
 
 # 🔹 app.py (Part 1/3)
-
-```python
 # app.py — Tracking Inventory Management System (Streamlit + Google Sheets/Drive)
 
 import os, re, io, json, hmac, time, base64, hashlib
