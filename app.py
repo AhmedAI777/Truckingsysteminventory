@@ -1,7 +1,8 @@
 # app.py — Tracking Inventory Management System (Streamlit + Google Sheets/Drive)
 # deps: streamlit gspread gspread-dataframe extra-streamlit-components pandas
 #       google-auth google-api-python-client requests PyPDF2 xlsxwriter
-
+import ssl, socket
+from http.client import IncompleteRead
 import os, re, io, json, hmac, time, base64, hashlib
 from datetime import datetime, timedelta
 from typing import Tuple
