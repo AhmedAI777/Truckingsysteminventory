@@ -541,15 +541,7 @@ def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_cod
                     _drive_make_public(file_id, drive_client=drive_user)
     except Exception:
         pass
-
-    # ---- SUCCESS ----
     return link, file_id
-
-
-# Backward-compat alias: some call sites used the old name
-def upload_pdf_and_link(uploaded_file, **kwargs):
-    return upload_pdf_and_get_link(uploaded_file, **kwargs)
-
 
 # =========================
 # Sheets helpers
