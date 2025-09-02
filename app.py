@@ -318,6 +318,50 @@ def _drive_download_bytes(file_id: str) -> bytes:
     buf.seek(0)
     return buf.read()
 
+def _drive_resumable_upload(drive_cli, metadata: dict, data: bytes, *, supports_all_drives: bool) -> dict:
+    """
+    Returns Drive file resource (dict) on success. Raises on hard failure.
+    Uses 5MB chunks, exponential backoff, and retries chunk uploads on transient errors
+    including TLS EOF.
+    """
+    # 5 MB chunks keep connections stable on some hosts
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf",
+                              chunksize=5 * 1024 * 1024, resumable=True)
+    request = drive_cli.files().create(
+        body=metadata, media_body=media, fields="id, webViewLink",
+        supportsAllDrives=supports_all_drives,
+    )
+
+    backoff = 1.0
+    max_backoff = 16.0
+    while True:
+        try:
+            status, resp = request.next_chunk(num_retries=3)
+            if resp is not None:
+                # Upload finished
+                return resp
+            # Optional: you can display progress via status.progress()
+        except (ssl.SSLEOFError, IncompleteRead, socket.error, BrokenPipeError) as e:
+            # Transient transport issue → wait & retry the same chunk
+            time.sleep(backoff)
+            backoff = min(max_backoff, backoff * 2)
+            continue
+        except HttpError as e:
+            # Retry 5xx transient errors; propagate others
+            if e.resp is not None and 500 <= int(e.resp.status) < 600:
+                time.sleep(backoff)
+                backoff = min(max_backoff, backoff * 2)
+                continue
+            raise
+        except Exception:
+            # Unknown error → small backoff and try once more
+            time.sleep(backoff)
+            backoff = min(max_backoff, backoff * 2)
+            # After a couple of generic retries, re-raise
+            # (simple guard)
+            if backoff >= max_backoff:
+                raise
+
 def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
     """Upload PDF to Drive. Try Service Account first; on SA quota exceeded,
     optionally fall back to OAuth user (same folder if possible, else user root).
