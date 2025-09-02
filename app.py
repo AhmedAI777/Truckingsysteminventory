@@ -990,9 +990,9 @@ def register_device_tab():
 
         c1, c2 = st.columns([1, 1])
         with c1:
-            prefill = st.form_submit_button("📄 Download Prefilled PDF", key="reg_prefill_btn")
+            prefill = st.form_submit_button("📄 Download Prefilled PDF")
         with c2:
-            submitted = st.form_submit_button("💾 Save Device", type="primary", key="reg_submit_btn")
+            submitted = st.form_submit_button("💾 Save Device", type="primary")
 
     def _build_reg_row(now_str: str, actor: str) -> dict:
         return {
@@ -1100,9 +1100,9 @@ def transfer_tab():
         pdf_file = st.file_uploader("Upload signed transfer PDF", type=["pdf"], key="trf_pdf_upload")
         c1, c2 = st.columns([1, 1])
         with c1:
-            dl = st.form_submit_button("📄 Download Prefilled Transfer PDF", key="trf_prefill_btn")
+            dl = st.form_submit_button("📄 Download Prefilled Transfer PDF")
         with c2:
-            submitted = st.form_submit_button("💾 Submit Transfer Request", type="primary", key="trf_submit_btn")
+            submitted = st.form_submit_button("💾 Submit Transfer Request", type="primary")
 
     if dl:
         if not serial or not new_owner:
@@ -1324,7 +1324,7 @@ def run_app():
             inventory_tab()
         with tabs[3]:
             history_tab()
-
+            
 # =========================
 # Entry
 # =========================
