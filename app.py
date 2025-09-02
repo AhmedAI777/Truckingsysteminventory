@@ -175,7 +175,7 @@ if "cookie_bootstrapped" not in st.session_state:
     st.rerun()
 
 # =========================
-# Google APIs
+# Google APIs (OAuth optional / soft-fail)
 # =========================
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
@@ -219,45 +219,52 @@ def _get_drive():
 
 @st.cache_resource(show_spinner=False)
 def _get_user_creds():
-    cfg = st.secrets.get("google_oauth", {})
+    """Return OAuth user creds if configured; otherwise None (no hard errors)."""
+    cfg = st.secrets.get("google_oauth", {}) or {}
     token_json = cfg.get("token_json")
+
     if token_json:
         try:
             info = json.loads(token_json)
+            creds = UserCredentials.from_authorized_user_info(info, OAUTH_SCOPES)
+            if not creds.valid and creds.refresh_token:
+                creds.refresh(Request())
+            return creds
         except Exception:
-            info = None
-        if not info:
-            st.error("google_oauth.token_json is not valid JSON.")
-            st.stop()
-        creds = UserCredentials.from_authorized_user_info(info, OAUTH_SCOPES)
-        if not creds.valid and creds.refresh_token:
-            creds.refresh(Request())
-        return creds
+            return None
+
+    # Optional local OAuth for development if explicitly enabled
     if os.environ.get("LOCAL_OAUTH", "0") == "1":
         client_id = cfg.get("client_id")
         client_secret = cfg.get("client_secret")
-        if not client_id or not client_secret:
-            st.error("[google_oauth] client_id/client_secret required for local OAuth.")
-            st.stop()
-        flow = InstalledAppFlow.from_client_config(
-            {
-                "installed": {
-                    "client_id": client_id,
-                    "client_secret": client_secret,
-                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                    "token_uri": "https://oauth2.googleapis.com/token",
-                    "redirect_uris": ["http://localhost"],
-                }
-            },
-            scopes=OAUTH_SCOPES,
-        )
-        return flow.run_local_server(port=0)
-    st.error("OAuth token not configured.")
-    st.stop()
+        if client_id and client_secret:
+            try:
+                flow = InstalledAppFlow.from_client_config(
+                    {
+                        "installed": {
+                            "client_id": client_id,
+                            "client_secret": client_secret,
+                            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                            "token_uri": "https://oauth2.googleapis.com/token",
+                            "redirect_uris": ["http://localhost"],
+                        }
+                    },
+                    scopes=OAUTH_SCOPES,
+                )
+                return flow.run_local_server(port=0)
+            except Exception:
+                return None
+
+    # No OAuth configured
+    return None
 
 @st.cache_resource(show_spinner=False)
 def _get_user_drive():
-    return build("drive", "v3", credentials=_get_user_creds())
+    """Return a Drive client for the OAuth user, or None if OAuth isn't configured."""
+    creds = _get_user_creds()
+    if not creds:
+        return None
+    return build("drive", "v3", credentials=creds)
 
 @st.cache_resource(show_spinner=False)
 def _get_sheet_url():
@@ -275,6 +282,7 @@ def get_sh():
             time.sleep(0.6 * (attempt + 1))
     st.error("Google Sheets API error while opening the spreadsheet.")
     raise last_exc
+
 
 # =========================
 # Drive helpers
