@@ -219,53 +219,55 @@ def _get_drive():
     return build("drive", "v3", credentials=_get_creds())
 
 @st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner=False)
 def _get_user_creds():
-    """Return OAuth user creds if configured; otherwise None (no hard errors)."""
-    cfg = st.secrets.get("google_oauth", {}) or {}
+    """
+    Return user OAuth creds if configured; otherwise return None (do NOT st.stop()).
+    """
+    cfg = st.secrets.get("google_oauth", {})
     token_json = cfg.get("token_json")
-
     if token_json:
         try:
             info = json.loads(token_json)
-            creds = UserCredentials.from_authorized_user_info(info, OAUTH_SCOPES)
-            if not creds.valid and creds.refresh_token:
-                creds.refresh(Request())
-            return creds
         except Exception:
-            return None
+            info = None
+        if info:
+            creds = UserCredentials.from_authorized_user_info(info, OAUTH_SCOPES)
+            try:
+                if not creds.valid and creds.refresh_token:
+                    creds.refresh(Request())
+            except Exception:
+                pass
+            return creds
 
-    # Optional local OAuth for development if explicitly enabled
+    # Local dev (optional)
     if os.environ.get("LOCAL_OAUTH", "0") == "1":
         client_id = cfg.get("client_id")
         client_secret = cfg.get("client_secret")
         if client_id and client_secret:
+            flow = InstalledAppFlow.from_client_config(
+                {
+                    "installed": {
+                        "client_id": client_id,
+                        "client_secret": client_secret,
+                        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                        "token_uri": "https://oauth2.googleapis.com/token",
+                        "redirect_uris": ["http://localhost"],
+                    }
+                },
+                scopes=OAUTH_SCOPES,
+            )
             try:
-                flow = InstalledAppFlow.from_client_config(
-                    {
-                        "installed": {
-                            "client_id": client_id,
-                            "client_secret": client_secret,
-                            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                            "token_uri": "https://oauth2.googleapis.com/token",
-                            "redirect_uris": ["http://localhost"],
-                        }
-                    },
-                    scopes=OAUTH_SCOPES,
-                )
                 return flow.run_local_server(port=0)
             except Exception:
                 return None
-
-    # No OAuth configured
+    # Not configured
     return None
 
 @st.cache_resource(show_spinner=False)
 def _get_user_drive():
-    """Return a Drive client for the OAuth user, or None if OAuth isn't configured."""
     creds = _get_user_creds()
-    if not creds:
-        return None
-    return build("drive", "v3", credentials=creds)
+    return build("drive", "v3", credentials=creds) if creds else None
 
 @st.cache_resource(show_spinner=False)
 def _get_sheet_url():
@@ -321,11 +323,8 @@ def _drive_download_bytes(file_id: str) -> bytes:
 
 def _drive_resumable_upload(drive_cli, metadata: dict, data: bytes, *, supports_all_drives: bool) -> dict:
     """
-    Returns Drive file resource (dict) on success. Raises on hard failure.
-    Uses 5MB chunks, exponential backoff, and retries chunk uploads on transient errors
-    including TLS EOF.
+    Resumable upload with retries. Returns Drive file resource (dict with id, webViewLink).
     """
-    # 5 MB chunks keep connections stable on some hosts
     media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf",
                               chunksize=5 * 1024 * 1024, resumable=True)
     request = drive_cli.files().create(
@@ -334,116 +333,80 @@ def _drive_resumable_upload(drive_cli, metadata: dict, data: bytes, *, supports_
     )
 
     backoff = 1.0
-    max_backoff = 16.0
     while True:
         try:
             status, resp = request.next_chunk(num_retries=3)
             if resp is not None:
-                # Upload finished
                 return resp
-            # Optional: you can display progress via status.progress()
-        except (ssl.SSLEOFError, IncompleteRead, socket.error, BrokenPipeError) as e:
-            # Transient transport issue → wait & retry the same chunk
-            time.sleep(backoff)
-            backoff = min(max_backoff, backoff * 2)
-            continue
+        except (ssl.SSLEOFError, IncompleteRead, socket.error, BrokenPipeError):
+            time.sleep(backoff); backoff = min(16.0, backoff * 2); continue
         except HttpError as e:
-            # Retry 5xx transient errors; propagate others
             if e.resp is not None and 500 <= int(e.resp.status) < 600:
-                time.sleep(backoff)
-                backoff = min(max_backoff, backoff * 2)
-                continue
+                time.sleep(backoff); backoff = min(16.0, backoff * 2); continue
             raise
         except Exception:
-            # Unknown error → small backoff and try once more
-            time.sleep(backoff)
-            backoff = min(max_backoff, backoff * 2)
-            # After a couple of generic retries, re-raise
-            # (simple guard)
-            if backoff >= max_backoff:
+            time.sleep(backoff); backoff = min(16.0, backoff * 2)
+            if backoff >= 16.0:
                 raise
 
-def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
-    """Upload PDF to Drive. Try Service Account first; on SA quota exceeded,
-    optionally fall back to OAuth user (same folder if possible, else user root).
-    Returns (webViewLink, file_id) or ("","") on failure.
+def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_code: str, action: str) -> Tuple[str, str]:
+    """
+    Upload PDF: try Service Account first (resumable). On SA storage quota exceeded,
+    optionally fall back to OAuth user; if the approvals folder isn't writable by the
+    OAuth user, retry to that user's My Drive root. Returns (link, file_id).
     """
     if uploaded_file is None:
-        st.error("No file selected.")
-        return "", ""
+        st.error("No file selected."); return "", ""
 
-    # --- read & validate bytes ---
-    allowed = {
-        "application/pdf",
-        "application/x-pdf",
-        "application/octet-stream",
-        "binary/octet-stream",
-    }
-    mime = getattr(uploaded_file, "type", "") or ""
-    name = getattr(uploaded_file, "name", "file.pdf")
-
+    # Read & sanity-check
     try:
         data = uploaded_file.getvalue()
     except Exception as e:
-        st.error(f"Failed reading the uploaded file: {e}")
-        return "", ""
-
+        st.error(f"Failed reading the uploaded file: {e}"); return "", ""
     if not data:
-        st.error("Uploaded file is empty.")
-        return "", ""
+        st.error("Uploaded file is empty."); return "", ""
+    if data[:4] != b"%PDF":
+        st.warning("File doesn't start with %PDF header — continuing.")
 
-    is_pdf_magic = data[:4] == b"%PDF"
-    looks_like_pdf = name.lower().endswith(".pdf") or is_pdf_magic
-    if mime not in allowed and not looks_like_pdf:
-        st.error(f"Only PDF files are allowed. Got type '{mime}' and name '{name}'.")
-        return "", ""
-    if not is_pdf_magic:
-        st.warning("File doesn't start with %PDF header—but continuing. If Drive rejects it, please re-export the PDF.")
-
-    # --- target file name & folder ---
-    fname = f"{prefix}_{int(time.time())}.pdf"
-    folder_id = st.secrets.get("drive", {}).get("approvals", "")
-    metadata = {"name": fname}
-    if folder_id:
-        metadata["parents"] = [folder_id]
-
-    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
-
-    # --- 1) Try Service Account upload ---
-    drive_cli = _get_drive()
+    # Target folder path: <approvals>/<office>/<city>/<action>/Pending
+    root_id = st.secrets.get("drive", {}).get("approvals", "")
+    if not root_id:
+        st.error("Drive approvals folder not configured in secrets."); return "", ""
+    drive_sa = _get_drive()
+    city_folder = city_folder_name(city_code)
     try:
-        file = drive_cli.files().create(
-            body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=True
-        ).execute()
+        target_folder = ensure_drive_subfolder(root_id, [office or "Head Office (HO)", city_folder, action, "Pending"], drive_sa)
+    except Exception:
+        target_folder = root_id  # minimal fallback
+
+    # Metadata
+    fname = f"{prefix}_{int(time.time())}.pdf"
+    meta_sa = {"name": fname, "parents": [target_folder]}
+    uploader_used = "sa"
+
+    # 1) Service Account upload (resumable + retries)
+    try:
+        file_res = _drive_resumable_upload(drive_sa, meta_sa, data, supports_all_drives=True)
     except HttpError as e:
-        # SA quota exceeded? optionally fall back to OAuth user
-        if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
+        # SA quota exceeded → OAuth fallback path
+        if e.resp is not None and e.resp.status == 403 and "storageQuotaExceeded" in str(e):
             if not ALLOW_OAUTH_FALLBACK:
                 st.error("Service Account quota exceeded and OAuth fallback disabled.")
                 return "", ""
-
-            user_cli = _get_user_drive()
-            if user_cli is None:
+            drive_user = _get_user_drive()
+            if drive_user is None:
                 st.error("Service Account quota exceeded and no OAuth token configured.")
                 return "", ""
 
-            # 2a) Try uploading to the same approvals folder as OAuth user
+            uploader_used = "oauth"
             try:
-                file = user_cli.files().create(
-                    body=metadata, media_body=media, fields="id, webViewLink", supportsAllDrives=False
-                ).execute()
+                file_res = _drive_resumable_upload(drive_user, {"name": fname, "parents": [target_folder]}, data, supports_all_drives=False)
             except HttpError as e2:
-                # If user can't write to that folder, retry to user's My Drive root
-                if e2.resp.status in (403, 404):
+                # If user can't write to approvals folder, retry to user's root
+                if e2.resp is not None and e2.resp.status in (403, 404):
                     try:
-                        meta2 = {"name": fname}  # no parents -> goes to user's My Drive
-                        file = user_cli.files().create(
-                            body=meta2, media_body=media, fields="id, webViewLink", supportsAllDrives=False
-                        ).execute()
-                        st.warning(
-                            "Uploaded to your My Drive (OAuth user) because the approvals folder "
-                            "wasn't writable by the OAuth user."
-                        )
+                        file_res = _drive_resumable_upload(drive_user, {"name": fname}, data, supports_all_drives=False)
+                        st.warning("Uploaded to OAuth user's My Drive root because approvals folder wasn't writable.")
                     except Exception as e3:
                         st.error(f"OAuth upload failed (root retry): {e3}")
                         return "", ""
@@ -456,32 +419,36 @@ def upload_pdf_and_link(uploaded_file, *, prefix: str) -> Tuple[str, str]:
         else:
             st.error(f"Drive upload failed: {e}")
             return "", ""
+    except (ssl.SSLEOFError, IncompleteRead, socket.error, BrokenPipeError) as e:
+        # Transport issue → one more clean try
+        try:
+            file_res = _drive_resumable_upload(drive_sa, meta_sa, data, supports_all_drives=True)
+        except Exception as e2:
+            st.error(f"Unexpected upload error after retry: {e2}")
+            return "", ""
     except Exception as e:
         st.error(f"Unexpected error uploading to Drive: {e}")
         return "", ""
 
-    # --- success -> make public if configured ---
-    file_id = file.get("id", "")
-    link = file.get("webViewLink", "")
+    file_id = file_res.get("id", "")
+    link = file_res.get("webViewLink", "")
     if not file_id:
-        st.error("Drive did not return a file id.")
-        return "", ""
+        st.error("Drive did not return a file id."); return "", ""
 
+    # Make public using the client that actually uploaded
     try:
         if st.secrets.get("drive", {}).get("public", True):
-            # Try to use the same client that actually uploaded (drive_cli or user_cli)
-            try:
-                # If we fell back to OAuth above, 'file' came from user_cli; permissions via SA would error.
-                # Use a generic attempt: first SA, then OAuth if SA fails.
-                _drive_make_public(file_id, drive_client=drive_cli)
-            except Exception:
-                user_cli = _get_user_drive()
-                if user_cli:
-                    _drive_make_public(file_id, drive_client=user_cli)
+            if uploader_used == "sa":
+                _drive_make_public(file_id, drive_client=drive_sa)
+            else:
+                drive_user = _get_user_drive()
+                if drive_user:
+                    _drive_make_public(file_id, drive_client=drive_user)
     except Exception:
         pass
 
     return link, file_id
+
 
 # =========================
 # Sheets helpers
@@ -798,24 +765,29 @@ def _owner_changed(emp_df: pd.DataFrame):
         st.session_state[k] = ""
 
 def _download_template_bytes_or_public(file_id: str) -> bytes:
+    # 1) Try Service Account
     try:
         data = _drive_download_bytes(file_id)
         if data and data[:4] == b"%PDF":
             return data
     except Exception:
         pass
+    # 2) Try OAuth user (only if configured)
     try:
-        buf = io.BytesIO()
-        req = _get_user_drive().files().get_media(fileId=file_id)
-        MediaIoBaseDownload(buf, req).next_chunk()
-        buf.seek(0)
-        data = buf.read()
-        if data and data[:4] == b"%PDF":
-            return data
+        user_cli = _get_user_drive()
+        if user_cli is not None:
+            buf = io.BytesIO()
+            req = user_cli.files().get_media(fileId=file_id)
+            MediaIoBaseDownload(buf, req).next_chunk()
+            buf.seek(0)
+            data = buf.read()
+            if data and data[:4] == b"%PDF":
+                return data
     except Exception:
         pass
-    data = _fetch_public_pdf_bytes(file_id, "")
-    return data or b""
+    # 3) Public link
+    return _fetch_public_pdf_bytes(file_id, "") or b""
+
 
 def build_registration_values(device_row: dict, *, actor_name: str, emp_df: pd.DataFrame | None = None) -> dict[str, str]:
     fm = _registration_field_map()
