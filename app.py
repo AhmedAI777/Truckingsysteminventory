@@ -1051,16 +1051,17 @@ if not st.session_state.authenticated and not st.session_state.get("just_logged_
         st.session_state.authenticated = True
         st.session_state.username = payload["u"]
         st.session_state.role = payload.get("r", "")
-        
-    if st.session_state.authenticated:
-        run_app()
-    else:
-        st.subheader("🔐 Sign In")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
+
+if st.session_state.authenticated:
+    run_app()
+else:
+    st.subheader("🔐 Sign In")
+    username = st.text_input("Username")
+    password = st.text_input("Password", type="password")
+
     if st.button("Login", type="primary"):
         user = USERS.get(username)
-    if user and _verify_password(password, user["password"]):
-        do_login(username, user.get("role", "Staff"))
-    else:
-        st.error("❌ Invalid username or password.")
+        if user and _verify_password(password, user["password"]):
+            do_login(username, user.get("role", "Staff"))
+        else:
+            st.error("❌ Invalid username or password.")
