@@ -31,7 +31,8 @@ SESSION_TTL_DAYS = 30
 SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60
 COOKIE_NAME = "ac_auth_v2"
 
-SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/xxxx/edit"
+SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
+
 
 INVENTORY_WS = "truckinventory"
 TRANSFERLOG_WS = "transfer_log"
@@ -42,6 +43,44 @@ DEVICE_CATALOG_WS = st.secrets.get("sheets", {}).get("catalog_ws", "truckingsyst
 COUNTERS_WS = "counters"
 
 ORDER_NO_COL = "Order Number"
+
+# === Canonical columns & header synonyms ===
+INVENTORY_COLS = [
+    "Serial Number", "Device Type", "Brand", "Model", "CPU",
+    "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
+    "Current user", "Previous User", "TO",
+    "Department", "Email Address", "Contact Number", "Location", "Office",
+    "Notes", "Date issued", "Registered by"
+]
+
+CATALOG_COLS = [
+    "Serial Number", "Device Type", "Brand", "Model", "CPU",
+    "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
+]
+
+LOG_COLS = ["Device Type", "Serial Number", "From owner", "To owner", "Date issued", "Registered by"]
+
+EMPLOYEE_HEADERS = [
+    "Name", "Email", "APLUS", "Active", "Position", "Department",
+    "Location (KSA)", "Project", "Microsoft Teams", "Mobile Number"
+]
+
+APPROVAL_META_COLS = [
+    "Approval Status", "Approval PDF", "Approval File ID",
+    "Submitted by", "Submitted at", "Approver", "Decision at"
+]
+
+PENDING_DEVICE_COLS = INVENTORY_COLS + APPROVAL_META_COLS
+PENDING_TRANSFER_COLS = LOG_COLS + APPROVAL_META_COLS
+
+INVENTORY_HEADER_SYNONYMS = {
+    "user": "Current user",
+    "currentuser": "Current user",
+    "previoususer": "Previous User",
+    "to": "TO",
+    "email": "Email Address",
+}
+
 
 UNASSIGNED_LABEL = "Unassigned (Stock)"
 
