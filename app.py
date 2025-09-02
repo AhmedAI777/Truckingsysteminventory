@@ -447,7 +447,13 @@ def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_cod
     except Exception:
         pass
 
-    return link, file_id
+    return upload_pdf_and_get_link(
+        uploaded_file,
+        prefix=prefix,
+        office=office,
+        city_code=city_code,
+        action=action,
+    )
 
 
 # =========================
