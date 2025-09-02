@@ -927,17 +927,17 @@ def employee_register_tab():
 # =========================
 def register_device_tab():
     st.subheader("📝 Register New Device")
-    office = st.text_input("Office", "Head Office (HO)")
-    city = st.text_input("Location")
-    serial = st.text_input("Serial Number *")
-    device = st.text_input("Device Type *")
-    pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf")
+    office = st.text_input("Office", "Head Office (HO)", key="reg_office")
+    city = st.text_input("Location", key="reg_city")
+    serial = st.text_input("Serial Number *", key="reg_serial_input")
+    device = st.text_input("Device Type *", key="reg_device_input")
+    pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf_upload")
 
     col1, col2 = st.columns([1,1])
     with col1:
-        prefill = st.button("📄 Download Prefilled PDF")
+        prefill = st.button("📄 Download Prefilled PDF", key="reg_prefill_btn")
     with col2:
-        submitted = st.button("💾 Save Device", type="primary")
+        submitted = st.button("💾 Save Device", type="primary", key="reg_submit_btn")
 
     if prefill:
         if not serial or not device:
@@ -984,16 +984,16 @@ def register_device_tab():
 # =========================
 def transfer_tab():
     st.subheader("🔄 Device Transfer")
-    office = st.text_input("Office (Transfer)", "Head Office (HO)")
-    city = st.text_input("Location (Transfer)")
-    serial = st.text_input("Serial Number *")
-    pdf_file = st.file_uploader("Upload signed transfer PDF", type=["pdf"], key="trf_pdf")
+    office = st.text_input("Office (Transfer)", "Head Office (HO)", key="trf_office")
+    city = st.text_input("Location (Transfer)", key="trf_city")
+    serial = st.text_input("Serial Number *", key="trf_serial_input")
+    pdf_file = st.file_uploader("Upload signed transfer PDF", type=["pdf"], key="trf_pdf_upload")
 
     col1, col2 = st.columns([1,1])
     with col1:
-        prefill = st.button("📄 Download Prefilled Transfer PDF")
+        prefill = st.button("📄 Download Prefilled Transfer PDF", key="trf_prefill_btn")
     with col2:
-        submitted = st.button("💾 Submit Transfer Request", type="primary")
+        submitted = st.button("💾 Submit Transfer Request", type="primary", key="trf_submit_btn")
 
     if prefill:
         if not serial:
@@ -1030,7 +1030,6 @@ def transfer_tab():
         }
         append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([row]))
         st.success(f"🕒 Transfer for {serial} submitted with Order {order_no:04d}.")
-
 
 # =========================
 # Approvals Tab (aligned with Order Number)
