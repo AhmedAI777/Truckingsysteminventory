@@ -54,13 +54,20 @@ INVENTORY_COLS = [
     "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
     "Current user", "Previous User", "TO",
     "Department", "Email Address", "Contact Number", "Location", "Office",
-    "Notes", "Date issued", "Registered by"
+    "Notes", "Date issued", "Registered by",
+    "Order Number",  # ✅ new
 ]
+
 CATALOG_COLS = [
     "Serial Number", "Device Type", "Brand", "Model", "CPU",
     "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
 ]
-LOG_COLS = ["Device Type", "Serial Number", "From owner", "To owner", "Date issued", "Registered by"]
+
+LOG_COLS = [
+    "Device Type", "Serial Number", "From owner", "To owner",
+    "Date issued", "Registered by", "Order Number"  # ✅ new
+]
+
 
 EMPLOYEE_HEADERS = [
     "Name", "Email", "APLUS", "Active", "Position", "Department",
@@ -1456,16 +1463,6 @@ def run_app():
     render_header()
     _config_check_ui()
 
-    # ✅ Ensure all sheets we use contain "Order Number" column if missing
-    for ws in [INVENTORY_WS, TRANSFERLOG_WS, PENDING_DEVICE_WS, PENDING_TRANSFER_WS]:
-        try:
-            df = read_worksheet(ws)
-            if "Order Number" not in df.columns:
-                df["Order Number"] = ""
-                write_worksheet(ws, df)  # backfill so future reads are consistent
-        except Exception:
-            pass
-
     if st.session_state.role == "Admin":
         tabs = st.tabs(
             [
@@ -1496,7 +1493,14 @@ def run_app():
         with tabs[7]:
             export_tab()
     else:
-        tabs = st.tabs(["📝 Register Device", "🔁 Transfer Device", "📋 View Inventory", "📜 Transfer Log"])
+        tabs = st.tabs(
+            [
+                "📝 Register Device",
+                "🔁 Transfer Device",
+                "📋 View Inventory",
+                "📜 Transfer Log",
+            ]
+        )
         with tabs[0]:
             register_device_tab()
         with tabs[1]:
@@ -1505,6 +1509,7 @@ def run_app():
             inventory_tab()
         with tabs[3]:
             history_tab()
+
 
 
 # =========================
