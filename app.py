@@ -1093,91 +1093,92 @@ def register_device_tab():
                 return
             st.success(f"🕒 Device {serial} submitted with Order {order_no:04d}.")
 
-# =========================
-# Transfer Device Tab (fixed)
-# =========================
 def transfer_tab():
     st.subheader("🔄 Device Transfer")
+
     inv_df = read_worksheet(INVENTORY_WS)
     emp_df = read_worksheet(EMPLOYEE_WS)
     if inv_df.empty:
         st.info("No devices in inventory.")
         return
-    serials = inv_df["Serial Number"].dropna().tolist()
+
+    serials = inv_df["Serial Number"].dropna().astype(str).tolist()
     employees = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
 
-    with st.form("transfer_form", clear_on_submit=False):
-        serial = st.selectbox("Select Serial Number", serials, key="trf_serial_select")
-        new_owner = st.selectbox("Select New Owner", employees, key="trf_new_owner_select")
-        pdf_file = st.file_uploader("Upload signed transfer PDF", type=["pdf"], key="trf_pdf_upload")
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            dl = st.form_submit_button("📄 Download Prefilled Transfer PDF", key="trf_prefill_btn")
-        with c2:
-            submitted = st.form_submit_button("💾 Submit Transfer Request", type="primary", key="trf_save_btn")
+    # Inputs (NO form; unique keys)
+    serial = st.selectbox("Select Serial Number", serials, key="trf_serial_select")
+    new_owner = st.selectbox("Select New Owner", employees, key="trf_new_owner_select")
+    pdf_file = st.file_uploader("Upload signed transfer PDF", type=["pdf"], key="trf_pdf_upload")
 
-    if dl:
-        if not serial or not new_owner:
-            st.error("Serial number and new owner are required.")
-            st.stop()
-        row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
-        office = row.get("Office", "Head Office (HO)")
-        city = row.get("Location", "")
-        order_no, filename = reserve_and_build_filename(serial, office, city, "Transfer")
-        # Fill Transfer PDF locally
-        transfer_vals = build_transfer_pdf_values(row, new_owner, emp_df)
-        field_map = _transfer_field_map()
-        mapped_vals = {field_map[k]: v for k, v in transfer_vals.items() if k in field_map}
-        tpl_bytes = _download_template_bytes_or_public(TRANSFER_TEMPLATE_FILE_ID)
-        if not tpl_bytes:
-            st.error("Could not load transfer PDF template.")
-            st.stop()
-        pdf_bytes = fill_pdf_form(tpl_bytes, mapped_vals)
-        st.download_button(
-            "📥 Download Prefilled Transfer PDF",
-            data=pdf_bytes,
-            file_name=filename,
-            mime="application/pdf",
-            key="trf_prefill_download",
-        )
-        st.info(f"Reserved Order: {order_no:04d} — {filename}")
-        st.stop()  # prevent falling through to upload
+    col1, col2 = st.columns([1, 1])
 
-    if submitted:
-        if not serial or not new_owner:
-            st.error("Serial number and new owner required.")
-            return
-        if pdf_file is None:
-            st.error("Signed ICT Transfer PDF is required.")
-            return
-        row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
-        now_str = datetime.now().strftime(DATE_FMT)
-        actor = st.session_state.get("username", "")
-        link, fid, order_no, fname = upload_pdf_and_get_link(
-            pdf_file,
-            office=row.get("Office", "Head Office (HO)"),
-            city_text=row.get("Location", ""),
-            action="Transfer",
-            serial=row.get("Serial Number", ""),
-            status="Pending",
-        )
-        if not fid:
-            return
-        pending = {
-            **row,
-            "From owner": row.get("Current user", ""),
-            "To owner": new_owner,
-            "Approval Status": "Pending",
-            "Approval PDF": link,
-            "Approval File ID": fid,
-            ORDER_NO_COL: f"{order_no:04d}",
-            "Submitted by": actor,
-            "Submitted at": now_str,
-            "Approver": "",
-            "Decision at": "",
-        }
-        append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
-        st.success("🕒 Transfer request submitted for Admin approval.")
+    # ---- Download Prefilled Transfer PDF ----
+    with col1:
+        if st.button("📄 Download Prefilled Transfer PDF", key="trf_btn_prefill"):
+            if not serial or not new_owner:
+                st.error("Serial number and new owner are required.")
+            else:
+                row = inv_df.loc[inv_df["Serial Number"].astype(str) == str(serial)].iloc[0].to_dict()
+                office = row.get("Office", "Head Office (HO)")
+                city = row.get("Location", "")
+                order_no, filename = reserve_and_build_filename(serial, office, city, "Transfer")
+
+                transfer_vals = build_transfer_pdf_values(row, new_owner, emp_df)
+                field_map = _transfer_field_map()
+                mapped_vals = {field_map[k]: v for k, v in transfer_vals.items() if k in field_map}
+
+                tpl_bytes = _download_template_bytes_or_public(TRANSFER_TEMPLATE_FILE_ID)
+                if not tpl_bytes:
+                    st.error("Could not load transfer PDF template.")
+                else:
+                    pdf_bytes = fill_pdf_form(tpl_bytes, mapped_vals)
+                    st.download_button(
+                        "📥 Download Prefilled Transfer PDF",
+                        data=pdf_bytes,
+                        file_name=filename,
+                        mime="application/pdf",
+                        key="trf_prefill_download",
+                    )
+
+    # ---- Submit Transfer (upload to Drive) ----
+    with col2:
+        if st.button("💾 Submit Transfer Request", type="primary", key="trf_btn_save"):
+            if not serial or not new_owner:
+                st.error("Serial number and new owner required.")
+                return
+            if pdf_file is None:
+                st.error("Signed ICT Transfer PDF is required.")
+                return
+
+            row = inv_df.loc[inv_df["Serial Number"].astype(str) == str(serial)].iloc[0].to_dict()
+            now_str = datetime.now().strftime(DATE_FMT)
+            actor = st.session_state.get("username", "")
+            link, fid, order_no, fname = upload_pdf_and_get_link(
+                pdf_file,
+                office=row.get("Office", "Head Office (HO)"),
+                city_text=row.get("Location", ""),
+                action="Transfer",
+                serial=row.get("Serial Number", ""),
+                status="Pending",
+            )
+            if not fid:
+                return
+
+            pending = {
+                **row,
+                "From owner": row.get("Current user", ""),
+                "To owner": new_owner,
+                "Approval Status": "Pending",
+                "Approval PDF": link,
+                "Approval File ID": fid,
+                ORDER_NO_COL: f"{order_no:04d}",
+                "Submitted by": actor,
+                "Submitted at": now_str,
+                "Approver": "",
+                "Decision at": "",
+            }
+            append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
+            st.success("🕒 Transfer request submitted for Admin approval.")
 
 # =========================
 # Approvals Tab (aligned with Order Number)
