@@ -773,9 +773,15 @@ def upload_pdf_to_device_tree(
     serial: str,
     status_folder: str = "Pending",
 ) -> Tuple[str, str, str, str]:
+    """
+    Returns (link, file_id, seq, leaf_folder_id)
+    Tries Service Account first; on storageQuotaExceeded, falls back to OAuth user (if enabled).
+    """
     if uploaded_file is None:
         st.error("No file selected.")
         return "", "", "", ""
+
+    # read bytes
     try:
         data = uploaded_file.getvalue()
     except Exception as e:
@@ -785,16 +791,15 @@ def upload_pdf_to_device_tree(
         st.error("Uploaded file is empty.")
         return "", "", "", ""
 
-    drive_cli = _get_drive()
     root_id = _devices_root_id()
     if not root_id:
         st.error("devices_root not configured in secrets.")
         return "", "", "", ""
 
-    seq = next_order_number(project, location_name, type_code)
+    # prepare path components
+    seq = next_order_number(project or "UNK", location_name or "UNK", type_code or "REG")
     dt_str = datetime.now().strftime("%Y%m%d-%H%M%S")
     sn = normalize_serial(serial)
-
     path_parts = [
         project or "UNK",
         location_name or "UNK",
@@ -804,31 +809,57 @@ def upload_pdf_to_device_tree(
         dt_str,
         status_folder,
     ]
-    folder_id = ensure_drive_subfolder(root_id, path_parts, drive_cli)
-
     filename = f"{project}-{location_name}-{type_code}-{sn}-{seq}-{dt_str}.pdf"
-    meta = {"name": filename, "parents": [folder_id], "mimeType": "application/pdf"}
-    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
 
-    file = drive_cli.files().create(
-        body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
-    ).execute()
+    def _do_upload(drive_cli):
+        # Ensure folders **using the provided client**
+        folder_id = ensure_drive_subfolder(root_id, path_parts, drive_cli)
+        meta = {"name": filename, "parents": [folder_id], "mimeType": "application/pdf"}
+        media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
+        file = drive_cli.files().create(
+            body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
+        ).execute()
+        return file, folder_id
 
-    file_id = file.get("id", "")
-    link = file.get("webViewLink", "")
-
-    if not file_id:
-        st.error("Drive did not return a file id.")
+    # 1) Try Service Account upload first
+    drive_cli = _get_drive()
+    try:
+        file, folder_id = _do_upload(drive_cli)
+        file_id = file.get("id", "")
+        link = file.get("webViewLink", "")
+        if not file_id:
+            st.error("Drive did not return a file id.")
+            return "", "", "", ""
+        # Only make public if explicitly allowed
+        if st.secrets.get("drive", {}).get("public", False):
+            try:
+                _drive_make_public(file_id, drive_client=drive_cli)
+            except Exception:
+                pass
+        return link, file_id, seq, folder_id
+    except HttpError as e:
+        # 2) If SA has no quota and fallback is enabled, try OAuth user
+        if e.resp.status == 403 and "storageQuotaExceeded" in str(e) and st.secrets.get("drive", {}).get("allow_oauth_fallback", True):
+            try:
+                user_cli = _get_user_drive()
+                file, folder_id = _do_upload(user_cli)
+                file_id = file.get("id", "")
+                link = file.get("webViewLink", "")
+                if not file_id:
+                    st.error("Drive (OAuth) did not return a file id.")
+                    return "", "", "", ""
+                # For user-owned uploads, usually keep non-public
+                return link, file_id, seq, folder_id
+            except Exception as e2:
+                st.error(f"OAuth upload failed: {e2}")
+                return "", "", "", ""
+        # Other Drive errors
+        st.error(f"Drive upload failed: {e}")
+        return "", "", "", ""
+    except Exception as e:
+        st.error(f"Unexpected error uploading to Drive: {e}")
         return "", "", "", ""
 
-    # Respect visibility flag (default false)
-    if st.secrets.get("drive", {}).get("public", False):
-        try:
-            _drive_make_public(file_id, drive_client=drive_cli)
-        except Exception:
-            pass
-
-    return link, file_id, seq, folder_id
 
 def move_drive_file_tree(file_id: str, decision: str):
     cli = _get_drive()
