@@ -774,8 +774,8 @@ def upload_pdf_to_device_tree(
     status_folder: str = "Pending",
 ) -> Tuple[str, str, str, str]:
     """
+    OAuth-only: uploads with the signed-in user's Drive credentials.
     Returns (link, file_id, seq, leaf_folder_id)
-    Tries Service Account first; on storageQuotaExceeded, falls back to OAuth user (if enabled).
     """
     if uploaded_file is None:
         st.error("No file selected.")
@@ -811,88 +811,74 @@ def upload_pdf_to_device_tree(
     ]
     filename = f"{project}-{location_name}-{type_code}-{sn}-{seq}-{dt_str}.pdf"
 
-    def _do_upload(drive_cli):
-        # Ensure folders **using the provided client**
-        folder_id = ensure_drive_subfolder(root_id, path_parts, drive_cli)
-        meta = {"name": filename, "parents": [folder_id], "mimeType": "application/pdf"}
-        media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
+    # Use OAuth user Drive client exclusively
+    drive_cli = _get_user_drive()
+
+    # Ensure folders with the user client
+    folder_id = ensure_drive_subfolder(root_id, path_parts, drive_cli)
+
+    # Upload the file
+    meta = {"name": filename, "parents": [folder_id], "mimeType": "application/pdf"}
+    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
+    try:
         file = drive_cli.files().create(
             body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
         ).execute()
-        return file, folder_id
-
-    # 1) Try Service Account upload first
-    drive_cli = _get_drive()
-    try:
-        file, folder_id = _do_upload(drive_cli)
-        file_id = file.get("id", "")
-        link = file.get("webViewLink", "")
-        if not file_id:
-            st.error("Drive did not return a file id.")
-            return "", "", "", ""
-        # Only make public if explicitly allowed
-        if st.secrets.get("drive", {}).get("public", False):
-            try:
-                _drive_make_public(file_id, drive_client=drive_cli)
-            except Exception:
-                pass
-        return link, file_id, seq, folder_id
     except HttpError as e:
-        # 2) If SA has no quota and fallback is enabled, try OAuth user
-        if e.resp.status == 403 and "storageQuotaExceeded" in str(e) and st.secrets.get("drive", {}).get("allow_oauth_fallback", True):
-            try:
-                user_cli = _get_user_drive()
-                file, folder_id = _do_upload(user_cli)
-                file_id = file.get("id", "")
-                link = file.get("webViewLink", "")
-                if not file_id:
-                    st.error("Drive (OAuth) did not return a file id.")
-                    return "", "", "", ""
-                # For user-owned uploads, usually keep non-public
-                return link, file_id, seq, folder_id
-            except Exception as e2:
-                st.error(f"OAuth upload failed: {e2}")
-                return "", "", "", ""
-        # Other Drive errors
-        st.error(f"Drive upload failed: {e}")
+        st.error(f"Drive upload (OAuth) failed: {e}")
         return "", "", "", ""
-    except Exception as e:
-        st.error(f"Unexpected error uploading to Drive: {e}")
+
+    file_id = file.get("id", "")
+    link = file.get("webViewLink", "")
+    if not file_id:
+        st.error("Drive (OAuth) did not return a file id.")
         return "", "", "", ""
+
+    # No 'public' toggle here — keep within your domain/user by default.
+    return link, file_id, seq, folder_id
 
 
 def move_drive_file_tree(file_id: str, decision: str):
-    cli = _get_drive()
-    f = cli.files().get(fileId=file_id, fields="id, parents", supportsAllDrives=True).execute()
-    if not f.get("parents"):
-        return
-    pending_id = f["parents"][0]
-    parent = cli.files().get(fileId=pending_id, fields="id, name, parents", supportsAllDrives=True).execute()
-    dt_parent = parent.get("parents", [None])[0]
-    if not dt_parent:
-        return
-    q = (
-        f"'{dt_parent}' in parents and name='{decision}' "
-        "and mimeType='application/vnd.google-apps.folder' and trashed=false"
-    )
-    res = cli.files().list(q=q, spaces="drive", fields="files(id,name)", supportsAllDrives=True).execute()
-    if res.get("files"):
-        dest_id = res["files"][0]["id"]
-    else:
-        newf = cli.files().create(
-            body={"name": decision, "mimeType": "application/vnd.google-apps.folder", "parents": [dt_parent]},
-            fields="id",
+    """
+    OAuth-only: moves file from .../Pending to .../Approved or .../Rejected under the same Datetime node.
+    """
+    cli = _get_user_drive()
+    try:
+        f = cli.files().get(fileId=file_id, fields="id, parents", supportsAllDrives=True).execute()
+        if not f.get("parents"):
+            return
+        pending_id = f["parents"][0]
+        parent = cli.files().get(fileId=pending_id, fields="id, name, parents", supportsAllDrives=True).execute()
+        dt_parent = parent.get("parents", [None])[0]
+        if not dt_parent:
+            return
+
+        # ensure sibling folder (Approved/Rejected)
+        q = (
+            f"'{dt_parent}' in parents and name='{decision}' "
+            "and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        )
+        res = cli.files().list(q=q, spaces="drive", fields="files(id,name)", supportsAllDrives=True).execute()
+        if res.get("files"):
+            dest_id = res["files"][0]["id"]
+        else:
+            newf = cli.files().create(
+                body={"name": decision, "mimeType": "application/vnd.google-apps.folder", "parents": [dt_parent]},
+                fields="id",
+                supportsAllDrives=True,
+            ).execute()
+            dest_id = newf["id"]
+
+        cli.files().update(
+            fileId=file_id,
+            addParents=dest_id,
+            removeParents=pending_id,
+            fields="id, parents",
             supportsAllDrives=True,
         ).execute()
-        dest_id = newf["id"]
+    except HttpError as e:
+        st.error(f"Drive move (OAuth) failed: {e}")
 
-    cli.files().update(
-        fileId=file_id,
-        addParents=dest_id,
-        removeParents=pending_id,
-        fields="id, parents",
-        supportsAllDrives=True,
-    ).execute()
 
 # =========================
 # PDF
