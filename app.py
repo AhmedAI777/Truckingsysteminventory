@@ -847,6 +847,49 @@ def _mark_decision(ws_name: str, row: dict, *, status: str):
 # =========================
 # UI (fixed with reserved order numbers)
 # =========================
+def reserve_order_number(office: str, city: str, action: str, serial: str, when: datetime | None = None) -> tuple[int, str]:
+    """Reserve the next order number for (project, location, type, serial) and build the filename.
+    Reuses the same reservation within the session so Prefill and Upload stay consistent.
+    """
+    when = when or datetime.now()
+
+    project_code = project_code_from_office(office or "Head Office (HO)")
+    location_code = location_code_for_filename(city or "")
+    type_code = type_code_from_action(action or "")
+    snorm = re.sub(r"[^A-Z0-9]", "", (serial or "").upper())
+
+    key = f"{project_code}|{location_code}|{type_code}|{snorm}"
+
+    # Reuse an existing reservation for the same key
+    if ss.get("reserved_order_no") and ss.get("reserved_key") == key:
+        when_used = ss.get("reserved_when") or when
+        filename = ss.get("reserved_filename") or build_compliant_filename(
+            office=office or "Head Office (HO)",
+            city_text=city,
+            action=action,
+            serial=serial,
+            when=when_used,
+            order_no=ss["reserved_order_no"],
+        )
+        ss["reserved_filename"] = filename
+        return ss["reserved_order_no"], filename
+
+    # No reservation yet — advance the counter and reserve
+    order_no = get_next_order_number(project_code, location_code, type_code)
+    filename = build_compliant_filename(
+        office=office or "Head Office (HO)",
+        city_text=city,
+        action=action,
+        serial=serial,
+        when=when,
+        order_no=order_no,
+    )
+    ss["reserved_order_no"] = order_no
+    ss["reserved_filename"] = filename
+    ss["reserved_key"] = key
+    ss["reserved_when"] = when
+    return order_no, filename
+
 def reserve_and_build_filename(serial: str, office: str, city: str, action: str) -> Tuple[int, str]:
     order_no, filename = reserve_order_number(office, city, action, serial)
     return order_no, filename
