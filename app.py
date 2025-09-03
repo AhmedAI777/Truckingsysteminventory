@@ -131,6 +131,7 @@ def _read_cookie():
         COOKIE_MGR.delete(COOKIE_NAME)
         return None
 
+
 def do_login(username: str, role: str):
     st.session_state["authenticated"] = True
     st.session_state["username"] = username
