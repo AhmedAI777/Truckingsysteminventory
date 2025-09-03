@@ -450,72 +450,60 @@ def move_drive_file(
         st.error(f"Error moving or renaming file in Drive: {e}")
 
 
-def upload_pdf_and_get_link(uploaded_file, *, filename: str, project: str, location: str, action: str) -> Tuple[str, str]:
-    if uploaded_file is None:
-        st.error("No file selected.")
-        return "", ""
-    try:
-        data = uploaded_file.getvalue()
-    except Exception as e:
-        st.error(f"Failed reading the uploaded file: {e}")
-        return "", ""
-    if not data:
-        st.error("Uploaded file is empty.")
-        return "", ""
-    if data[:4] != b"%PDF":
-        st.warning("File doesn't start with %PDF header — continuing.")
+def upload_pdf_and_get_link(
+    file_obj,
+    office: str,
+    location: str,
+    action: str,
+    status: str,
+    serial: str,
+    order_no: str,
+    prefix: str = "device"
+):
+    """
+    Uploads a PDF file to Google Drive under the structured path and returns (link, file_id).
+    """
+    from googleapiclient.http import MediaIoBaseUpload
 
-    try:
-        drive_cli = _get_drive()
-        root_id = st.secrets.get("drive", {}).get("approvals", "")
-        if not root_id:
-            st.error("Drive approvals folder not configured in secrets.")
-            return "", ""
-
-        # Use consistent subfolder structure: /Project/Location/Type/Pending
-        folder_id = ensure_drive_subfolder(
-            root_id,
-            [project or "Unknown Project", location or "Unknown Location", action or "Register", "Pending"],
-            drive_cli
-        )
-
-        meta = {"name": filename, "parents": [folder_id], "mimeType": "application/pdf"}
-        media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
-        file = drive_cli.files().create(
-            body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
-        ).execute()
-
-    except HttpError as e:
-        if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
-            if not ALLOW_OAUTH_FALLBACK:
-                st.error("Service Account quota exceeded and OAuth fallback disabled.")
-                return "", ""
-            try:
-                drive_cli = _get_user_drive()
-                file = drive_cli.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
-            except Exception as e2:
-                st.error(f"OAuth upload failed: {e2}")
-                return "", ""
-        else:
-            st.error(f"Drive upload failed: {e}")
-            return "", ""
-    except Exception as e:
-        st.error(f"Unexpected error uploading to Drive: {e}")
+    drive_cli = _get_drive()
+    root_id = st.secrets.get("drive", {}).get("approvals", "")
+    if not root_id:
+        st.error("Drive approvals folder ID is missing.")
         return "", ""
 
-    file_id = file.get("id", "")
-    link = file.get("webViewLink", "")
-    if not file_id:
-        st.error("Drive did not return a file id.")
-        return "", ""
+    serial = normalize_serial(serial)
+    order_no = str(order_no).zfill(4)
+    serial_order_folder = f"{serial}-{order_no}"
 
-    try:
-        if st.secrets.get("drive", {}).get("public", True):
-            _drive_make_public(file_id, drive_client=drive_cli)
-    except Exception:
-        pass
+    # Ensure folder path: Head Office (HO) / JED / Register / SN-ORD / Pending
+    path_parts = [
+        office or "Head Office (HO)",
+        location or "Unknown Location",
+        action or "Register",
+        serial_order_folder,
+        status or "Pending",
+    ]
+    folder_id = ensure_drive_subfolder(root_id, path_parts, drive_cli)
 
-    return link, file_id
+    # Set file name
+    date_str = datetime.now().strftime('%Y%m%d')
+    filename = f"{prefix}_{serial}_{order_no}_{date_str}.pdf"
+
+    media = MediaIoBaseUpload(file_obj, mimetype="application/pdf")
+    uploaded = drive_cli.files().create(
+        media_body=media,
+        body={
+            "name": filename,
+            "parents": [folder_id],
+        },
+        fields="id, webViewLink",
+        supportsAllDrives=True,
+    ).execute()
+
+    file_id = uploaded.get("id", "")
+    file_link = uploaded.get("webViewLink", "")
+    return file_link, file_id
+
 
 # =========================
 # Sheets Helpers
