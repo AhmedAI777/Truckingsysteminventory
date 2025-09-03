@@ -672,9 +672,7 @@ def get_device_from_catalog_by_serial(serial: str) -> dict:
 # =========================
 # PDF
 # =========================
-
-def _base_pdf_field_map() -> dict[str, str]:
-    """Generate base field map structure shared by Register and Transfer PDFs."""
+def _registration_field_map() -> dict[str, str]:
     fm: dict[str, str] = {
         "from_name": "Text Field0",
         "from_mobile": "Text Field1",
@@ -689,8 +687,6 @@ def _base_pdf_field_map() -> dict[str, str]:
         "to_date": "Text Field10",
         "to_location": "Text Field11",
     }
-
-    # Block-mapped device fields
     for blk in range(4):
         base = 12 + blk * 5
         fm[f"eq{blk+1}_type"] = f"Text Field{base}"
@@ -698,75 +694,238 @@ def _base_pdf_field_map() -> dict[str, str]:
         fm[f"eq{blk+1}_model"] = f"Text Field{base+2}"
         fm[f"eq{blk+1}_specs"] = f"Text Field{base+3}"
         fm[f"eq{blk+1}_serial"] = f"Text Field{base+4}"
-
-    # Shortcuts for single device usage
-    fm.update({
-        "eq_type": fm["eq1_type"],
-        "eq_brand": fm["eq1_brand"],
-        "eq_model": fm["eq1_model"],
-        "eq_specs": fm["eq1_specs"],
-        "eq_serial": fm["eq1_serial"],
-    })
-    return fm
-
-def _registration_field_map() -> dict[str, str]:
-    """Field mapping for the registration PDF form."""
-    fm = _base_pdf_field_map()
+    fm.update(
+        {"eq_type": fm["eq1_type"], "eq_brand": fm["eq1_brand"], "eq_model": fm["eq1_model"], "eq_specs": fm["eq1_specs"], "eq_serial": fm["eq1_serial"]}
+    )
     override = st.secrets.get("pdf", {}).get("reg_field_map", {})
     if isinstance(override, dict) and override:
         fm.update(override)
     return fm
 
+def fill_pdf_form(template_bytes: bytes, values: dict[str, str], *, flatten: bool = True) -> bytes:
+    reader = PdfReader(io.BytesIO(template_bytes))
+    writer = PdfWriter()
+    for p in reader.pages:
+        writer.add_page(p)
+    try:
+        writer.update_page_form_field_values(writer.pages[0], values)
+    except Exception:
+        pass
+    if "/AcroForm" in reader.trailer["/Root"]:
+        ac = reader.trailer["/Root"]["/AcroForm"]
+        writer._root_object.update({NameObject("/AcroForm"): ac})
+        writer._root_object["/AcroForm"].update({NameObject("/NeedAppearances"): BooleanObject(True)})
+    else:
+        writer._root_object.update({NameObject("/AcroForm"): DictionaryObject({NameObject("/NeedAppearances"): BooleanObject(True)})})
+    if flatten:
+        try:
+            fields = writer._root_object["/AcroForm"].get("/Fields")
+            if fields:
+                for f in fields:
+                    obj = f.get_object()
+                    if obj.get("/FT") == NameObject("/Tx"):
+                        flags = int(obj.get("/Ff", 0))
+                        obj.update({NameObject("/Ff"): flags | 1})
+            writer._root_object["/AcroForm"].update({NameObject("/Fields"): ArrayObject()})
+        except Exception:
+            pass
+    out = io.BytesIO()
+    writer.write(out)
+    out.seek(0)
+    return out.read()
+
 def _transfer_field_map() -> dict[str, str]:
-    """Field mapping for the transfer PDF form."""
-    fm = _base_pdf_field_map()
+    fm: dict[str, str] = {
+        "from_name": "Text Field0",
+        "from_mobile": "Text Field1",
+        "from_email": "Text Field2",
+        "from_department": "Text Field3",
+        "from_date": "Text Field4",
+        "from_location": "Text Field5",
+        "to_name": "Text Field6",
+        "to_mobile": "Text Field7",
+        "to_email": "Text Field8",
+        "to_department": "Text Field9",
+        "to_date": "Text Field10",
+        "to_location": "Text Field11",
+    }
+    for blk in range(4):
+        base = 12 + blk * 5
+        fm[f"eq{blk+1}_type"] = f"Text Field{base}"
+        fm[f"eq{blk+1}_brand"] = f"Text Field{base+1}"
+        fm[f"eq{blk+1}_model"] = f"Text Field{base+2}"
+        fm[f"eq{blk+1}_specs"] = f"Text Field{base+3}"
+        fm[f"eq{blk+1}_serial"] = f"Text Field{base+4}"
+    fm.update(
+        {"eq_type": fm["eq1_type"], "eq_brand": fm["eq1_brand"], "eq_model": fm["eq1_model"], "eq_specs": fm["eq1_specs"], "eq_serial": fm["eq1_serial"]}
+    )
     override = st.secrets.get("pdf", {}).get("transfer_field_map", {})
     if isinstance(override, dict) and override:
         fm.update(override)
     return fm
 
-def fill_pdf_form(tpl_bytes: bytes, values: dict, flatten: bool = False) -> bytes:
-    from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName
-    import io
-
+# =========================
+# Employee helpers
+# =========================
+def _find_emp_row_by_name(emp_df: pd.DataFrame, name: str) -> pd.Series | None:
     try:
-        reader = PdfReader(fdata=tpl_bytes)
+        if emp_df is None or emp_df.empty or not str(name).strip():
+            return None
+        name = str(name).strip()
+        cand = emp_df[
+            (emp_df.get("New Employeer", "").astype(str).str.strip() == name)
+            | (emp_df.get("Name", "").astype(str).str.strip() == name)
+        ]
+        return cand.iloc[0] if not cand.empty else None
+    except Exception:
+        return None
 
-        if not reader or not hasattr(reader, "trailer") or reader.trailer is None:
-            st.warning("⚠️ This PDF cannot be read. It might be corrupt or not a valid form.")
-            return tpl_bytes
+def _get_emp_value(row: pd.Series, *aliases: str) -> str:
+    if row is None:
+        return ""
+    for col in aliases:
+        v = row.get(col, "")
+        if str(v).strip():
+            return str(v)
+    return ""
 
-        root = reader.trailer.get("/Root", {})
-        if not root or "/AcroForm" not in root:
-            st.warning("⚠️ This PDF does not contain form fields (AcroForm).")
-            return tpl_bytes
+def _owner_changed(emp_df: pd.DataFrame):
+    owner = st.session_state.get("current_owner", UNASSIGNED_LABEL)
+    keys = ("reg_contact", "reg_email", "reg_dept", "reg_location", "reg_office")
+    if owner and owner != UNASSIGNED_LABEL and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
+        r = _find_emp_row_by_name(emp_df, owner)
+        if r is not None:
+            st.session_state["reg_contact"] = _get_emp_value(r, "Mobile Number", "Phone", "Mobile")
+            st.session_state["reg_email"] = _get_emp_value(r, "Email Address", "Email", "E-mail")
+            st.session_state["reg_dept"] = _get_emp_value(r, "Department", "Dept")
+            st.session_state["reg_location"] = _get_emp_value(r, "Location (KSA)", "Location", "City")
+            st.session_state["reg_office"] = _get_emp_value(r, "Office", "Project", "Site")
+            return
+    for k in keys:
+        st.session_state[k] = ""
 
-        form = root["/AcroForm"]
-        fields = form.get("/Fields", [])
+def _download_template_bytes_or_public(file_id: str) -> bytes:
+    try:
+        data = _drive_download_bytes(file_id)
+        if data and data[:4] == b"%PDF":
+            return data
+    except Exception:
+        pass
+    try:
+        buf = io.BytesIO()
+        req = _get_user_drive().files().get_media(fileId=file_id)
+        MediaIoBaseDownload(buf, req).next_chunk()
+        buf.seek(0)
+        data = buf.read()
+        if data and data[:4] == b"%PDF":
+            return data
+    except Exception:
+        pass
+    data = _fetch_public_pdf_bytes(file_id, "")
+    return data or b""
 
-        if not fields:
-            st.warning("⚠️ No fillable fields found in the PDF form.")
-            return tpl_bytes
+def build_registration_values(device_row: dict, *, actor_name: str, emp_df: pd.DataFrame | None = None) -> dict[str, str]:
+    fm = _registration_field_map()
+    curr_owner = str(device_row.get("Current user", "") or "").strip()
+    is_unassigned = (not curr_owner) or (curr_owner == UNASSIGNED_LABEL)
+    from_name = curr_owner if not is_unassigned else (actor_name or device_row.get("Registered by", ""))
+    from_mobile = str(device_row.get("Contact Number", "") or "")
+    from_email = str(device_row.get("Email Address", "") or "")
+    from_dept = str(device_row.get("Department", "") or "")
+    from_location = str(device_row.get("Location", "") or "")
+    if not is_unassigned and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
+        r = _find_emp_row_by_name(emp_df, curr_owner)
+        if r is not None:
+            from_mobile = from_mobile or _get_emp_value(r, "Mobile Number", "Phone", "Mobile")
+            from_email = from_email or _get_emp_value(r, "Email Address", "Email", "E-mail")
+            from_dept = from_dept or _get_emp_value(r, "Department", "Dept")
+            from_location = from_location or _get_emp_value(r, "Location (KSA)", "Location", "City")
+    values = {
+        fm["from_name"]: from_name,
+        fm["from_mobile"]: from_mobile,
+        fm["from_email"]: from_email,
+        fm["from_department"]: from_dept,
+        fm["from_date"]: datetime.now().strftime("%Y-%m-%d"),
+        fm["from_location"]: from_location,
+        fm["to_name"]: "",
+        fm["to_mobile"]: "",
+        fm["to_email"]: "",
+        fm["to_department"]: "",
+        fm["to_date"]: "",
+        fm["to_location"]: "",
+    }
+    specs = []
+    office_val = str(device_row.get("Office", "")).strip()
+    if not office_val and not is_unassigned and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
+        r = _find_emp_row_by_name(emp_df, curr_owner)
+        if r is not None:
+            office_val = _get_emp_value(r, "Office", "Project", "Site")
+    for label, v in [
+        ("CPU", device_row.get("CPU", "")),
+        ("Memory", device_row.get("Memory", "")),
+        ("GPU", device_row.get("GPU", "")),
+        ("Hard Drive 1", device_row.get("Hard Drive 1", "")),
+        ("Hard Drive 2", device_row.get("Hard Drive 2", "")),
+        ("Screen Size", device_row.get("Screen Size", "")),
+        ("Office", office_val),
+        ("Notes", device_row.get("Notes", "")),
+    ]:
+        v = str(v).strip()
+        if v:
+            specs.append(f"{label}: {v}")
+    specs_txt = " | ".join(specs)
+    values.update(
+        {
+            fm["eq_type"]: device_row.get("Device Type", ""),
+            fm["eq_brand"]: device_row.get("Brand", ""),
+            fm["eq_model"]: device_row.get("Model", ""),
+            fm["eq_specs"]: specs_txt,
+            fm["eq_serial"]: device_row.get("Serial Number", ""),
+        }
+    )
+    return values
 
-        for field in fields:
-            key = field.get("/T")
-            if key:
-                key_str = key[1:-1] if key.startswith("(") and key.endswith(")") else key
-                if key_str in values:
-                    field.update(PdfDict(V=str(values[key_str])))
-
-        if flatten:
-            form.update(PdfDict(NeedAppearances=PdfName("false")))
-
-        output = io.BytesIO()
-        PdfWriter().write(output, reader)
-        return output.getvalue()
-
-    except Exception as e:
-        st.error(f"❌ Error filling PDF form: {e}")
-        return tpl_bytes  # Return the original bytes on failure
-
-
+def build_transfer_pdf_values(row: dict, new_owner: str, emp_df: pd.DataFrame) -> dict[str, str]:
+    now_str = datetime.now().strftime("%Y-%m-%d")
+    from_name = row.get("Current user", "")
+    from_email = row.get("Email Address", "") or row.get("Email", "")
+    from_phone = row.get("Contact Number", "")
+    from_dept = row.get("Department", "")
+    from_loc = row.get("Location", "")
+    emp_row = emp_df.loc[(emp_df["New Employeer"] == new_owner) | (emp_df["Name"] == new_owner)]
+    if not emp_row.empty:
+        emp = emp_row.iloc[0]
+        to_name = emp.get("Name", new_owner)
+        to_email = emp.get("Email Address", emp.get("Email", ""))
+        to_phone = emp.get("Mobile Number", "")
+        to_dept = emp.get("Department", "")
+        to_loc = emp.get("Location (KSA)", "")
+    else:
+        to_name, to_email, to_phone, to_dept, to_loc = new_owner, "", "", "", ""
+    equip = (
+        f"CPU: {row.get('CPU','')} | Memory: {row.get('Memory','')} | GPU: {row.get('GPU','')} | "
+        f"Hard Drive 1: {row.get('Hard Drive 1','')} | Hard Drive 2: {row.get('Hard Drive 2','')} | "
+        f"Screen Size: {row.get('Screen Size','')} | Office: {row.get('Office','')}"
+    )
+    return {
+        "from_name": from_name,
+        "from_mobile": from_phone,
+        "from_email": from_email,
+        "from_department": from_dept,
+        "from_date": now_str,
+        "from_location": from_loc,
+        "to_name": to_name,
+        "to_mobile": to_phone,
+        "to_email": to_email,
+        "to_department": to_dept,
+        "to_date": now_str,
+        "to_location": to_loc,
+        "eq_type": row.get("Device Type", ""),
+        "eq_brand": row.get("Brand", ""),
+        "eq_model": row.get("Model", ""),
+        "eq_specs": equip,
+        "eq_serial": row.get("Serial Number", ""),
+    }
 # =========================
 # Employee Helpers
 # =========================
