@@ -1421,15 +1421,13 @@ def register_device_tab():
         emp_row = _get_employee_row_by_name(emp_df, row["Current user"])
         order_no = get_next_order_number("REG", serial)
 
+        # Save the generated PDF to Drive
         link, fid = upload_pdf_and_get_link(
-            file_obj=pdf_file_obj,
-            serial=normalize_serial(serial),
-            order_no=order_no,
-            project=emp_row.get("Project", "HO"),
-            location=emp_row.get("Location (KSA)", "JED"),
-            action="Register",
-            status="Pending",
+            pdf_bytes,
+            name_prefix=f"device_{normalize_serial(serial)}",
+            office="Head Office (HO)"
         )
+
 
         if not fid:
             return
@@ -1714,17 +1712,10 @@ def _reject_row(ws_title: str, row: pd.Series):
             project = inv_row.get("Project", "HO")
             location = inv_row.get("Location", "JED")
 
-        # Order number still needs to be fetched/generated for folder naming
-        order_no = get_next_order_number(action, serial)
-
-        move_drive_file(
-            file_id=file_id,
-            project=project,
-            location=location,
-            action=action,
-            status="Rejected",
-            serial=serial,
-            order_no=order_no,
+        link, fid = upload_pdf_and_get_link(
+            pdf_bytes,
+            name_prefix=f"device_{normalize_serial(serial)}",
+            office="Head Office (HO)"
         )
 
     except Exception as e:
