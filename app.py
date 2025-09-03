@@ -1037,26 +1037,34 @@ def ensure_counters_sheet_exists():
     get_or_create_ws(COUNTER_WS)
 
 def get_next_order_number(action_type: str, serial: str) -> str:
-    """Auto-generate next available order number based on action and serial."""
     ensure_counters_sheet_exists()
     df = read_worksheet(COUNTER_WS)
+
+    # Sanitize headers to avoid KeyError
+    df.columns = df.columns.str.strip()
+
     serial_norm = normalize_serial(serial)
-    mask = (df["Action"].astype(str).str.upper() == action_type.upper()) & \
-           (df["Serial Number"].astype(str).str.upper() == serial_norm)
+    mask = (
+        (df["Action"].astype(str).str.upper() == action_type.upper()) &
+        (df["Serial Number"].astype(str).str.upper() == serial_norm.upper())
+    )
 
     if df.empty or not mask.any():
-        next_no = 1
+        order = 1
     else:
-        next_no = df[mask]["Order Number"].astype(int).max() + 1
+        existing_orders = df.loc[mask, "Order Number"].astype(int)
+        order = existing_orders.max() + 1
 
+    now = datetime.now().isoformat()
     new_row = pd.DataFrame([{
-        "Action": action_type,
+        "Action": action_type.upper(),
         "Serial Number": serial_norm,
-        "Order Number": next_no,
-        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "Order Number": order,
+        "Timestamp": now,
     }])
-    append_to_worksheet(COUNTER_WS, new_row)
-    return str(next_no).zfill(4)  # Pad to 4 digits
+    df_out = pd.concat([df, new_row], ignore_index=True)
+    write_worksheet(COUNTER_WS, df_out)
+    return str(order).zfill(4)
 
 # =========================
 # Employee Lookup Helper
