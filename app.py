@@ -428,36 +428,35 @@ def move_drive_file(
     except Exception as e:
         st.error(f"❌ Error moving file to structured folder: {e}")
 
+
 def upload_pdf_and_get_link(pdf_bytes: bytes, name_prefix: str, *, office: str = "Head Office (HO)") -> tuple[str, str]:
-    """Uploads the PDF to Google Drive under the given office folder and returns the sharable link and file ID."""
-    from googleapiclient.http import MediaIoBaseUpload
-    import io
+    """
+    Uploads a PDF to the correct Google Drive folder and returns the shareable link and file ID.
+    """
 
-    # Generate a filename
-    now_str = datetime.now().strftime("%Y%m%d")
-    filename = f"{name_prefix}-{now_str}.pdf"
-
-    # Choose the right folder based on office name
+    # Set folder IDs by office
     office_folder_ids = {
-        "Head Office (HO)": "1KatH0TQregGV_pajnySOGcPAXTNhex7L",  # <- This is your folder ID
-        # Add more offices here if needed
+        "Head Office (HO)": "1KatH0TQregGV_pajnySOGcPAXTNhex7L",  # Your shared drive folder
     }
+
     folder_id = office_folder_ids.get(office)
     if not folder_id:
         raise ValueError(f"No folder ID mapped for office: {office}")
 
-    # Upload metadata
+    # Construct filename
+    now_str = datetime.now().strftime("%Y%m%d")
+    filename = f"{name_prefix}-{now_str}.pdf"
+
     file_metadata = {
         "name": filename,
         "parents": [folder_id],
         "mimeType": "application/pdf"
     }
 
-    # Upload content
     media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf")
 
     try:
-        service = get_drive_service()  # Your authorized Drive service client
+        service = get_drive_service()  # You MUST define this function to return an authenticated Drive client
         file = service.files().create(
             body=file_metadata,
             media_body=media,
@@ -472,6 +471,15 @@ def upload_pdf_and_get_link(pdf_bytes: bytes, name_prefix: str, *, office: str =
     except Exception as e:
         st.error(f"❌ Failed to upload and link PDF: {e}")
         raise
+
+
+def get_drive_service():
+    credentials = service_account.Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=["https://www.googleapis.com/auth/drive"]
+    )
+    return build("drive", "v3", credentials=credentials)
+
 
 
 # =========================
