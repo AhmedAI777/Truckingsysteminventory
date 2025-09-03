@@ -839,6 +839,25 @@ def export_tab():
 # Header, run_app, entry point
 # =========================
 
+def _config_check_ui():
+    """Checks if Service Account and Spreadsheet are accessible."""
+    try:
+        sa = _load_sa_info()
+        sa_email = sa.get("client_email", "(unknown)")
+        st.caption(f"Service Account: `{sa_email}`")
+    except Exception as e:
+        st.error("❌ Google Service Account credentials missing or unreadable.")
+        st.code(str(e))
+        st.stop()
+
+    try:
+        _ = get_sh()
+    except Exception as e:
+        st.error("❌ Cannot access spreadsheet with current Service Account.")
+        st.code(str(e))
+        st.stop()
+
+
 def render_header():
     c_title, c_user = st.columns([7, 3], gap="small")
     with c_title:
