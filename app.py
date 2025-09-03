@@ -1010,59 +1010,94 @@ def export_tab():
 # =========================
 
 def render_header():
-c_title, c_user = st.columns([7, 3], gap="small")
-with c_title:
-st.markdown(f"### {APP_TITLE}")
-st.caption(SUBTITLE)
-with c_user:
-username = st.session_state.get("username", "—")
-role = st.session_state.get("role", "—")
-st.markdown(f"**User:** {username} &nbsp;&nbsp;&nbsp; **Role:** {role}")
-if st.session_state.get("authenticated") and st.button("Logout"):
-do_logout()
-st.markdown("---")
+    c_title, c_user = st.columns([7, 3], gap="small")
+    with c_title:
+        st.markdown(f"### {APP_TITLE}")
+        st.caption(SUBTITLE)
+    with c_user:
+        username = st.session_state.get("username", "—")
+        role = st.session_state.get("role", "—")
+        st.markdown(f"**User:** {username} &nbsp;&nbsp;&nbsp; **Role:** {role}")
+        if st.session_state.get("authenticated") and st.button("Logout"):
+            do_logout()
+    st.markdown("---")
+
 
 def run_app():
-render_header()
-_config_check_ui()
-role = st.session_state.get("role", "").strip()
-if role == "Admin":
-tabs = st.tabs(["🧑‍💼 Employee Register", "📇 View Employees", "📝 Register Device",
-"📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log", "✅ Approvals", "⬇️ Export"])
-with tabs[0]: employee_register_tab()
-with tabs[1]: employees_view_tab()
-with tabs[2]: register_device_tab()
-with tabs[3]: inventory_tab()
-with tabs[4]: transfer_tab()
-with tabs[5]: history_tab()
-with tabs[6]: approvals_tab()
-with tabs[7]: export_tab()
-else:
-tabs = st.tabs(["📝 Register Device", "🔁 Transfer Device", "📋 View Inventory", "📜 Transfer Log"])
-with tabs[0]: register_device_tab()
-with tabs[1]: transfer_tab()
-with tabs[2]: inventory_tab()
-with tabs[3]: history_tab()
+    render_header()
+    _config_check_ui()
+    role = st.session_state.get("role", "").strip()
+
+    if role == "Admin":
+        tabs = st.tabs([
+            "🧑‍💼 Employee Register",
+            "📇 View Employees",
+            "📝 Register Device",
+            "📋 View Inventory",
+            "🔁 Transfer Device",
+            "📜 Transfer Log",
+            "✅ Approvals",
+            "⬇️ Export",
+        ])
+        with tabs[0]:
+            employee_register_tab()
+        with tabs[1]:
+            employees_view_tab()
+        with tabs[2]:
+            register_device_tab()
+        with tabs[3]:
+            inventory_tab()
+        with tabs[4]:
+            transfer_tab()
+        with tabs[5]:
+            history_tab()
+        with tabs[6]:
+            approvals_tab()
+        with tabs[7]:
+            export_tab()
+    else:
+        tabs = st.tabs([
+            "📝 Register Device",
+            "🔁 Transfer Device",
+            "📋 View Inventory",
+            "📜 Transfer Log",
+        ])
+        with tabs[0]:
+            register_device_tab()
+        with tabs[1]:
+            transfer_tab()
+        with tabs[2]:
+            inventory_tab()
+        with tabs[3]:
+            history_tab()
+
+
+# =========================
+# Entry Point
+# =========================
 
 st.session_state.setdefault("authenticated", False)
 st.session_state.setdefault("just_logged_out", False)
+
 if not st.session_state.authenticated and not st.session_state.just_logged_out:
-payload = _read_cookie()
-if payload:
-st.session_state.authenticated = True
-st.session_state.username = payload.get("u", "")
-st.session_state.role = payload.get("r", "Staff")
+    payload = _read_cookie()
+    if payload:
+        st.session_state.authenticated = True
+        st.session_state.username = payload.get("u", "")
+        st.session_state.role = payload.get("r", "Staff")
+
 if st.session_state.authenticated:
-run_app()
+    run_app()
 else:
-st.subheader("🔐 Sign In")
-with st.form("login_form"):
-username = st.text_input("Username", placeholder="Enter your username", key="login_user")
-password = st.text_input("Password", type="password", placeholder="Enter your password", key="login_pass")
-login_btn = st.form_submit_button("Login", type="primary")
-if login_btn:
-user = USERS.get(username)
-if user and _verify_password(password, user.get("password", "")):
-do_login(username, user.get("role", "Staff"))
-else:
-st.error("❌ Invalid username or password.")
+    st.subheader("🔐 Sign In")
+    with st.form("login_form"):
+        username = st.text_input("Username", placeholder="Enter your username", key="login_user")
+        password = st.text_input("Password", type="password", placeholder="Enter your password", key="login_pass")
+        login_btn = st.form_submit_button("Login", type="primary")
+
+    if login_btn:
+        user = USERS.get(username)
+        if user and _verify_password(password, user.get("password", "")):
+            do_login(username, user.get("role", "Staff"))
+        else:
+            st.error("❌ Invalid username
