@@ -19,6 +19,14 @@ from googleapiclient.errors import HttpError
 
 from PyPDF2 import PdfReader, PdfWriter
 from PyPDF2.generic import NameObject, DictionaryObject, BooleanObject, ArrayObject
+# =========================
+# Config
+# =========================
+APP_TITLE = "Tracking Inventory Management System"
+SUBTITLE = "Advanced Construction"
+DATE_FMT = "%Y-%m-%d %H:%M:%S"
+
+SESSION_TTL_DAYS = 30
 SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60
 COOKIE_NAME = "ac_auth_v2"
 
