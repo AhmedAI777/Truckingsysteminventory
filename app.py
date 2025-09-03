@@ -429,48 +429,90 @@ def move_drive_file(
         st.error(f"❌ Error moving file to structured folder: {e}")
 
 
-def upload_pdf_and_get_link(pdf_bytes: bytes, name_prefix: str, *, office: str = "Head Office (HO)") -> tuple[str, str]:
-    """
-    Uploads a PDF to the correct Google Drive folder and returns the shareable link and file ID.
-    """
+def upload_pdf_and_get_link(file_bytes: bytes, *, name: str, office: str, project_location: str) -> tuple[str, str]:
+    """Uploads a PDF to the proper office/project subfolder in Shared Drive and returns the link + file ID."""
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseUpload
+    from google.oauth2 import service_account
+    import io
 
-    # Set folder IDs by office
-    office_folder_ids = {
-        "Head Office (HO)": "1KatH0TQregGV_pajnySOGcPAXTNhex7L",  # Your shared drive folder
+    SHARED_DRIVE_ID = "1KatH0TQregGV_pajnySOGcPAXTNhex7L"  # your shared drive ID
+    ROOT_OFFICE_FOLDER_ID = {
+        "Head Office (HO)": "1KatH0TQregGV_pajnySOGcPAXTNhex7L",
+        # Add others if needed
     }
 
-    folder_id = office_folder_ids.get(office)
-    if not folder_id:
-        raise ValueError(f"No folder ID mapped for office: {office}")
+    creds = service_account.Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=["https://www.googleapis.com/auth/drive"]
+    )
+    service = build("drive", "v3", credentials=creds)
 
-    # Construct filename
-    now_str = datetime.now().strftime("%Y%m%d")
-    filename = f"{name_prefix}-{now_str}.pdf"
+    if office not in ROOT_OFFICE_FOLDER_ID:
+        raise ValueError(f"Unknown office: {office}")
 
+    office_folder_id = ROOT_OFFICE_FOLDER_ID[office]
+
+    # 🔍 Check if subfolder (like "JEDDAH (JEDDAH)") exists under office
+    query = f"'{office_folder_id}' in parents and name='{project_location}' and mimeType='application/vnd.google-apps.folder' and trashed = false"
+    results = service.files().list(
+        q=query,
+        corpora="drive",
+        driveId=SHARED_DRIVE_ID,
+        includeItemsFromAllDrives=True,
+        supportsAllDrives=True,
+        fields="files(id, name)"
+    ).execute()
+
+    items = results.get("files", [])
+
+    if items:
+        project_folder_id = items[0]["id"]
+    else:
+        # 📁 Create subfolder if not found
+        folder_metadata = {
+            "name": project_location,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [office_folder_id],
+            "driveId": SHARED_DRIVE_ID
+        }
+        folder = service.files().create(
+            body=folder_metadata,
+            fields="id",
+            supportsAllDrives=True
+        ).execute()
+        project_folder_id = folder.get("id")
+
+    # 📤 Upload PDF to resolved subfolder
+    filename = f"{name}.pdf"
     file_metadata = {
         "name": filename,
-        "parents": [folder_id],
+        "parents": [project_folder_id],
+        "driveId": SHARED_DRIVE_ID,
         "mimeType": "application/pdf"
     }
 
-    media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf")
+    media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype="application/pdf", resumable=True)
 
-    try:
-        service = get_drive_service()  # You MUST define this function to return an authenticated Drive client
-        file = service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields="id, webViewLink",
-            supportsAllDrives=True
-        ).execute()
+    file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields="id",
+        supportsAllDrives=True
+    ).execute()
 
-        file_id = file["id"]
-        web_link = file["webViewLink"]
-        return web_link, file_id
+    file_id = file.get("id")
 
-    except Exception as e:
-        st.error(f"❌ Failed to upload and link PDF: {e}")
-        raise
+    # 🌐 Make the file shareable
+    service.permissions().create(
+        fileId=file_id,
+        supportsAllDrives=True,
+        body={"type": "anyone", "role": "reader"}
+    ).execute()
+
+    link = f"https://drive.google.com/file/d/{file_id}/view"
+    return link, file_id
+
 
 
 def get_drive_service():
