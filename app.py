@@ -71,6 +71,9 @@ APPROVAL_META_COLS = [
 PENDING_DEVICE_COLS = INVENTORY_COLS + APPROVAL_META_COLS
 PENDING_TRANSFER_COLS = LOG_COLS + APPROVAL_META_COLS
 
+COUNTER_COLS = ["Action", "Serial Number", "Order Number", "Timestamp"]
+
+
 UNASSIGNED_LABEL = "Unassigned (Stock)"
 
 ICT_TEMPLATE_FILE_ID = st.secrets.get("drive", {}).get("template_file_id", "1BdbeVEpDuS_hpQgxNLGij5sl01azT_zG")
@@ -609,24 +612,33 @@ def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
 
 def read_worksheet(ws_title):
     try:
-        return _read_worksheet_cached(ws_title)
+        df = _read_worksheet_cached(ws_title)
+
+        # 🧼 Ensure column names are stripped of whitespace
+        df.columns = [str(col).strip() for col in df.columns]
+
+        return df
+
     except Exception as e:
         st.error(f"Error reading sheet '{ws_title}': {e}")
+
+        # Return default schema for known sheets
         if ws_title == INVENTORY_WS:
             return pd.DataFrame(columns=INVENTORY_COLS)
-        if ws_title == TRANSFERLOG_WS:
+        elif ws_title == TRANSFERLOG_WS:
             return pd.DataFrame(columns=LOG_COLS)
-        if ws_title == EMPLOYEE_WS:
+        elif ws_title == EMPLOYEE_WS:
             return pd.DataFrame(columns=EMPLOYEE_HEADERS)
-        if ws_title == PENDING_DEVICE_WS:
+        elif ws_title == PENDING_DEVICE_WS:
             return pd.DataFrame(columns=PENDING_DEVICE_COLS)
-        if ws_title == PENDING_TRANSFER_WS:
+        elif ws_title == PENDING_TRANSFER_WS:
             return pd.DataFrame(columns=PENDING_TRANSFER_COLS)
-        if ws_title == DEVICE_CATALOG_WS:
+        elif ws_title == DEVICE_CATALOG_WS:
             return pd.DataFrame(columns=CATALOG_COLS)
-        if ws_title == COUNTERS_WS:
-            return pd.DataFrame(columns=["Serial Number", "Project", "Location (KSA)", "Action", "Last Order No"])
-        return pd.DataFrame()
+        elif ws_title == COUNTERS_WS:
+            return pd.DataFrame(columns=["Action", "Serial Number", "Order Number", "Timestamp"])
+        else:
+            return pd.DataFrame()
 
 def write_worksheet(ws_title, df):
     if ws_title == INVENTORY_WS:
@@ -1037,34 +1049,40 @@ def ensure_counters_sheet_exists():
     get_or_create_ws(COUNTER_WS)
 
 def get_next_order_number(action_type: str, serial: str) -> str:
+    """Auto-generate next available order number based on action and serial."""
     ensure_counters_sheet_exists()
     df = read_worksheet(COUNTER_WS)
 
-    # Sanitize headers to avoid KeyError
-    df.columns = df.columns.str.strip()
+    # Ensure correct columns exist in case of mismatch
+    df.columns = [str(c).strip() for c in df.columns]
+    missing_cols = [c for c in COUNTER_COLS if c not in df.columns]
+    if missing_cols:
+        for col in missing_cols:
+            df[col] = ""
 
     serial_norm = normalize_serial(serial)
-    mask = (
-        (df["Action"].astype(str).str.upper() == action_type.upper()) &
-        (df["Serial Number"].astype(str).str.upper() == serial_norm.upper())
-    )
+    mask = (df["Action"].astype(str).str.upper() == action_type.upper()) & \
+           (df["Serial Number"].astype(str).str.upper() == serial_norm)
 
     if df.empty or not mask.any():
-        order = 1
+        next_no = 1
     else:
-        existing_orders = df.loc[mask, "Order Number"].astype(int)
-        order = existing_orders.max() + 1
+        next_no = df[mask]["Order Number"].astype(int).max() + 1
 
-    now = datetime.now().isoformat()
     new_row = pd.DataFrame([{
-        "Action": action_type.upper(),
+        "Action": action_type,
         "Serial Number": serial_norm,
-        "Order Number": order,
-        "Timestamp": now,
+        "Order Number": next_no,
+        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }])
-    df_out = pd.concat([df, new_row], ignore_index=True)
-    write_worksheet(COUNTER_WS, df_out)
-    return str(order).zfill(4)
+
+    # Enforce column order before writing
+    new_row = new_row[COUNTER_COLS]
+
+    append_to_worksheet(COUNTER_WS, new_row)
+
+    return str(next_no).zfill(4)  # Pad to 4 digits
+
 
 # =========================
 # Employee Lookup Helper
