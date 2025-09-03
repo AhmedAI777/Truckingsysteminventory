@@ -70,8 +70,8 @@ APPROVAL_META_COLS = [
     "Approval Status", "Approval PDF", "Approval File ID",
     "Submitted by", "Submitted at", "Approver", "Decision at"
 ]
-PENDING_DEVICE_COLS = INVENTORY_COLS + APPROVAL_META_COLS + ["Order No", "Folder ID"]
-PENDING_TRANSFER_COLS = LOG_COLS + APPROVAL_META_COLS + ["Order No", "Folder ID"]
+PENDING_DEVICE_COLS = INVENTORY_COLS + APPROVAL_META_COLS
+PENDING_TRANSFER_COLS = LOG_COLS + APPROVAL_META_COLS
 
 UNASSIGNED_LABEL = "Unassigned (Stock)"
 
@@ -276,7 +276,6 @@ def get_sh():
     st.error("Google Sheets API error while opening the spreadsheet.")
     raise last_exc
 
-
 # =========================
 # Drive helpers
 # =========================
@@ -336,21 +335,11 @@ def ensure_drive_subfolder(root_id: str, path_parts: list[str], drive_cli=None) 
             parent = newf["id"]
     return parent
 
-def move_drive_file(file_id: str, office: str, city_code: str, action: str, decision: str, row: dict = None):
+def move_drive_file(file_id: str, office: str, city_code: str, action: str, decision: str):
     drive_cli = _get_drive()
     root_id = st.secrets.get("drive", {}).get("approvals", "")
-
-    if not row:
-        # fallback path if no row info
-        path_parts = [office or "Head Office (HO)", city_code or "UNK", action, decision]
-    else:
-        project = row.get("Office", "UNK")
-        location = row.get("Location", "UNK")
-        dtype = row.get("Device Type", "UNK")
-        # ✅ reuse existing order number if available
-        order_number = row.get("Order Number") or next_order_number(project, location, dtype)
-        path_parts = build_storage_path(row, order_number, decision, action)
-
+    city_folder = city_folder_name(city_code)
+    path_parts = [office or "Head Office (HO)", city_folder, action, decision]
     new_folder_id = ensure_drive_subfolder(root_id, path_parts, drive_cli)
     file = drive_cli.files().get(fileId=file_id, fields="parents", supportsAllDrives=True).execute()
     prev_parents = ",".join(file.get("parents", []))
@@ -362,8 +351,7 @@ def move_drive_file(file_id: str, office: str, city_code: str, action: str, deci
         supportsAllDrives=True,
     ).execute()
 
-
-def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_code: str, action: str, row: dict = None) -> Tuple[str, str]:
+def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_code: str, action: str) -> Tuple[str, str]:
     if uploaded_file is None:
         st.error("No file selected.")
         return "", ""
@@ -377,150 +365,48 @@ def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_cod
         return "", ""
     if data[:4] != b"%PDF":
         st.warning("File doesn't start with %PDF header — continuing.")
-
     try:
         drive_cli = _get_drive()
         root_id = st.secrets.get("drive", {}).get("approvals", "")
         if not root_id:
             st.error("Drive approvals folder not configured in secrets.")
             return "", ""
-
-        # generate order number from counters
-        project = row.get("Office", "UNK") if row else "UNK"
-        location = row.get("Location", "UNK") if row else "UNK"
-        dtype = row.get("Device Type", "UNK") if row else "UNK"
-        order_number = next_order_number(project, location, dtype)
-
-        # build storage hierarchy
-        path_parts = build_storage_path(row or {}, order_number, decision="Pending", action=action)
-        folder_id = ensure_drive_subfolder(root_id, path_parts, drive_cli)
-
+        city_folder = city_folder_name(city_code)
+        folder_id = ensure_drive_subfolder(root_id, [office or "Head Office (HO)", city_folder, action, "Pending"], drive_cli)
         today = datetime.now().strftime("%Y%m%d")
         meta = {"name": f"{prefix}_{today}.pdf", "parents": [folder_id], "mimeType": "application/pdf"}
         media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
         file = drive_cli.files().create(
             body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
         ).execute()
-
     except HttpError as e:
-        st.error(f"Drive upload failed: {e}")
-        return "", ""
+        if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
+            if not ALLOW_OAUTH_FALLBACK:
+                st.error("Service Account quota exceeded and OAuth fallback disabled.")
+                return "", ""
+            try:
+                drive_cli = _get_user_drive()
+                file = drive_cli.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
+            except Exception as e2:
+                st.error(f"OAuth upload failed: {e2}")
+                return "", ""
+        else:
+            st.error(f"Drive upload failed: {e}")
+            return "", ""
     except Exception as e:
         st.error(f"Unexpected error uploading to Drive: {e}")
         return "", ""
-
     file_id = file.get("id", "")
     link = file.get("webViewLink", "")
     if not file_id:
         st.error("Drive did not return a file id.")
         return "", ""
-
     try:
         if st.secrets.get("drive", {}).get("public", True):
             _drive_make_public(file_id, drive_client=drive_cli)
     except Exception:
         pass
-
-    return link, file_id, order_number
-
-def next_order_number(project: str, location: str, dtype: str) -> str:
-    """Get next sequential order number from counters sheet."""
-    ws = get_or_create_ws(counters_WS)
-    df = pd.DataFrame(ws.get_all_records())
-
-    # Ensure columns exist
-    if df.empty:
-        df = pd.DataFrame(columns=["Project", "Location", "Type", "LastUsed"])
-
-    mask = (df["Project"] == project) & (df["Location"] == location) & (df["Type"] == dtype)
-
-    if mask.any():
-        idx = df[mask].index[0]
-        last = int(df.loc[idx, "LastUsed"])
-        new = last + 1
-        df.loc[idx, "LastUsed"] = new
-    else:
-        new = 1
-        df = pd.concat([df, pd.DataFrame([{
-            "Project": project,
-            "Location": location,
-            "Type": dtype,
-            "LastUsed": new
-        }])], ignore_index=True)
-
-    ws.clear()
-    set_with_dataframe(ws, df)
-
-    return f"{new:04d}"  # e.g. 0001, 0002
-
-def build_storage_path(row: dict, order_number: str, decision: str, action: str) -> list[str]:
-    """Builds a hierarchical folder path for storing files."""
-    project = str(row.get("Office", "UnknownProject")).strip() or "UnknownProject"
-    location = str(row.get("Location", "UNK")).strip() or "UNK"
-    dtype = str(row.get("Device Type", "UnknownType")).strip() or "UnknownType"
-    serial = normalize_serial(row.get("Serial Number", "")) or "NOSERIAL"
-    dt_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    return [project, location, dtype, serial, order_number, f"{action}_{decision}_{dt_str}"]
-
-# =========================
-# Drive helpers (base)
-# =========================
-def _drive_make_public(file_id: str, drive_client=None):
-    try:
-        cli = drive_client or _get_drive()
-        cli.permissions().create(
-            fileId=file_id, body={"role": "reader", "type": "anyone"},
-            fields="id", supportsAllDrives=True,
-        ).execute()
-    except Exception:
-        pass
-
-def _fetch_public_pdf_bytes(file_id: str, link: str) -> bytes:
-    try:
-        if file_id:
-            url = f"https://drive.google.com/uc?export=download&id={file_id}"
-            r = requests.get(url, timeout=15)
-            if r.ok and r.content[:4] == b"%PDF":
-                return r.content
-    except Exception:
-        pass
-    return b""
-
-def _drive_download_bytes(file_id: str) -> bytes:
-    buf = io.BytesIO()
-    request = _get_drive().files().get_media(fileId=file_id, supportsAllDrives=True)
-    downloader = MediaIoBaseDownload(buf, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    buf.seek(0)
-    return buf.read()
-
-CITY_MAP = {"Jeddah": "(JED)", "Riyadh": "(RUH)", "Taif": "(TIF)", "Madinah": "(MED)"}
-
-def city_folder_name(code: str) -> str:
-    if not code:
-        return "Unknown"
-    return CITY_MAP.get(code.upper(), f"{code.upper()} ({code.upper()})")
-
-def ensure_drive_subfolder(root_id: str, path_parts: list[str], drive_cli=None) -> str:
-    cli = drive_cli or _get_drive()
-    parent = root_id
-    for part in path_parts:
-        q = (
-            f"'{parent}' in parents and name='{part}' "
-            "and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        )
-        res = cli.files().list(q=q, spaces="drive", fields="files(id,name)", supportsAllDrives=True).execute()
-        items = res.get("files", [])
-        if items:
-            parent = items[0]["id"]
-        else:
-            meta = {"name": part, "mimeType": "application/vnd.google-apps.folder", "parents": [parent]}
-            newf = cli.files().create(body=meta, fields="id", supportsAllDrives=True).execute()
-            parent = newf["id"]
-    return parent
+    return link, file_id
 
 # =========================
 # Sheets helpers
@@ -574,16 +460,12 @@ def _read_employees_df() -> pd.DataFrame:
     ws = get_employee_ws()
     records = ws.get_all_records(expected_headers=EMPLOYEE_HEADERS)
     df = pd.DataFrame(records)
-    # normalize a few commonly used fields
     if "New Employeer" not in df.columns:
         df["New Employeer"] = df.get("Name", "")
     if "Email Address" not in df.columns:
         df["Email Address"] = df.get("Email", "")
     if "Office" not in df.columns:
         df["Office"] = df.get("Project", "")
-    # coerce Employee ID columns to str (avoid Arrow int/bytes errors)
-    if "APLUS" in df.columns:
-        df["APLUS"] = df["APLUS"].astype(str)
     return df
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -704,181 +586,6 @@ def get_device_from_catalog_by_serial(serial: str) -> dict:
         if k.startswith("__"):
             row.pop(k, None)
     return row
-
-# =========================
-# Counters (Project+Location+Type -> LastUsed)
-# =========================
-COUNTERS_WS = "counters"  # worksheet name for order number tracking
-
-def _devices_root_id() -> str:
-    return st.secrets.get("drive", {}).get("devices_root") or st.secrets.get("drive", {}).get("approvals", "")
-
-def _ensure_counter_cols(df: pd.DataFrame) -> pd.DataFrame:
-    for c in ["Project", "Location", "Type", "LastUsed"]:
-        if c not in df.columns:
-            df[c] = ""
-    try:
-        df["LastUsed"] = pd.to_numeric(df["LastUsed"], errors="coerce").fillna(0).astype(int)
-    except Exception:
-        df["LastUsed"] = 0
-    return df[["Project", "Location", "Type", "LastUsed"]]
-
-@st.cache_data(ttl=60, show_spinner=False)
-def _read_counters_df() -> pd.DataFrame:
-    ws = get_or_create_ws(COUNTERS_WS)
-    df = pd.DataFrame(ws.get_all_records())
-    if df.empty:
-        df = pd.DataFrame(columns=["Project", "Location", "Type", "LastUsed"])
-    return _ensure_counter_cols(df)
-
-def _write_counters_df(df: pd.DataFrame):
-    ws = get_or_create_ws(COUNTERS_WS)
-    ws.clear()
-    set_with_dataframe(ws, _ensure_counter_cols(df))
-    st.cache_data.clear()
-
-def next_order_number(project: str, location: str, typ: str) -> str:
-    project = (project or "UNK").strip()
-    location = (location or "UNK").strip()
-    typ = (typ or "REG").strip().upper()
-
-    df = _read_counters_df()
-    mask = (
-        (df["Project"].astype(str) == project) &
-        (df["Location"].astype(str) == location) &
-        (df["Type"].astype(str).str.upper() == typ)
-    )
-    if not mask.any():
-        df = pd.concat([df, pd.DataFrame([{
-            "Project": project, "Location": location, "Type": typ, "LastUsed": 0
-        }])], ignore_index=True)
-        idx = df.index[-1]
-    else:
-        idx = df[mask].index[0]
-
-    df.loc[idx, "LastUsed"] = int(df.loc[idx, "LastUsed"]) + 1
-    seq = f"{int(df.loc[idx, 'LastUsed']):04d}"
-    _write_counters_df(df)
-    return seq
-
-# =========================
-# Drive tree upload (Project/Location/Type/SN/####/Datetime/Status)
-# =========================
-def upload_pdf_to_device_tree(
-    uploaded_file,
-    *,
-    project: str,
-    location_name: str,
-    type_code: str,
-    serial: str,
-    status_folder: str = "Pending",
-) -> Tuple[str, str, str, str]:
-    """
-    OAuth-only: uploads with the signed-in user's Drive credentials.
-    Returns (link, file_id, seq, leaf_folder_id)
-    """
-    if uploaded_file is None:
-        st.error("No file selected.")
-        return "", "", "", ""
-
-    # read bytes
-    try:
-        data = uploaded_file.getvalue()
-    except Exception as e:
-        st.error(f"Failed reading the uploaded file: {e}")
-        return "", "", "", ""
-    if not data:
-        st.error("Uploaded file is empty.")
-        return "", "", "", ""
-
-    root_id = _devices_root_id()
-    if not root_id:
-        st.error("devices_root not configured in secrets.")
-        return "", "", "", ""
-
-    # prepare path components
-    seq = next_order_number(project or "UNK", location_name or "UNK", type_code or "REG")
-    dt_str = datetime.now().strftime("%Y%m%d-%H%M%S")
-    sn = normalize_serial(serial)
-    path_parts = [
-        project or "UNK",
-        location_name or "UNK",
-        (type_code or "REG").upper(),
-        sn or "NO-SERIAL",
-        seq,
-        dt_str,
-        status_folder,
-    ]
-    filename = f"{project}-{location_name}-{type_code}-{sn}-{seq}-{dt_str}.pdf"
-
-    # Use OAuth user Drive client exclusively
-    drive_cli = _get_user_drive()
-
-    # Ensure folders with the user client
-    folder_id = ensure_drive_subfolder(root_id, path_parts, drive_cli)
-
-    # Upload the file
-    meta = {"name": filename, "parents": [folder_id], "mimeType": "application/pdf"}
-    media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
-    try:
-        file = drive_cli.files().create(
-            body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
-        ).execute()
-    except HttpError as e:
-        st.error(f"Drive upload (OAuth) failed: {e}")
-        return "", "", "", ""
-
-    file_id = file.get("id", "")
-    link = file.get("webViewLink", "")
-    if not file_id:
-        st.error("Drive (OAuth) did not return a file id.")
-        return "", "", "", ""
-
-    # No 'public' toggle here — keep within your domain/user by default.
-    return link, file_id, seq, folder_id
-
-
-def move_drive_file_tree(file_id: str, decision: str):
-    """
-    OAuth-only: moves file from .../Pending to .../Approved or .../Rejected under the same Datetime node.
-    """
-    cli = _get_user_drive()
-    try:
-        f = cli.files().get(fileId=file_id, fields="id, parents", supportsAllDrives=True).execute()
-        if not f.get("parents"):
-            return
-        pending_id = f["parents"][0]
-        parent = cli.files().get(fileId=pending_id, fields="id, name, parents", supportsAllDrives=True).execute()
-        dt_parent = parent.get("parents", [None])[0]
-        if not dt_parent:
-            return
-
-        # ensure sibling folder (Approved/Rejected)
-        q = (
-            f"'{dt_parent}' in parents and name='{decision}' "
-            "and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        )
-        res = cli.files().list(q=q, spaces="drive", fields="files(id,name)", supportsAllDrives=True).execute()
-        if res.get("files"):
-            dest_id = res["files"][0]["id"]
-        else:
-            newf = cli.files().create(
-                body={"name": decision, "mimeType": "application/vnd.google-apps.folder", "parents": [dt_parent]},
-                fields="id",
-                supportsAllDrives=True,
-            ).execute()
-            dest_id = newf["id"]
-
-        cli.files().update(
-            fileId=file_id,
-            addParents=dest_id,
-            removeParents=pending_id,
-            fields="id, parents",
-            supportsAllDrives=True,
-        ).execute()
-    except HttpError as e:
-        st.error(f"Drive move (OAuth) failed: {e}")
-
 
 # =========================
 # PDF
@@ -1139,7 +846,29 @@ def build_transfer_pdf_values(row: dict, new_owner: str, emp_df: pd.DataFrame) -
     }
 
 # =========================
-# UI helpers/tabs
+# Approvals state writeback
+# =========================
+def _mark_decision(ws_name: str, row: dict, *, status: str):
+    df = read_worksheet(ws_name)
+    now_str = datetime.now().strftime(DATE_FMT)
+    actor = st.session_state.get("username", "")
+    serial = str(row.get("Serial Number", ""))
+    fid = str(row.get("Approval File ID", ""))
+    mask = (df["Serial Number"].astype(str) == serial)
+    if "Approval File ID" in df.columns and fid:
+        mask &= df["Approval File ID"].astype(str) == fid
+    idxs = df[mask].index.tolist()
+    if not idxs:
+        st.warning(f"Could not locate row for Serial {serial} in {ws_name}.")
+        return
+    idx = idxs[0]
+    df.loc[idx, "Approval Status"] = status
+    df.loc[idx, "Approver"] = actor
+    df.loc[idx, "Decision at"] = now_str
+    write_worksheet(ws_name, df)
+
+# =========================
+# UI
 # =========================
 def _ict_filename(serial: str, seq: str = "0008") -> str:
     return f"HO-JED-REG-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
@@ -1339,19 +1068,17 @@ def register_device_tab():
         now_str = datetime.now().strftime(DATE_FMT)
         actor = st.session_state.get("username", "")
         row = build_row(now_str, actor)
-        link, fid, seq, leaf_id = upload_pdf_to_device_tree(
+        link, fid = upload_pdf_and_get_link(
             pdf_file_obj,
-            project=row.get("Office", "Head Office (HO)"),
-            location_name=row.get("Location", ""),
-            type_code="REG",
-            serial=serial,
+            prefix=f"device_{normalize_serial(serial)}",
+            office="Head Office (HO)",
+            city_code=row.get("Location", ""),
+            action="Register",
         )
         if not fid:
             return
         pending = {
             **row,
-            "Order No": seq,
-            "Folder ID": leaf_id,
             "Approval Status": "Pending",
             "Approval PDF": link,
             "Approval File ID": fid,
@@ -1361,7 +1088,7 @@ def register_device_tab():
             "Decision at": "",
         }
         append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-        st.success(f"🕒 Device registration submitted for Admin approval. Order No: {seq}")
+        st.success("🕒 Device registration submitted for Admin approval.")
 
 def transfer_tab():
     st.subheader("🔄 Device Transfer")
@@ -1410,52 +1137,29 @@ def transfer_tab():
         row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
         now_str = datetime.now().strftime(DATE_FMT)
         actor = st.session_state.get("username", "")
-        link, fid, seq, leaf_id = upload_pdf_to_device_tree(
+        link, fid = upload_pdf_and_get_link(
             pdf_file,
-            project=row.get("Office", ""),
-            location_name=row.get("Location", ""),
-            type_code="TRN",
-            serial=serial,
+            prefix=f"transfer_{normalize_serial(serial)}",
+            office=row.get("Office", ""),
+            city_code=row.get("Location", ""),
+            action="Transfer",
         )
         if not fid:
             return
         pending = {
             **row,
-            "From owner": row.get("Current user", ""),
+            "From owner": row.get("Current user", ""),  # include actual current owner
             "To owner": new_owner,
             "Approval Status": "Pending",
             "Approval PDF": link,
             "Approval File ID": fid,
-            "Order No": seq,
-            "Folder ID": leaf_id,
             "Submitted by": actor,
             "Submitted at": now_str,
             "Approver": "",
             "Decision at": "",
         }
         append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
-        st.success(f"🕒 Transfer request submitted for Admin approval. Order No: {seq}")
-# =========================
-# Approvals state writeback & actions
-# =========================
-def _mark_decision(ws_name: str, row: dict, *, status: str):
-    df = read_worksheet(ws_name)
-    now_str = datetime.now().strftime(DATE_FMT)
-    actor = st.session_state.get("username", "")
-    serial = str(row.get("Serial Number", ""))
-    fid = str(row.get("Approval File ID", ""))
-    mask = (df["Serial Number"].astype(str) == serial)
-    if "Approval File ID" in df.columns and fid:
-        mask &= df["Approval File ID"].astype(str) == fid
-    idxs = df[mask].index.tolist()
-    if not idxs:
-        st.warning(f"Could not locate row for Serial {serial} in {ws_name}.")
-        return
-    idx = idxs[0]
-    df.loc[idx, "Approval Status"] = status
-    df.loc[idx, "Approver"] = actor
-    df.loc[idx, "Decision at"] = now_str
-    write_worksheet(ws_name, df)
+        st.success("🕒 Transfer request submitted for Admin approval.")
 
 def _approve_device_row(row: pd.Series):
     inv = read_worksheet(INVENTORY_WS)
@@ -1472,8 +1176,9 @@ def _approve_device_row(row: pd.Series):
     _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
     try:
         file_id = str(row.get("Approval File ID", "")).strip()
-        if file_id:
-            move_drive_file_tree(file_id, "Approved")
+        city_code = str(row.get("Location", "")).strip()
+        if file_id and city_code:
+            move_drive_file(file_id, "Head Office (HO)", city_code, "Register", "Approved")
     except Exception as e:
         st.warning(f"Approved, but couldn’t move PDF in Drive: {e}")
     # Optional: log initial assignment (Stock → current owner)
@@ -1489,7 +1194,7 @@ def _approve_device_row(row: pd.Series):
         append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
     except Exception:
         pass
-    st.success("✅ Device approved, added to Inventory, and PDF moved to Approved.")
+    st.success("✅ Device approved, added to Inventory, and PDF moved to Register/Approved.")
 
 def _approve_transfer_row(row: pd.Series):
     """Approve a transfer: log correct prev owner and refresh all person fields."""
@@ -1539,8 +1244,9 @@ def _approve_transfer_row(row: pd.Series):
     _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
     try:
         file_id = str(row.get("Approval File ID", "")).strip()
-        if file_id:
-            move_drive_file_tree(file_id, "Approved")
+        city_code = str(inv.loc[idx, "Location"]).strip() if "Location" in inv.columns else ""
+        if file_id and city_code:
+            move_drive_file(file_id, "Head Office (HO)", city_code, "Transfer", "Approved")
     except Exception as e:
         st.warning(f"Approved, but couldn’t move PDF in Drive: {e}")
     st.success(f"✅ Transfer approved. {prev_user or '(blank)'} → {new_user}. Contact details updated.")
@@ -1563,12 +1269,22 @@ def _reject_row(ws_title: str, row: pd.Series):
     df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
     write_worksheet(ws_title, df)
     try:
+        action = "Register" if ws_title == PENDING_DEVICE_WS else "Transfer"
         file_id = str(row.get("Approval File ID", "")).strip()
-        if file_id:
-            move_drive_file_tree(file_id, "Rejected")
+        city_code = ""
+        if action == "Register":
+            city_code = str(row.get("Location", "")).strip()
+        else:
+            sn = str(row.get("Serial Number", ""))
+            inv = read_worksheet(INVENTORY_WS)
+            hit = inv[inv["Serial Number"].astype(str) == sn]
+            if not hit.empty and "Location" in hit.columns:
+                city_code = str(hit.iloc[0]["Location"]).strip()
+        if file_id and city_code:
+            move_drive_file(file_id, "Head Office (HO)", city_code, action, "Rejected")
     except Exception as e:
         st.warning(f"Rejected, but couldn’t move PDF in Drive: {e}")
-    st.success("❌ Request rejected. PDF moved to Rejected.")
+    st.success("❌ Request rejected. PDF stored under Rejected for evidence.")
 
 def approvals_tab():
     st.subheader("✅ Approvals")
@@ -1580,7 +1296,7 @@ def approvals_tab():
         for i, row in pend_df.iterrows():
             if row.get("Approval Status", "") != "Pending":
                 continue
-            with st.expander(f"Serial: {row.get('Serial Number')} — {row.get('Device Type')} — Order {row.get('Order No','')}"):
+            with st.expander(f"Serial: {row.get('Serial Number')} — {row.get('Device Type')}"):
                 st.write(row.to_dict())
                 pdf_link = row.get("Approval PDF", "")
                 if pdf_link:
@@ -1603,7 +1319,7 @@ def approvals_tab():
         for i, row in pend_trf.iterrows():
             if row.get("Approval Status", "") != "Pending":
                 continue
-            with st.expander(f"Serial: {row.get('Serial Number')} — Transfer to {row.get('To owner')} — Order {row.get('Order No','')}"):
+            with st.expander(f"Serial: {row.get('Serial Number')} — Transfer to {row.get('To owner')}"):
                 st.write(row.to_dict())
                 pdf_link = row.get("Approval PDF", "")
                 if pdf_link:
@@ -1726,7 +1442,7 @@ if not st.session_state.authenticated and not st.session_state.get("just_logged_
     if payload:
         st.session_state.authenticated = True
         st.session_state.username = payload["u"]
-        st.session_state.role = payload.get("r", "Staff")
+        st.session_state.role = payload.get("r", "")
 
 if st.session_state.authenticated:
     run_app()
