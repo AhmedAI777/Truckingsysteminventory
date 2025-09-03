@@ -428,49 +428,50 @@ def move_drive_file(
     except Exception as e:
         st.error(f"❌ Error moving file to structured folder: {e}")
 
-def upload_pdf_and_get_link(
-    file_obj,
-    serial: str,
-    order_no: str,
-    project: str,
-    location: str,
-    action: str,
-    status: str,
-):
+def upload_pdf_and_get_link(pdf_bytes: bytes, name_prefix: str, *, office: str = "Head Office (HO)") -> tuple[str, str]:
+    """Uploads the PDF to Google Drive under the given office folder and returns the sharable link and file ID."""
+    from googleapiclient.http import MediaIoBaseUpload
+    import io
+
+    # Generate a filename
+    now_str = datetime.now().strftime("%Y%m%d")
+    filename = f"{name_prefix}-{now_str}.pdf"
+
+    # Choose the right folder based on office name
+    office_folder_ids = {
+        "Head Office (HO)": "1KatH0TQregGV_pajnySOGcPAXTNhex7L",  # <- This is your folder ID
+        # Add more offices here if needed
+    }
+    folder_id = office_folder_ids.get(office)
+    if not folder_id:
+        raise ValueError(f"No folder ID mapped for office: {office}")
+
+    # Upload metadata
+    file_metadata = {
+        "name": filename,
+        "parents": [folder_id],
+        "mimeType": "application/pdf"
+    }
+
+    # Upload content
+    media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf")
+
     try:
-        drive_cli = _get_drive()
-        file_metadata = {
-            'name': filename,
-            'parents': ["1KatH0TQregGV_pajnySOGcPAXTNhex7L"]  # Set this to your Shared Drive ID
-        }
-        media = MediaIoBaseUpload(BytesIO(pdf_bytes), mimetype='application/pdf')
-        file = drive_service.files().create(
+        service = get_drive_service()  # Your authorized Drive service client
+        file = service.files().create(
             body=file_metadata,
             media_body=media,
-            fields='id',
+            fields="id, webViewLink",
             supportsAllDrives=True
         ).execute()
 
-        file_id = uploaded.get("id", "")
-        if not file_id:
-            st.error("PDF upload failed: No file ID returned.")
-            return "", ""
+        file_id = file["id"]
+        web_link = file["webViewLink"]
+        return web_link, file_id
 
-        move_drive_file(
-            file_id=file_id,
-            project=project,
-            location=location,
-            action=action,
-            status=status,
-            serial=serial,
-            order_no=order_no,
-        )
-
-        link = f"https://drive.google.com/file/d/{file_id}/view"
-        return link, file_id
     except Exception as e:
         st.error(f"❌ Failed to upload and link PDF: {e}")
-        return "", ""
+        raise
 
 
 # =========================
