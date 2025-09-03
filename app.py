@@ -1463,12 +1463,13 @@ def register_device_tab():
         emp_row = _get_employee_row_by_name(emp_df, row["Current user"])
         order_no = get_next_order_number("REG", serial)
 
-        # Save the generated PDF to Drive
         link, fid = upload_pdf_and_get_link(
-            pdf_bytes,
-            name_prefix=f"device_{normalize_serial(serial)}",
-            office="Head Office (HO)"
+            pdf_file_obj,
+            name=f"REG-{serial}",
+            office="Head Office (HO)",
+            project_location="JEDDAH (JEDDAH)"  # or extract from user input
         )
+
 
 
         if not fid:
@@ -1542,14 +1543,12 @@ def transfer_tab():
         emp_row = _get_employee_row_by_name(emp_df, new_owner)
 
         link, fid = upload_pdf_and_get_link(
-            file_obj=pdf_file,
-            serial=normalize_serial(serial),
-            order_no=order_no,
-            project=emp_row.get("Project", "HO"),
-            location=emp_row.get("Location (KSA)", "JED"),
-            action="Transfer",
-            status="Pending",
+            pdf_file_obj,
+            name=f"REG-{serial}",
+            office="Head Office (HO)",
+            project_location="JEDDAH (JEDDAH)"  # or extract from user input
         )
+
 
         if not fid:
             return
