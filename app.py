@@ -1100,4 +1100,5 @@ else:
         if user and _verify_password(password, user.get("password", "")):
             do_login(username, user.get("role", "Staff"))
         else:
-            st.error("❌ Invalid username)
+            st.error("❌ Invalid username or password.")
+
