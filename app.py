@@ -628,28 +628,29 @@ def employee_register_tab():
         st.success(f"✅ Employee '{name}' registered.")
 
 def employees_view_tab():
-st.subheader("📇 Employees (mainlists)")
-df = read_worksheet(EMPLOYEE_WS)
-if df.empty:
-st.info("No employees found.")
-else:
-st.dataframe(df, use_container_width=True, hide_index=True)
+    st.subheader("📇 Employees (mainlists)")
+    df = read_worksheet(EMPLOYEE_WS)
+    if df.empty:
+        st.info("No employees found.")
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
 
 def inventory_tab():
-st.subheader("📋 Inventory")
-df = read_worksheet(INVENTORY_WS)
-if df.empty:
-st.warning("Inventory is empty.")
-else:
-st.dataframe(df, use_container_width=True, hide_index=True)
-
+    st.subheader("📋 Inventory")
+    df = read_worksheet(INVENTORY_WS)
+    if df.empty:
+        st.warning("Inventory is empty.")
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+        
 def history_tab():
-st.subheader("📜 Transfer Log")
-df = read_worksheet(TRANSFERLOG_WS)
-if df.empty:
-st.info("No transfer history found.")
-else:
-st.dataframe(df, use_container_width=True, hide_index=True)
+    st.subheader("📜 Transfer Log")
+    df = read_worksheet(TRANSFERLOG_WS)
+    if df.empty:
+        st.info("No transfer history found.")
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 def register_device_tab():
