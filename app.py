@@ -17,7 +17,6 @@ TRANSFERLOG_WS = "transfer_log"
 EMPLOYEE_WS = "mainlists"
 PENDING_DEVICE_WS = "pending_device_reg"
 PENDING_TRANSFER_WS = "pending_transfers"
-DEVICE_CATALOG_WS = st.secrets.get("sheets", {}).get("catalog_ws", "truckingsysteminventory")
 COUNTERS_WS = "counters"  # NEW: For order tracking
 
 # Column Layouts
