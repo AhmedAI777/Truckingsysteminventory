@@ -770,52 +770,37 @@ def _transfer_field_map() -> dict[str, str]:
         fm.update(override)
     return fm
 
-def fill_pdf_form(template_bytes: bytes, values: dict[str, str], *, flatten: bool = True) -> bytes:
-    """Fills a PDF form with given field values and optionally flattens it."""
-    reader = PdfReader(io.BytesIO(template_bytes))
-    writer = PdfWriter()
+def fill_pdf_form(tpl_bytes: bytes, values: dict, flatten: bool = False) -> bytes:
+    from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName
 
-    for page in reader.pages:
-        writer.add_page(page)
+    reader = PdfReader(fdata=tpl_bytes)
+    root = reader.trailer.get("/Root")
 
-    # Fill form fields
-    try:
-        writer.update_page_form_field_values(writer.pages[0], values)
-    except Exception:
-        pass
+    if not root or "/AcroForm" not in root:
+        st.warning("⚠️ This PDF does not contain form fields (AcroForm). Cannot fill automatically.")
+        return tpl_bytes  # return the original unchanged
 
-    # Ensure form appearance rendering
-    if "/AcroForm" in reader.trailer.get("/Root", {}):
-        acro_form = reader.trailer["/Root"]["/AcroForm"]
-        writer._root_object.update({NameObject("/AcroForm"): acro_form})
-    else:
-        writer._root_object.update({
-            NameObject("/AcroForm"): DictionaryObject()
-        })
+    form = root["/AcroForm"]
+    fields = form.get("/Fields", [])
 
-    writer._root_object["/AcroForm"].update({
-        NameObject("/NeedAppearances"): BooleanObject(True)
-    })
+    if not fields:
+        st.warning("⚠️ No fillable fields found in the PDF form.")
+        return tpl_bytes
 
-    # Optionally flatten the form to make it non-editable
+    for field in fields:
+        key = field.get("/T")
+        if key:
+            key_str = key[1:-1] if key.startswith("(") and key.endswith(")") else key
+            if key_str in values:
+                field.update(PdfDict(V=str(values[key_str])))
+
     if flatten:
-        try:
-            fields = writer._root_object["/AcroForm"].get("/Fields")
-            if fields:
-                for f in fields:
-                    obj = f.get_object()
-                    if obj.get("/FT") == NameObject("/Tx"):
-                        flags = int(obj.get("/Ff", 0))
-                        obj.update({NameObject("/Ff"): flags | 1})  # Set read-only bit
-            writer._root_object["/AcroForm"].update({NameObject("/Fields"): ArrayObject()})
-        except Exception:
-            pass
+        form.update(PdfDict(NeedAppearances=PdfName("false")))
 
-    out = io.BytesIO()
-    writer.write(out)
-    out.seek(0)
-    return out.read()
-
+    output = io.BytesIO()
+    writer = PdfWriter()
+    writer.write(output, reader)
+    return output.getvalue()
 
 # =========================
 # Employee Helpers
