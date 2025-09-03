@@ -440,16 +440,17 @@ def upload_pdf_and_get_link(
     try:
         drive_cli = _get_drive()
         file_metadata = {
-            "name": f"{serial}-{order_no}.pdf",
-            "mimeType": "application/pdf"
+            'name': filename,
+            'parents': ["1KatH0TQregGV_pajnySOGcPAXTNhex7L"]  # Set this to your Shared Drive ID
         }
-        media = MediaIoBaseUpload(file_obj, mimetype="application/pdf")
-        uploaded = drive_cli.files().create(
+        media = MediaIoBaseUpload(BytesIO(pdf_bytes), mimetype='application/pdf')
+        file = drive_service.files().create(
             body=file_metadata,
             media_body=media,
-            fields="id",
+            fields='id',
             supportsAllDrives=True
         ).execute()
+
         file_id = uploaded.get("id", "")
         if not file_id:
             st.error("PDF upload failed: No file ID returned.")
