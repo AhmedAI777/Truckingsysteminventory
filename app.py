@@ -665,6 +665,73 @@ def approvals_tab():
                         _reject_row(PENDING_TRANSFER_WS, row)
                         st.rerun()
 
+def _reject_row(ws_title: str, row: pd.Series):
+    df = read_worksheet(ws_title)
+
+    # Identify the row
+    key_cols = [c for c in ["Serial Number", "Submitted at", "Submitted by", "To owner"] if c in df.columns]
+    mask = pd.Series([True] * len(df))
+    for c in key_cols:
+        mask &= df[c].astype(str) == str(row.get(c, ""))
+    idxs = df[mask].index.tolist()
+
+    if not idxs and "Serial Number" in df.columns:
+        idxs = df[df["Serial Number"].astype(str) == str(row.get("Serial Number", ""))].index.tolist()
+    if not idxs:
+        st.warning("Could not locate row to mark as Rejected.")
+        return
+
+    idx = idxs[0]
+
+    # Update status in sheet
+    df.loc[idx, "Approval Status"] = "Rejected"
+    df.loc[idx, "Approver"] = st.session_state.get("username", "")
+    df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
+    write_worksheet(ws_title, df)
+
+    # Attempt to move the existing file in Drive
+    try:
+        action = "Register" if ws_title == PENDING_DEVICE_WS else "Transfer"
+        file_id = str(row.get("Approval File ID", "")).strip()
+        serial = str(row.get("Serial Number", "")).strip()
+
+        if not serial or not file_id:
+            return
+
+        # Lookup employee/project/location
+        if action == "Register":
+            emp_df = read_worksheet(EMPLOYEE_WS)
+            emp_row = _get_employee_row_by_name(emp_df, row.get("Current user", ""))
+            project = emp_row.get("Project", "HO")
+            location = emp_row.get("Location (KSA)", "JED")
+        else:
+            inv = read_worksheet(INVENTORY_WS)
+            inv_row = inv[inv["Serial Number"].astype(str) == serial]
+            if inv_row.empty:
+                st.warning("Could not determine project/location from inventory for rejection.")
+                return
+            inv_row = inv_row.iloc[0].to_dict()
+            project = inv_row.get("Project", "HO")
+            location = inv_row.get("Location", "JED")
+
+        # ✅ Move the existing PDF into Rejected folder
+        move_drive_file(
+            file_id=file_id,
+            project=project,
+            location=location,
+            action=action,
+            status="Rejected",
+            serial=serial,
+            order_no="0000",  # dummy order number for rejection
+        )
+
+    except Exception as e:
+        st.warning(f"Rejected, but couldn’t move PDF in Drive: {e}")
+
+    st.success("❌ Request rejected. PDF moved under Rejected for evidence.")
+
+
+
 
 # =========================
 # Export Tab
