@@ -421,6 +421,37 @@ def get_or_create_ws(title, rows=500, cols=80):
 # UI Tabs
 # =========================
 
+def read_worksheet(ws_title):
+    try:
+        df = _read_worksheet_cached(ws_title)
+
+        # 🧼 Ensure column names are stripped of whitespace
+        df.columns = [str(col).strip() for col in df.columns]
+
+        return df
+
+    except Exception as e:
+        st.error(f"Error reading sheet '{ws_title}': {e}")
+
+        # Return default schema for known sheets
+        if ws_title == INVENTORY_WS:
+            return pd.DataFrame(columns=INVENTORY_COLS)
+        elif ws_title == TRANSFERLOG_WS:
+            return pd.DataFrame(columns=LOG_COLS)
+        elif ws_title == EMPLOYEE_WS:
+            return pd.DataFrame(columns=EMPLOYEE_HEADERS)
+        elif ws_title == PENDING_DEVICE_WS:
+            return pd.DataFrame(columns=PENDING_DEVICE_COLS)
+        elif ws_title == PENDING_TRANSFER_WS:
+            return pd.DataFrame(columns=PENDING_TRANSFER_COLS)
+        elif ws_title == DEVICE_CATALOG_WS:
+            return pd.DataFrame(columns=CATALOG_COLS)
+        elif ws_title == COUNTERS_WS:
+            return pd.DataFrame(columns=["Action", "Serial Number", "Order Number", "Timestamp"])
+        else:
+            return pd.DataFrame()
+
+
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee")
     with st.form("employee_register", clear_on_submit=True):
