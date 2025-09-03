@@ -1,42 +1,9 @@
 import os, re, io, json, hmac, time, base64, hashlib
-from datetime import datetime, timedelta
-from typing import Tuple
-
-import pandas as pd
-import requests
-import streamlit as st
-
-st.set_page_config(page_title="Tracking Inventory Management System", layout="wide")
-
-import gspread
-from gspread_dataframe import set_with_dataframe
-import extra_streamlit_components as stx
-from streamlit import session_state as ss
-
-from google.oauth2.service_account import Credentials
-from google.oauth2.credentials import Credentials as UserCredentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
-from googleapiclient.errors import HttpError
-from PyPDF2 import PdfReader, PdfWriter
-from PyPDF2.generic import NameObject, DictionaryObject, BooleanObject, ArrayObject
-
-# =========================
-# Config
-# =========================
-APP_TITLE = "Tracking Inventory Management System"
-SUBTITLE = "Advanced Construction"
-DATE_FMT = "%Y-%m-%d %H:%M:%S"
-
-SESSION_TTL_DAYS = 30
 SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60
 COOKIE_NAME = "ac_auth_v2"
 
 SHEET_URL_DEFAULT = "https://docs.google.com/spreadsheets/d/1SHp6gOW4ltsyOT41rwo85e_LELrHkwSwKN33K6XNHFI/edit"
 
-# Worksheet Names
 INVENTORY_WS = "truckinventory"
 TRANSFERLOG_WS = "transfer_log"
 EMPLOYEE_WS = "mainlists"
@@ -45,29 +12,23 @@ PENDING_TRANSFER_WS = "pending_transfers"
 DEVICE_CATALOG_WS = st.secrets.get("sheets", {}).get("catalog_ws", "truckingsysteminventory")
 COUNTERS_WS = "counters"
 
-# Column Layouts
-INVENTORY_COLS = [
-    "Serial Number", "Device Type", "Brand", "Model", "CPU",
-    "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
-    "Current user", "Previous User", "TO",
-    "Department", "Email Address", "Contact Number", "Location", "Office",
-    "Notes", "Date issued", "Registered by"
-]
-CATALOG_COLS = [
-    "Serial Number", "Device Type", "Brand", "Model", "CPU",
-    "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
-]
+INVENTORY_COLS = ["Serial Number", "Device Type", "Brand", "Model", "CPU",
+"Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
+"Current user", "Previous User", "TO",
+"Department", "Email Address", "Contact Number", "Location", "Office",
+"Notes", "Date issued", "Registered by"]
+
+CATALOG_COLS = ["Serial Number", "Device Type", "Brand", "Model", "CPU",
+"Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size"]
+
 LOG_COLS = ["Device Type", "Serial Number", "From owner", "To owner", "Date issued", "Registered by"]
 
-EMPLOYEE_HEADERS = [
-    "Name", "Email", "APLUS", "Active", "Position", "Department",
-    "Location (KSA)", "Project", "Microsoft Teams", "Mobile Number"
-]
+EMPLOYEE_HEADERS = ["Name", "Email", "APLUS", "Active", "Position", "Department",
+"Location (KSA)", "Project", "Microsoft Teams", "Mobile Number"]
 
-APPROVAL_META_COLS = [
-    "Approval Status", "Approval PDF", "Approval File ID",
-    "Submitted by", "Submitted at", "Approver", "Decision at"
-]
+APPROVAL_META_COLS = ["Approval Status", "Approval PDF", "Approval File ID",
+"Submitted by", "Submitted at", "Approver", "Decision at"]
+
 PENDING_DEVICE_COLS = INVENTORY_COLS + APPROVAL_META_COLS
 PENDING_TRANSFER_COLS = LOG_COLS + APPROVAL_META_COLS
 COUNTER_COLS = ["Action", "Serial Number", "Order Number", "Timestamp"]
@@ -77,14 +38,12 @@ UNASSIGNED_LABEL = "Unassigned (Stock)"
 ICT_TEMPLATE_FILE_ID = st.secrets.get("drive", {}).get("template_file_id", "1BdbeVEpDuS_hpQgxNLGij5sl01azT_zG")
 TRANSFER_TEMPLATE_FILE_ID = st.secrets.get("drive", {}).get("transfer_template_file_id", ICT_TEMPLATE_FILE_ID)
 
-# =========================
-# Cookie Manager
-# =========================
-COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
+CITY_MAP = {"Jeddah": "JED", "Riyadh": "RUH", "Taif": "TIF", "Madinah": "MED"}
 
-# Initialize session refs
+# Cookie manager
+COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 for k in ("reg_pdf_ref", "transfer_pdf_ref"):
-    ss.setdefault(k, None)
+ss.setdefault(k, None)
 
 # =========================
 # Auth
@@ -431,42 +390,57 @@ def get_or_create_ws(title, rows=500, cols=80):
 # UI Tabs
 # =========================
 
+# =========================
+# UI Tabs
+# =========================
+
 def employee_register_tab():
-    st.subheader("🧑‍💼 Register New Employee")
-    with st.form("employee_register", clear_on_submit=True):
-        name = st.text_input("Full Name *")
-        emp_id = st.text_input("Employee ID (APLUS) *")
-        email = st.text_input("Email")
-        mobile = st.text_input("Mobile Number")
-        position = st.text_input("Position")
-        dept = st.text_input("Department")
-        loc = st.text_input("Location (KSA)")
-        proj = st.text_input("Project / Office")
-        teams = st.text_input("Microsoft Teams")
-        submitted = st.form_submit_button("Save Employee", type="primary")
+st.subheader("🧑‍💼 Register New Employee")
+with st.form("employee_register", clear_on_submit=True):
+name = st.text_input("Full Name *")
+emp_id = st.text_input("Employee ID (APLUS) *")
+email = st.text_input("Email")
+mobile = st.text_input("Mobile Number")
+position = st.text_input("Position")
+dept = st.text_input("Department")
+loc = st.text_input("Location (KSA)")
+proj = st.text_input("Project / Office")
+teams = st.text_input("Microsoft Teams")
+submitted = st.form_submit_button("Save Employee", type="primary")
+if submitted:
+if not name.strip() or not emp_id.strip():
+st.error("Name and Employee ID are required.")
+return
+new_row = pd.DataFrame([{ "Name": name.strip(), "Email": email.strip(), "APLUS": emp_id.strip(),
+"Active": "Yes", "Position": position.strip(), "Department": dept.strip(),
+"Location (KSA)": loc.strip(), "Project": proj.strip(), "Microsoft Teams": teams.strip(),
+"Mobile Number": mobile.strip()}])
+append_to_worksheet(EMPLOYEE_WS, new_row)
+st.success(f"✅ Employee '{name}' registered.")
 
-    if submitted:
-        if not name.strip() or not emp_id.strip():
-            st.error("Name and Employee ID are required.")
-            return
+def employees_view_tab():
+st.subheader("📇 Employees (mainlists)")
+df = read_worksheet(EMPLOYEE_WS)
+if df.empty:
+st.info("No employees found.")
+else:
+st.dataframe(df, use_container_width=True, hide_index=True)
 
-        new_row = pd.DataFrame(
-            [{
-                "Name": name.strip(),
-                "Email": email.strip(),
-                "APLUS": emp_id.strip(),
-                "Active": "Yes",
-                "Position": position.strip(),
-                "Department": dept.strip(),
-                "Location (KSA)": loc.strip(),
-                "Project": proj.strip(),
-                "Microsoft Teams": teams.strip(),
-                "Mobile Number": mobile.strip(),
-            }]
-        )
+def inventory_tab():
+st.subheader("📋 Inventory")
+df = read_worksheet(INVENTORY_WS)
+if df.empty:
+st.warning("Inventory is empty.")
+else:
+st.dataframe(df, use_container_width=True, hide_index=True)
 
-        append_to_worksheet(EMPLOYEE_WS, new_row)
-        st.success(f"✅ Employee '{name}' registered.")
+def history_tab():
+st.subheader("📜 Transfer Log")
+df = read_worksheet(TRANSFERLOG_WS)
+if df.empty:
+st.info("No transfer history found.")
+else:
+st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 def register_device_tab():
@@ -822,96 +796,63 @@ def export_tab():
 
 
 # =========================
-# App Runner
+# Header, run_app, entry point
 # =========================
-def render_header():
-    c_title, c_user = st.columns([7, 3], gap="small")
-    with c_title:
-        st.markdown(f"### {APP_TITLE}")
-        st.caption(SUBTITLE)
-    with c_user:
-        username = st.session_state.get("username", "—")
-        role = st.session_state.get("role", "—")
-        st.markdown(f"**User:** {username} &nbsp;&nbsp;&nbsp; **Role:** {role}")
-        if st.session_state.get("authenticated") and st.button("Logout"):
-            do_logout()
-    st.markdown("---")
 
-def _config_check_ui():
-    try:
-        sa = _load_sa_info()
-        sa_email = sa.get("client_email", "(unknown)")
-        st.caption(f"Service Account: `{sa_email}`")
-    except Exception as e:
-        st.error("❌ Google Service Account credentials missing or unreadable.")
-        st.code(str(e))
-        st.stop()
-    try:
-        _ = get_sh()
-    except Exception as e:
-        st.error("❌ Cannot access spreadsheet with current Service Account.")
-        st.code(str(e))
-        st.stop()
+def render_header():
+c_title, c_user = st.columns([7, 3], gap="small")
+with c_title:
+st.markdown(f"### {APP_TITLE}")
+st.caption(SUBTITLE)
+with c_user:
+username = st.session_state.get("username", "—")
+role = st.session_state.get("role", "—")
+st.markdown(f"**User:** {username} &nbsp;&nbsp;&nbsp; **Role:** {role}")
+if st.session_state.get("authenticated") and st.button("Logout"):
+do_logout()
+st.markdown("---")
 
 def run_app():
-    render_header()
-    _config_check_ui()
-    role = st.session_state.get("role", "").strip()
-    if role == "Admin":
-        tabs = st.tabs([
-            "🧑‍💼 Employee Register",
-            "📇 View Employees",
-            "📝 Register Device",
-            "📋 View Inventory",
-            "🔁 Transfer Device",
-            "📜 Transfer Log",
-            "✅ Approvals",
-            "⬇️ Export",
-        ])
-        with tabs[0]: employee_register_tab()
-        with tabs[1]: employees_view_tab()
-        with tabs[2]: register_device_tab()
-        with tabs[3]: inventory_tab()
-        with tabs[4]: transfer_tab()
-        with tabs[5]: history_tab()
-        with tabs[6]: approvals_tab()
-        with tabs[7]: export_tab()
-    else:
-        tabs = st.tabs([
-            "📝 Register Device",
-            "🔁 Transfer Device",
-            "📋 View Inventory",
-            "📜 Transfer Log"
-        ])
-        with tabs[0]: register_device_tab()
-        with tabs[1]: transfer_tab()
-        with tabs[2]: inventory_tab()
-        with tabs[3]: history_tab()
+render_header()
+_config_check_ui()
+role = st.session_state.get("role", "").strip()
+if role == "Admin":
+tabs = st.tabs(["🧑‍💼 Employee Register", "📇 View Employees", "📝 Register Device",
+"📋 View Inventory", "🔁 Transfer Device", "📜 Transfer Log", "✅ Approvals", "⬇️ Export"])
+with tabs[0]: employee_register_tab()
+with tabs[1]: employees_view_tab()
+with tabs[2]: register_device_tab()
+with tabs[3]: inventory_tab()
+with tabs[4]: transfer_tab()
+with tabs[5]: history_tab()
+with tabs[6]: approvals_tab()
+with tabs[7]: export_tab()
+else:
+tabs = st.tabs(["📝 Register Device", "🔁 Transfer Device", "📋 View Inventory", "📜 Transfer Log"])
+with tabs[0]: register_device_tab()
+with tabs[1]: transfer_tab()
+with tabs[2]: inventory_tab()
+with tabs[3]: history_tab()
 
-# =========================
-# Entry Point
-# =========================
 st.session_state.setdefault("authenticated", False)
 st.session_state.setdefault("just_logged_out", False)
-
 if not st.session_state.authenticated and not st.session_state.just_logged_out:
-    payload = _read_cookie()
-    if payload:
-        st.session_state.authenticated = True
-        st.session_state.username = payload.get("u", "")
-        st.session_state.role = payload.get("r", "Staff")
-
+payload = _read_cookie()
+if payload:
+st.session_state.authenticated = True
+st.session_state.username = payload.get("u", "")
+st.session_state.role = payload.get("r", "Staff")
 if st.session_state.authenticated:
-    run_app()
+run_app()
 else:
-    st.subheader("🔐 Sign In")
-    with st.form("login_form"):
-        username = st.text_input("Username", placeholder="Enter your username", key="login_user")
-        password = st.text_input("Password", type="password", placeholder="Enter your password", key="login_pass")
-        login_btn = st.form_submit_button("Login", type="primary")
-    if login_btn:
-        user = USERS.get(username)
-        if user and _verify_password(password, user.get("password", "")):
-            do_login(username, user.get("role", "Staff"))
-        else:
-            st.error("❌ Invalid username or password.")
+st.subheader("🔐 Sign In")
+with st.form("login_form"):
+username = st.text_input("Username", placeholder="Enter your username", key="login_user")
+password = st.text_input("Password", type="password", placeholder="Enter your password", key="login_pass")
+login_btn = st.form_submit_button("Login", type="primary")
+if login_btn:
+user = USERS.get(username)
+if user and _verify_password(password, user.get("password", "")):
+do_login(username, user.get("role", "Staff"))
+else:
+st.error("❌ Invalid username or password.")
