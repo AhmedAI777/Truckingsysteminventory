@@ -772,35 +772,45 @@ def _transfer_field_map() -> dict[str, str]:
 
 def fill_pdf_form(tpl_bytes: bytes, values: dict, flatten: bool = False) -> bytes:
     from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName
+    import io
 
-    reader = PdfReader(fdata=tpl_bytes)
-    root = reader.trailer.get("/Root")
+    try:
+        reader = PdfReader(fdata=tpl_bytes)
 
-    if not root or "/AcroForm" not in root:
-        st.warning("⚠️ This PDF does not contain form fields (AcroForm). Cannot fill automatically.")
-        return tpl_bytes  # return the original unchanged
+        if not reader or not hasattr(reader, "trailer") or reader.trailer is None:
+            st.warning("⚠️ This PDF cannot be read. It might be corrupt or not a valid form.")
+            return tpl_bytes
 
-    form = root["/AcroForm"]
-    fields = form.get("/Fields", [])
+        root = reader.trailer.get("/Root", {})
+        if not root or "/AcroForm" not in root:
+            st.warning("⚠️ This PDF does not contain form fields (AcroForm).")
+            return tpl_bytes
 
-    if not fields:
-        st.warning("⚠️ No fillable fields found in the PDF form.")
-        return tpl_bytes
+        form = root["/AcroForm"]
+        fields = form.get("/Fields", [])
 
-    for field in fields:
-        key = field.get("/T")
-        if key:
-            key_str = key[1:-1] if key.startswith("(") and key.endswith(")") else key
-            if key_str in values:
-                field.update(PdfDict(V=str(values[key_str])))
+        if not fields:
+            st.warning("⚠️ No fillable fields found in the PDF form.")
+            return tpl_bytes
 
-    if flatten:
-        form.update(PdfDict(NeedAppearances=PdfName("false")))
+        for field in fields:
+            key = field.get("/T")
+            if key:
+                key_str = key[1:-1] if key.startswith("(") and key.endswith(")") else key
+                if key_str in values:
+                    field.update(PdfDict(V=str(values[key_str])))
 
-    output = io.BytesIO()
-    writer = PdfWriter()
-    writer.write(output, reader)
-    return output.getvalue()
+        if flatten:
+            form.update(PdfDict(NeedAppearances=PdfName("false")))
+
+        output = io.BytesIO()
+        PdfWriter().write(output, reader)
+        return output.getvalue()
+
+    except Exception as e:
+        st.error(f"❌ Error filling PDF form: {e}")
+        return tpl_bytes  # Return the original bytes on failure
+
 
 # =========================
 # Employee Helpers
