@@ -1,7 +1,3 @@
-# app.py — Tracking Inventory Management System (Streamlit + Google Sheets/Drive)
-# deps: streamlit gspread gspread-dataframe extra-streamlit-components pandas
-#       google-auth google-api-python-client requests PyPDF2 xlsxwriter
-
 import os, re, io, json, hmac, time, base64, hashlib
 from datetime import datetime, timedelta
 from typing import Tuple
@@ -47,6 +43,7 @@ EMPLOYEE_WS = "mainlists"
 PENDING_DEVICE_WS = "pending_device_reg"
 PENDING_TRANSFER_WS = "pending_transfers"
 DEVICE_CATALOG_WS = st.secrets.get("sheets", {}).get("catalog_ws", "truckingsysteminventory")
+COUNTERS_WS = "Counters"
 
 INVENTORY_COLS = [
     "Serial Number", "Device Type", "Brand", "Model", "CPU",
@@ -459,6 +456,35 @@ def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_cod
 
     return link, file_id
 
+# =========================
+# Counters helpers
+# =========================
+COUNTER_COLS = ["Action", "Serial Number", "Order Number", "Timestamp"]
+
+def get_or_create_counters_ws():
+    sh = get_sh()
+    try:
+        return sh.worksheet(COUNTERS_WS)
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title=COUNTERS_WS, rows=100, cols=len(COUNTER_COLS))
+        ws.append_row(COUNTER_COLS)
+        return ws
+
+def get_next_order_number(action: str, serial: str) -> int:
+    ws = get_or_create_counters_ws()
+    df = pd.DataFrame(ws.get_all_records())
+    if df.empty:
+        order_num = 1
+    else:
+        order_num = int(df["Order Number"].max()) + 1
+    row = {
+        "Action": action,
+        "Serial Number": serial,
+        "Order Number": order_num,
+        "Timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    append_to_worksheet(COUNTERS_WS, pd.DataFrame([row]))
+    return order_num
 
 # =========================
 # Sheets helpers
@@ -918,15 +944,20 @@ def _mark_decision(ws_name: str, row: dict, *, status: str):
     df.loc[idx, "Approver"] = actor
     df.loc[idx, "Decision at"] = now_str
     write_worksheet(ws_name, df)
+# =========================
+# Filename helpers
+# =========================
+def _ict_filename(serial: str) -> str:
+    seq = str(get_next_order_number("REG", serial)).zfill(4)
+    return f"HO-JED-REG-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
+
+def _transfer_filename(serial: str) -> str:
+    seq = str(get_next_order_number("TRF", serial)).zfill(4)
+    return f"HO-JED-TRN-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
 
 # =========================
 # UI
 # =========================
-def _ict_filename(serial: str, seq: str = "0008") -> str:
-    return f"HO-JED-REG-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
-
-def _transfer_filename(serial: str, seq: str = "0009") -> str:
-    return f"HO-JED-TRN-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
 
 def render_header():
     c_title, c_user = st.columns([7, 3], gap="small")
@@ -1508,3 +1539,4 @@ else:
             do_login(username, user.get("role", "Staff"))
         else:
             st.error("❌ Invalid username or password.")
+
