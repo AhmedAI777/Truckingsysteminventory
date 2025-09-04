@@ -334,8 +334,12 @@ def _get_office_from_project(project: str, mainlist_df: pd.DataFrame) -> str:
     return match.iloc[0].get("Office", f"{project} Office")
 
 
-def _office_folder_name(office: str) -> str:
-    return office.strip()
+def _office_code(office: str) -> str:
+    """Extract the short code in parentheses from the office/project string."""
+    if "(" in office and ")" in office:
+        return office.split("(")[-1].split(")")[0].strip()
+    return office.strip().upper()
+
 
 
 
