@@ -28,9 +28,6 @@ from googleapiclient.errors import HttpError
 from PyPDF2 import PdfReader, PdfWriter
 from PyPDF2.generic import NameObject, DictionaryObject, BooleanObject, ArrayObject
 
-
-
-
 # =========================
 # Config
 # =========================
@@ -96,7 +93,6 @@ for k in ("reg_pdf_ref", "transfer_pdf_ref"):
 # =========================
 # Auth (cookie)
 # =========================
-
 def _load_users_from_secrets():
     cfg = st.secrets.get("auth", {}).get("users", [])
     return {u["username"]: {"password": u.get("password", ""), "role": u.get("role", "Staff")} for u in cfg}
@@ -221,6 +217,43 @@ def _get_gc():
 def _get_drive():
     return build("drive", "v3", credentials=_get_creds())
 
+@st.cache_resource(show_spinner=False)
+def _get_user_creds():
+    cfg = st.secrets.get("google_oauth", {})
+    token_json = cfg.get("token_json")
+    if token_json:
+        try:
+            info = json.loads(token_json)
+        except Exception:
+            info = None
+        if not info:
+            st.error("google_oauth.token_json is not valid JSON.")
+            st.stop()
+        creds = UserCredentials.from_authorized_user_info(info, OAUTH_SCOPES)
+        if not creds.valid and creds.refresh_token:
+            creds.refresh(Request())
+        return creds
+    if os.environ.get("LOCAL_OAUTH", "0") == "1":
+        client_id = cfg.get("client_id")
+        client_secret = cfg.get("client_secret")
+        if not client_id or not client_secret:
+            st.error("[google_oauth] client_id/client_secret required for local OAuth.")
+            st.stop()
+        flow = InstalledAppFlow.from_client_config(
+            {
+                "installed": {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                    "token_uri": "https://oauth2.googleapis.com/token",
+                    "redirect_uris": ["http://localhost"],
+                }
+            },
+            scopes=OAUTH_SCOPES,
+        )
+        return flow.run_local_server(port=0)
+    st.error("OAuth token not configured.")
+    st.stop()
 
 @st.cache_resource(show_spinner=False)
 def _get_user_drive():
@@ -332,57 +365,48 @@ def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_cod
         return "", ""
     if data[:4] != b"%PDF":
         st.warning("File doesn't start with %PDF header — continuing.")
-
     try:
         drive_cli = _get_drive()
         root_id = st.secrets.get("drive", {}).get("approvals", "")
         if not root_id:
             st.error("Drive approvals folder not configured in secrets.")
             return "", ""
-
         city_folder = city_folder_name(city_code)
-        folder_id = ensure_drive_subfolder(
-            root_id,
-            [office or "Head Office (HO)", city_folder, action, "Pending"],
-            drive_cli,
-        )
-
+        folder_id = ensure_drive_subfolder(root_id, [office or "Head Office (HO)", city_folder, action, "Pending"], drive_cli)
         today = datetime.now().strftime("%Y%m%d")
-        meta = {
-            "name": f"{prefix}_{today}.pdf",
-            "parents": [folder_id],
-            "mimeType": "application/pdf",
-        }
+        meta = {"name": f"{prefix}_{today}.pdf", "parents": [folder_id], "mimeType": "application/pdf"}
         media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
-
         file = drive_cli.files().create(
-            body=meta,
-            media_body=media,
-            fields="id, webViewLink",
-            supportsAllDrives=True,
+            body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
         ).execute()
-
     except HttpError as e:
-        st.error(f"Drive upload failed: {e}")
-        return "", ""
+        if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
+            if not ALLOW_OAUTH_FALLBACK:
+                st.error("Service Account quota exceeded and OAuth fallback disabled.")
+                return "", ""
+            try:
+                drive_cli = _get_user_drive()
+                file = drive_cli.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
+            except Exception as e2:
+                st.error(f"OAuth upload failed: {e2}")
+                return "", ""
+        else:
+            st.error(f"Drive upload failed: {e}")
+            return "", ""
     except Exception as e:
         st.error(f"Unexpected error uploading to Drive: {e}")
         return "", ""
-
     file_id = file.get("id", "")
     link = file.get("webViewLink", "")
     if not file_id:
         st.error("Drive did not return a file id.")
         return "", ""
-
     try:
         if st.secrets.get("drive", {}).get("public", True):
             _drive_make_public(file_id, drive_client=drive_cli)
     except Exception:
         pass
-
     return link, file_id
-
 
 # =========================
 # Sheets helpers
