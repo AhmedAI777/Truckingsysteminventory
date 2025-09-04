@@ -353,7 +353,7 @@ def move_drive_file(
     # 🔍 Get city code from employee sheet if possible
     emp_df = read_worksheet(EMPLOYEE_WS)
     emp_row = _find_emp_row_by_name(emp_df, emp_name)
-    city_code = _get_emp_value(emp_row, "Location (KSA)", "Location", "City") if emp_row is not None else city_code
+    city_code = _get_emp_value(emp_row, "Location (KSA)", "Location", "City")
 
     # 📁 Ensure full folder structure: Office > City > Action > Decision
     parent_id = ensure_drive_subfolder(drive, root_id, _office_folder_name(office))
