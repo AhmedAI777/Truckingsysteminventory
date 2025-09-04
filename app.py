@@ -654,31 +654,35 @@ def get_device_from_catalog_by_serial(serial: str) -> dict:
     return row
 
 def get_next_order_number(action: str, serial: str) -> str:
-    ws = get_or_create_ws("COUNTERS_WS")
-    df = pd.DataFrame(ws.get_all_records())
-    now = datetime.now().strftime(DATE_FMT)
+    df = read_worksheet(COUNTERS_WS)
+
+    # ✅ Ensure the sheet has the correct headers
+    expected_cols = ["Action", "Serial Number", "Order Number", "Timestamp"]
+    if df.empty or not all(col in df.columns for col in expected_cols):
+        df = pd.DataFrame(columns=expected_cols)
+
     serial = normalize_serial(serial)
-    
-    # Find existing entry
+
+    # 🔍 Check for existing entry
     match = df[(df["Action"] == action) & (df["Serial Number"] == serial)]
-    
     if match.empty:
         new_number = 1
     else:
-        last_num = int(match.iloc[0]["Order Number"])
-        new_number = last_num + 1
-        df = df[~((df["Action"] == action) & (df["Serial Number"] == serial))]  # remove old row
+        new_number = match["Order Number"].astype(int).max() + 1
 
+    # 🆕 Add new record to counters sheet
     new_row = {
         "Action": action,
         "Serial Number": serial,
-        "Order Number": f"{new_number:04d}",
-        "Timestamp": now
+        "Order Number": new_number,
+        "Timestamp": datetime.now().isoformat(),
     }
+
     df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-    set_with_dataframe(ws, df)
-    
-    return new_row["Order Number"]
+    write_worksheet(COUNTERS_WS, df)
+
+    return f"{new_number:03d}"
+
 
 
 # =========================
