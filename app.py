@@ -505,45 +505,49 @@ def move_drive_file(
 #         pass
 #     return link, file_id
 
+def upload_to_drive(drive, file_name: str, file_obj: BytesIO, parent_id: str) -> str:
+    file = drive.CreateFile({
+        'title': file_name,
+        'parents': [{'id': parent_id}]
+    })
+    # Ensure we're uploading binary content
+    file.content = file_obj.getvalue()
+    file.Upload()
+    return file['id']
+
+
 def upload_pdf_and_get_link(
     pdf_file: BytesIO,
     prefix: str,
     office: str,
     action: str,
     serial: str,
-    emp_name: str = "",
-    decision: str = "Approved",
+    emp_name: str,
+    decision: str = "Approved"
 ) -> Tuple[str, str]:
     drive_cli = _get_drive()
     root_id = st.secrets.get("drive", {}).get("approvals", "")
 
-    # 🔍 Load required data
     emp_df = read_worksheet(EMPLOYEE_WS)
-    mainlist_df = read_worksheet(EMPLOYEE_WS)  # Assuming Project+Office in same sheet
+    mainlist_df = read_worksheet(EMPLOYEE_WS)  # if project & office in same
 
-    # 🧍 Get employee record
     emp_row = _find_emp_row_by_name(emp_df, emp_name)
     project = _get_emp_value(emp_row, "Project")
-    city_name = _get_emp_value(emp_row, "Location (KSA)", "Location", "City")
-    city_code = city_folder_name(city_name)
+    city_code = city_folder_name(_get_emp_value(emp_row, "Location (KSA)", "Location", "City"))
     office = _get_office_from_project(project, mainlist_df)
     office_code = _office_code(office)
 
-    # 📁 Ensure full folder structure: Office > City > Action > Decision
     parent_id = ensure_drive_subfolder(drive_cli, root_id, office)
     parent_id = ensure_drive_subfolder(drive_cli, parent_id, city_code)
     parent_id = ensure_drive_subfolder(drive_cli, parent_id, action)
     parent_id = ensure_drive_subfolder(drive_cli, parent_id, decision)
 
-    # 🔢 Generate order number and filename
     order = get_next_order_number(action, serial)
-    file_name = f"{office_code}-{city_code}-{action[:3].upper()}-{normalize_serial(serial)}-{order}"
+    file_name = f"{office_code}-{city_code}-{action[:3].upper()}-{normalize_serial(serial)}-{order}.pdf"
 
-    # 📤 Upload file
     file_id = upload_to_drive(drive_cli, file_name, pdf_file, parent_id)
-    file_link = f"https://drive.google.com/file/d/{file_id}/view"
-
-    return file_link, file_id
+    link = f"https://drive.google.com/file/d/{file_id}/view"
+    return link, file_id
 
 
 # =========================
