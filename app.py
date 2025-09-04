@@ -209,8 +209,8 @@ def _load_sa_info() -> dict:
                 sa = {}
     pk = sa.get("private_key", "")
     if isinstance(pk, str) and "\n" in pk:
-        sa["private_key"] = pk.replace("\n", "
-")
+        sa["private_key"] = pk.replace("\\n", "\n")
+        
     if "private_key" not in sa:
         raise RuntimeError("Service account JSON missing or incomplete.")
     return sa
