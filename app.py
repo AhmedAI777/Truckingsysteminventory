@@ -398,31 +398,36 @@ def move_drive_file(
     city_code: str,
     action: str,
     decision: str,
-    emp_name: str = "",
+    emp_name: str
 ):
     drive_cli = _get_drive()
     root_id = st.secrets.get("drive", {}).get("approvals", "")
-    
+    if not root_id or not fid:
+        return
 
-    # 🔍 Get city code from employee sheet if possible
+    # 🔍 Lookup employee/project info
     emp_df = read_worksheet(EMPLOYEE_WS)
-    emp_row = _find_emp_row_by_name(emp_df, emp_name)
-    city_code = _get_emp_value(emp_row, "Location (KSA)", "Location", "City")
+    mainlist_df = read_worksheet(MAINLIST_WS)
 
-    # 📁 Ensure full folder structure: Office > City > Action > Decision
-    parent_id = ensure_drive_subfolder(drive_cli, root_id, _office_folder_name(office))
-    parent_id = ensure_drive_subfolder(drive_cli, parent_id, city_folder_name(city_code))
+    emp_row = _find_emp_row_by_name(emp_df, emp_name)
+    project = _get_emp_value(emp_row, "Project")
+    city_code = city_folder_name(_get_emp_value(emp_row, "Location (KSA)", "Location", "City"))
+    office = _get_office_from_project(project, mainlist_df)
+    office_code = _office_code(office)
+
+    # 📁 Ensure folders exist
+    parent_id = ensure_drive_subfolder(drive_cli, root_id, office)
+    parent_id = ensure_drive_subfolder(drive_cli, parent_id, city_code)
     parent_id = ensure_drive_subfolder(drive_cli, parent_id, action)
     parent_id = ensure_drive_subfolder(drive_cli, parent_id, decision)
 
-    # 🚚 Move file to new folder
-    drive.CreateFile({'id': fid}).Upload()  # Refresh metadata
-    drive.auth.service.files().update(
-        fileId=fid,
-        addParents=parent_id,
-        removeParents=root_id,
-        fields='id, parents'
-    ).execute()
+    # 🔢 Filename with order number
+    order = get_next_order_number(action, serial)
+    new_name = f"{office_code}-{city_code}-{action[:3].upper()}-{normalize_serial(serial)}-{order}"
+
+    # 📤 Move and rename
+    update_drive_file_location_and_name(drive_cli, fid, parent_id, new_name)
+
 
 
 
