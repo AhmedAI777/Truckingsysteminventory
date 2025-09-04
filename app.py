@@ -312,32 +312,62 @@ def _drive_download_bytes(file_id: str) -> bytes:
     buf.seek(0)
     return buf.read()
 
-CITY_MAP = {"Jeddah": "(JED)", "Riyadh": "(RUH)", "Taif": "(TIF)", "Madinah": "(MED)"}
+CITY_MAP = {
+    "JEDDAH": "JED",
+    "RIYADH": "RUH",
+    "TAIF": "TIF",
+    "MADINAH": "MED"
+}
 
-def city_folder_name(code: str) -> str:
-    if not code:
-        return "Unknown"
-    return CITY_MAP.get(code.upper(), f"{code.upper()} ({code.upper()})")
+def city_folder_name(city: str) -> str:
+    if not city:
+        return "UNKNOWN"
+    return CITY_MAP.get(city.strip().upper(), city.strip().upper())
+
+def _get_office_from_project(project: str, mainlist_df: pd.DataFrame) -> str:
+    if not project or mainlist_df.empty:
+        return "Unknown Office"
+
+    match = mainlist_df[mainlist_df["Project"] == project]
+    if match.empty:
+        return f"{project} Office"  # fallback
+    return match.iloc[0].get("Office", f"{project} Office")
+
+
+def _office_folder_name(office: str) -> str:
+    return office.strip()
+
+
+
+#this is the correct code below
+# def city_folder_name(code: str) -> str:
+#     if not code:
+#         return "Unknown"
+#     return CITY_MAP.get(code.upper(), f"{code.upper()} ({code.upper()})")
+
 
 def ensure_drive_subfolder(drive, parent_id: str, folder_name: str) -> str:
+    # Check if folder already exists
     query = (
-        f"'{parent_id}' in parents and name = '{folder_name}' and "
-        "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        f"'{parent_id}' in parents and name = '{folder_name}' "
+        "and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     )
-    response = drive.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
-    files = response.get('files', [])
+    results = drive.files().list(q=query, spaces="drive", fields="files(id, name)").execute()
+    folders = results.get("files", [])
 
-    if files:
-        return files[0]['id']
+    if folders:
+        return folders[0]["id"]
 
-    # Create folder if not found
+    # Create folder if not exists
     file_metadata = {
-        'name': folder_name,
-        'mimeType': 'application/vnd.google-apps.folder',
-        'parents': [parent_id]
+        "name": folder_name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent_id],
     }
-    folder = drive.files().create(body=file_metadata, fields='id').execute()
-    return folder.get('id')
+    folder = drive.files().create(body=file_metadata, fields="id").execute()
+    return folder["id"]
+
+
 #the correct one is below
 # def ensure_drive_subfolder(root_id: str, path_parts: list[str], drive_cli=None) -> str:
 #     cli = drive_cli or _get_drive()
