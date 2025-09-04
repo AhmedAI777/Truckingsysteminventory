@@ -332,44 +332,57 @@ def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_cod
         return "", ""
     if data[:4] != b"%PDF":
         st.warning("File doesn't start with %PDF header — continuing.")
+
     try:
         drive_cli = _get_drive()
         root_id = st.secrets.get("drive", {}).get("approvals", "")
         if not root_id:
             st.error("Drive approvals folder not configured in secrets.")
             return "", ""
+
         city_folder = city_folder_name(city_code)
-        folder_id = ensure_drive_subfolder(root_id, [office or "Head Office (HO)", city_folder, action, "Pending"], drive_cli)
+        folder_id = ensure_drive_subfolder(
+            root_id,
+            [office or "Head Office (HO)", city_folder, action, "Pending"],
+            drive_cli,
+        )
+
         today = datetime.now().strftime("%Y%m%d")
-        meta = {"name": f"{prefix}_{today}.pdf", "parents": [folder_id], "mimeType": "application/pdf"}
+        meta = {
+            "name": f"{prefix}_{today}.pdf",
+            "parents": [folder_id],
+            "mimeType": "application/pdf",
+        }
         media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
+
         file = drive_cli.files().create(
-            body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
+            body=meta,
+            media_body=media,
+            fields="id, webViewLink",
+            supportsAllDrives=True,
         ).execute()
+
     except HttpError as e:
         st.error(f"Drive upload failed: {e}")
         return "", ""
-
-            except Exception as e2:
-                st.error(f"OAuth upload failed: {e2}")
-                return "", ""
-        else:
-            st.error(f"Drive upload failed: {e}")
-            return "", ""
     except Exception as e:
         st.error(f"Unexpected error uploading to Drive: {e}")
         return "", ""
+
     file_id = file.get("id", "")
     link = file.get("webViewLink", "")
     if not file_id:
         st.error("Drive did not return a file id.")
         return "", ""
+
     try:
         if st.secrets.get("drive", {}).get("public", True):
             _drive_make_public(file_id, drive_client=drive_cli)
     except Exception:
         pass
+
     return link, file_id
+
 
 # =========================
 # Sheets helpers
