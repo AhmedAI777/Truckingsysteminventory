@@ -347,7 +347,7 @@ def move_drive_file(
     emp_name: str = "",
 ):
     drive_cli = _get_drive()
-    root_id = st.secrets("drive", {}).get("approvals", "")
+    root_id = st.secrets.get("drive", {}).get("approvals", "")
     
 
     # 🔍 Get city code from employee sheet if possible
@@ -456,7 +456,7 @@ def upload_pdf_and_get_link(
     emp_name: str = "",
 ) -> Tuple[str, str]:
     drive_cli = _get_drive()
-    root_id = st.secrets("drive", {}).get("approvals", "")
+    root_id = st.secrets.get("drive", {}).get("approvals", "")
 
     # 🔍 Get employee location
     emp_df = read_worksheet(EMPLOYEE_WS)
