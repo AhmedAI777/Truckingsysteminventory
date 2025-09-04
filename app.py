@@ -319,23 +319,43 @@ def city_folder_name(code: str) -> str:
         return "Unknown"
     return CITY_MAP.get(code.upper(), f"{code.upper()} ({code.upper()})")
 
-def ensure_drive_subfolder(root_id: str, path_parts: list[str], drive_cli=None) -> str:
-    cli = drive_cli or _get_drive()
-    parent = root_id
-    for part in path_parts:
-        q = (
-            f"'{parent}' in parents and name='{part}' "
-            "and mimeType='application/vnd.google-apps.folder' and trashed=false"
-        )
-        res = cli.files().list(q=q, spaces="drive", fields="files(id,name)", supportsAllDrives=True).execute()
-        items = res.get("files", [])
-        if items:
-            parent = items[0]["id"]
-        else:
-            meta = {"name": part, "mimeType": "application/vnd.google-apps.folder", "parents": [parent]}
-            newf = cli.files().create(body=meta, fields="id", supportsAllDrives=True).execute()
-            parent = newf["id"]
-    return parent
+def ensure_drive_subfolder(drive, parent_id: str, folder_name: str) -> str:
+    query = (
+        f"'{parent_id}' in parents and name = '{folder_name}' and "
+        "mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+    )
+    response = drive.files().list(q=query, spaces='drive', fields='files(id, name)').execute()
+    files = response.get('files', [])
+
+    if files:
+        return files[0]['id']
+
+    # Create folder if not found
+    file_metadata = {
+        'name': folder_name,
+        'mimeType': 'application/vnd.google-apps.folder',
+        'parents': [parent_id]
+    }
+    folder = drive.files().create(body=file_metadata, fields='id').execute()
+    return folder.get('id')
+#the correct one is below
+# def ensure_drive_subfolder(root_id: str, path_parts: list[str], drive_cli=None) -> str:
+#     cli = drive_cli or _get_drive()
+#     parent = root_id
+#     for part in path_parts:
+#         q = (
+#             f"'{parent}' in parents and name='{part}' "
+#             "and mimeType='application/vnd.google-apps.folder' and trashed=false"
+#         )
+#         res = cli.files().list(q=q, spaces="drive", fields="files(id,name)", supportsAllDrives=True).execute()
+#         items = res.get("files", [])
+#         if items:
+#             parent = items[0]["id"]
+#         else:
+#             meta = {"name": part, "mimeType": "application/vnd.google-apps.folder", "parents": [parent]}
+#             newf = cli.files().create(body=meta, fields="id", supportsAllDrives=True).execute()
+#             parent = newf["id"]
+#     return parent
 
 def move_drive_file(
     fid: str,
