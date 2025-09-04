@@ -97,28 +97,6 @@ for k in ("reg_pdf_ref", "transfer_pdf_ref"):
 # Auth (cookie)
 # =========================
 
-import streamlit as st
-from google_auth_oauthlib.flow import Flow
-
-CLIENT_ID = st.secrets["gcp_oauth"]["client_id"]
-CLIENT_SECRET = st.secrets["gcp_oauth"]["client_secret"]
-REDIRECT_URI = st.secrets["gcp_oauth"]["redirect_uri"]
-
-flow = Flow.from_client_config(
-    {
-        "web": {
-            "client_id": "client_id",
-            "project_id": "truckingsysteminventory",
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_secret": "client_secret",
-            "redirect_uris": ["https://advancedconstructiontrackingsystem.streamlit.app/"],
-        }
-    },
-    scopes=["https://drive.google.com/drive/my-drive?dmr=1&ec=wgc-drive-globalnav-goto"]  # change scope as needed
-)
-
 def _load_users_from_secrets():
     cfg = st.secrets.get("auth", {}).get("users", [])
     return {u["username"]: {"password": u.get("password", ""), "role": u.get("role", "Staff")} for u in cfg}
@@ -206,6 +184,48 @@ if "cookie_bootstrapped" not in st.session_state:
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
 OAUTH_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 ALLOW_OAUTH_FALLBACK = st.secrets.get("drive", {}).get("allow_oauth_fallback", True)
+
+
+import streamlit as st
+from google_auth_oauthlib.flow import Flow
+import google.auth.transport.requests
+import requests
+
+CLIENT_ID = st.secrets["gcp_oauth"]["client_id"]
+CLIENT_SECRET = st.secrets["gcp_oauth"]["client_secret"]
+REDIRECT_URI = st.secrets["gcp_oauth"]["redirect_uri"]
+
+# Step 1: Start OAuth Flow
+if "credentials" not in st.session_state:
+    flow = Flow.from_client_config(
+        {
+            "web": {
+                "client_id": CLIENT_ID,
+                "client_secret": CLIENT_SECRET,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [REDIRECT_URI],
+            }
+        },
+        scopes=["https://www.googleapis.com/auth/drive.file""]  # change as needed
+    )
+
+    flow.redirect_uri = REDIRECT_URI
+    auth_url, state = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true"
+    )
+
+    st.markdown(f"[Click here to Sign in with Google]({auth_url})")
+
+# Step 2: Handle the redirect with ?code= in URL
+if "code" in st.query_params:
+    flow.fetch_token(code=st.query_params["code"])
+    creds = flow.credentials
+    st.session_state.credentials = creds
+
+    st.success("OAuth login successful!")
+
 
 def _load_sa_info() -> dict:
     raw = st.secrets.get("gcp_service_account", {})
