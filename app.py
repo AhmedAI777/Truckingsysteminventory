@@ -347,13 +347,9 @@ def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_cod
             body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
         ).execute()
     except HttpError as e:
-        if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
-            if not ALLOW_OAUTH_FALLBACK:
-                st.error("Service Account quota exceeded and OAuth fallback disabled.")
-                return "", ""
-            try:
-                drive_cli = _get_user_drive()
-                file = drive_cli.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
+        st.error(f"Drive upload failed: {e}")
+        return "", ""
+
             except Exception as e2:
                 st.error(f"OAuth upload failed: {e2}")
                 return "", ""
