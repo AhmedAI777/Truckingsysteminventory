@@ -317,23 +317,58 @@ def city_folder_name(code: str) -> str:
         return "Unknown"
     return CITY_MAP.get(code.upper(), f"{code.upper()} ({code.upper()})")
 
-def ensure_drive_subfolder(root_id: str, path_parts: list[str], drive_cli=None) -> str:
+def ensure_drive_subfolder(root_id: str, path_parts: list[str], drive_cli=None, *, debug: bool = False) -> str:
+    """
+    Ensure that a nested folder path exists in Google Drive.
+    - Reuses existing folders under the current parent (no duplicates)
+    - Creates only the missing nodes
+    - When debug=True, prints a step-by-step trace with IDs
+    Returns the final folder ID.
+    """
     cli = drive_cli or _get_drive()
     parent = root_id
-    for part in path_parts:
+    trace = []
+    for raw_part in path_parts:
+        part = (raw_part or "").strip() or "Unknown"
+        # Escape single quotes for Drive query
+        part_q = part.replace("'", "\\'")
         q = (
-            f"'{parent}' in parents and name='{part}' "
+            f"'{parent}' in parents and name='{part_q}' "
             "and mimeType='application/vnd.google-apps.folder' and trashed=false"
         )
-        res = cli.files().list(q=q, spaces="drive", fields="files(id,name)", supportsAllDrives=True).execute()
-        items = res.get("files", [])
+        try:
+            res = cli.files().list(
+                q=q, spaces="drive", fields="files(id,name)", supportsAllDrives=True
+            ).execute()
+            items = res.get("files", [])
+        except Exception as e:
+            st.error(f"Drive API error while searching for folder '{part}': {e}")
+            items = []
+
         if items:
             parent = items[0]["id"]
+            trace.append({"name": part, "id": parent, "action": "reused"})
         else:
-            meta = {"name": part, "mimeType": "application/vnd.google-apps.folder", "parents": [parent]}
-            newf = cli.files().create(body=meta, fields="id", supportsAllDrives=True).execute()
-            parent = newf["id"]
+            meta = {
+                "name": part,
+                "mimeType": "application/vnd.google-apps.folder",
+                "parents": [parent],
+            }
+            try:
+                newf = cli.files().create(
+                    body=meta, fields="id,name", supportsAllDrives=True
+                ).execute()
+                parent = newf["id"]
+                trace.append({"name": part, "id": parent, "action": "created"})
+            except Exception as e:
+                st.error(f"❌ Failed to create subfolder '{part}': {e}")
+                raise
+
+    if debug:
+        st.caption("📂 Drive folder resolution")
+        st.code("\n".join([f"{i+1}. {t['name']}  [{t['action']}]\n   id: {t['id']}" for i, t in enumerate(trace)]))
     return parent
+    
 
 def move_drive_file(file_id: str, office: str, city_code: str, action: str, decision: str):
     drive_cli = _get_drive()
@@ -355,6 +390,8 @@ def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_cod
     if uploaded_file is None:
         st.error("No file selected.")
         return "", ""
+
+    # read bytes
     try:
         data = uploaded_file.getvalue()
     except Exception as e:
@@ -365,47 +402,61 @@ def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_cod
         return "", ""
     if data[:4] != b"%PDF":
         st.warning("File doesn't start with %PDF header — continuing.")
+
+    drive_cfg = st.secrets.get("drive", {})
+    root_id = drive_cfg.get("approvals", "")
+    if not root_id:
+        st.error("❌ Missing [drive].approvals in secrets.toml")
+        return "", ""
+
     try:
         drive_cli = _get_drive()
-        root_id = st.secrets.get("drive", {}).get("approvals", "")
-        if not root_id:
-            st.error("Drive approvals folder not configured in secrets.")
-            return "", ""
-        city_folder = city_folder_name(city_code)
-        folder_id = ensure_drive_subfolder(root_id, [office or "Head Office (HO)", city_folder, action, "Pending"], drive_cli)
+        # Build path parts; we’ll reuse existing folders if they already exist
+        ofc = (office or "Head Office (HO)").strip()
+        city = city_folder_name(city_code or "UNK")
+        path = [ofc, city, action, "Pending"]
+
+        st.caption("🧭 Target path under approvals:")
+        st.code(" / ".join(path))
+
+        folder_id = ensure_drive_subfolder(root_id, path, drive_cli, debug=True)
+
         today = datetime.now().strftime("%Y%m%d")
-        meta = {"name": f"{prefix}_{today}.pdf", "parents": [folder_id], "mimeType": "application/pdf"}
+        filename = f"{prefix}_{today}.pdf"
+        meta = {"name": filename, "parents": [folder_id], "mimeType": "application/pdf"}
         media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
+
+        st.info(f"⬆️ Uploading file: {filename}")
         file = drive_cli.files().create(
-            body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
+            body=meta,
+            media_body=media,
+            fields="id, webViewLink, parents",
+            supportsAllDrives=True
         ).execute()
     except HttpError as e:
-        if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
-            if not ALLOW_OAUTH_FALLBACK:
-                st.error("Service Account quota exceeded and OAuth fallback disabled.")
-                return "", ""
-            try:
-                drive_cli = _get_user_drive()
-                file = drive_cli.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
-            except Exception as e2:
-                st.error(f"OAuth upload failed: {e2}")
-                return "", ""
-        else:
-            st.error(f"Drive upload failed: {e}")
-            return "", ""
-    except Exception as e:
-        st.error(f"Unexpected error uploading to Drive: {e}")
+        st.error(f"❌ Drive upload failed: {e}")
         return "", ""
+    except Exception as e:
+        st.error(f"❌ Unexpected Drive error: {e}")
+        return "", ""
+
     file_id = file.get("id", "")
     link = file.get("webViewLink", "")
     if not file_id:
         st.error("Drive did not return a file id.")
         return "", ""
+
+    st.success(f"✅ Uploaded. File ID: {file_id}")
+    st.write(f"🔗 Web link: {link}")
+
+    # Try to make public if configured
     try:
-        if st.secrets.get("drive", {}).get("public", True):
+        if drive_cfg.get("public", True):
             _drive_make_public(file_id, drive_client=drive_cli)
-    except Exception:
-        pass
+            st.caption("🔓 Made public (anyone with the link can view).")
+    except Exception as e:
+        st.warning(f"Could not make file public: {e}")
+
     return link, file_id
 
 # =========================
