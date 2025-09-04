@@ -509,15 +509,37 @@ def move_drive_file(
 #         pass
 #     return link, file_id
 
-def upload_to_drive(drive, file_name: str, file_obj: BytesIO, parent_id: str) -> str:
-    file = drive.CreateFile({
-        'title': file_name,
-        'parents': [{'id': parent_id}]
-    })
-    # Ensure we're uploading binary content
-    file.content = file_obj.getvalue()
-    file.Upload()
-    return file['id']
+from typing import Tuple
+from io import BytesIO
+from googleapiclient.http import MediaIoBaseUpload
+
+
+def upload_to_drive(service, file_name: str, file_obj: BytesIO, parent_id: str) -> str:
+    """
+    Upload a PDF file to Google Drive using the Drive API v3 client.
+
+    Args:
+        service: Google Drive API service client (from googleapiclient.discovery.build).
+        file_name: The name to assign to the file in Drive.
+        file_obj: The PDF file as a BytesIO object.
+        parent_id: The ID of the parent folder where the file should be uploaded.
+
+    Returns:
+        The file ID of the uploaded file.
+    """
+    file_metadata = {
+        'name': file_name,
+        'parents': [parent_id]
+    }
+    media = MediaIoBaseUpload(file_obj, mimetype='application/pdf', resumable=True)
+
+    uploaded_file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields='id'
+    ).execute()
+
+    return uploaded_file.get('id')
 
 
 def upload_pdf_and_get_link(
@@ -529,11 +551,14 @@ def upload_pdf_and_get_link(
     emp_name: str,
     decision: str = "Approved"
 ) -> Tuple[str, str]:
-    drive_cli = _get_drive()
+    """
+    Handle Drive folder hierarchy, upload a PDF, and return the shareable link + file ID.
+    """
+    service = _get_drive()
     root_id = st.secrets.get("drive", {}).get("approvals", "")
 
     emp_df = read_worksheet(EMPLOYEE_WS)
-    mainlist_df = read_worksheet(EMPLOYEE_WS)  # if project & office in same
+    mainlist_df = read_worksheet(EMPLOYEE_WS)
 
     emp_row = _find_emp_row_by_name(emp_df, emp_name)
     project = _get_emp_value(emp_row, "Project")
@@ -541,17 +566,22 @@ def upload_pdf_and_get_link(
     office = _get_office_from_project(project, mainlist_df)
     office_code = _office_code(office)
 
-    parent_id = ensure_drive_subfolder(drive_cli, root_id, office)
-    parent_id = ensure_drive_subfolder(drive_cli, parent_id, city_code)
-    parent_id = ensure_drive_subfolder(drive_cli, parent_id, action)
-    parent_id = ensure_drive_subfolder(drive_cli, parent_id, decision)
+    # Create nested subfolders: office -> city -> action -> decision
+    parent_id = ensure_drive_subfolder(service, root_id, office)
+    parent_id = ensure_drive_subfolder(service, parent_id, city_code)
+    parent_id = ensure_drive_subfolder(service, parent_id, action)
+    parent_id = ensure_drive_subfolder(service, parent_id, decision)
 
+    # Build filename
     order = get_next_order_number(action, serial)
     file_name = f"{office_code}-{city_code}-{action[:3].upper()}-{normalize_serial(serial)}-{order}.pdf"
 
-    file_id = upload_to_drive(drive_cli, file_name, pdf_file, parent_id)
+    # Upload file
+    file_id = upload_to_drive(service, file_name, pdf_file, parent_id)
     link = f"https://drive.google.com/file/d/{file_id}/view"
+
     return link, file_id
+
 
 
 # =========================
