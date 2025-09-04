@@ -96,6 +96,29 @@ for k in ("reg_pdf_ref", "transfer_pdf_ref"):
 # =========================
 # Auth (cookie)
 # =========================
+
+import streamlit as st
+from google_auth_oauthlib.flow import Flow
+
+CLIENT_ID = st.secrets["gcp_oauth"]["client_id"]
+CLIENT_SECRET = st.secrets["gcp_oauth"]["client_secret"]
+REDIRECT_URI = st.secrets["gcp_oauth"]["redirect_uri"]
+
+flow = Flow.from_client_config(
+    {
+        "web": {
+            "client_id": "client_id",
+            "project_id": "truckingsysteminventory",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_secret": "client_secret",
+            "redirect_uris": ["https://advancedconstructiontrackingsystem.streamlit.app/"],
+        }
+    },
+    scopes=["https://drive.google.com/drive/my-drive?dmr=1&ec=wgc-drive-globalnav-goto"]  # change scope as needed
+)
+
 def _load_users_from_secrets():
     cfg = st.secrets.get("auth", {}).get("users", [])
     return {u["username"]: {"password": u.get("password", ""), "role": u.get("role", "Staff")} for u in cfg}
