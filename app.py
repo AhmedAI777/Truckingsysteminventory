@@ -504,32 +504,44 @@ def upload_pdf_and_get_link(
     pdf_file: BytesIO,
     prefix: str,
     office: str,
-    city_code: str,
     action: str,
-    serial: str = "",
     emp_name: str = "",
+    decision: str = "Approved"
 ) -> Tuple[str, str]:
     drive_cli = _get_drive()
     root_id = st.secrets.get("drive", {}).get("approvals", "")
 
-    # 🔍 Get employee location
+    # 🔍 Fetch employee and mainlist data
     emp_df = read_worksheet(EMPLOYEE_WS)
+    mainlist_df = read_worksheet(MAINLIST_WS)
+
     emp_row = _find_emp_row_by_name(emp_df, emp_name)
-    city_code = _get_emp_value(emp_row, "Location (KSA)", "Location", "City") if emp_row is not None else city_code
+    project = _get_emp_value(emp_row, "Project")
+    city_raw = _get_emp_value(emp_row, "Location (KSA)", "Location", "City")
+    city_code = city_folder_name(city_raw)
 
-    # 📁 Ensure folders exist: HO > JED > Register
-    parent_id = ensure_drive_subfolder(drive_cli, root_id, _office_folder_name(office))
-    parent_id = ensure_drive_subfolder(drive_cli, parent_id, city_folder_name(city_code))
-    parent_id = ensure_drive_subfolder(drive_cli, parent_id, action)
+    office = _get_office_from_project(project, mainlist_df)
+    office_code = _office_code(office)
 
-    # 🔢 Generate order number and filename
+    serial = prefix.replace("device_", "").strip()
     order = get_next_order_number(action, serial)
-    file_name = f"{_office_code(office)}-{city_code}-{action[:3].upper()}-{normalize_serial(serial)}-{order}-{datetime.now().strftime('%Y%m%d')}.pdf"
 
-    # 📤 Upload file
-    file_id = upload_to_drive(drive, file_name, pdf_file, parent_id)
-    link = f"https://drive.google.com/file/d/{file_id}/view?usp=drivesdk"
-    return link, file_id
+    # 📁 Ensure folder structure exists: Office > City > Action > Decision
+    parent_id = ensure_drive_subfolder(drive_cli, root_id, office)
+    parent_id = ensure_drive_subfolder(drive_cli, parent_id, city_code)
+    parent_id = ensure_drive_subfolder(drive_cli, parent_id, action)
+    parent_id = ensure_drive_subfolder(drive_cli, parent_id, decision)
+
+    # 📄 Build filename
+    file_name = f"{office_code}-{city_code}-{action[:3].upper()}-{normalize_serial(serial)}-{order}"
+
+    # ⬆️ Upload to Drive
+    file_id = upload_to_drive(drive_cli, file_name, pdf_file, parent_id)
+    file_link = f"https://drive.google.com/file/d/{file_id}/view?usp=sharing"
+
+    return file_link, file_id
+
+
 
 
 # =========================
