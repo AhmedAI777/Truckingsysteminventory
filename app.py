@@ -207,7 +207,7 @@ if "credentials" not in st.session_state:
                 "redirect_uris": [REDIRECT_URI],
             }
         },
-        scopes=["https://www.googleapis.com/auth/drive.file""]  # change as needed
+        scopes=["https://www.googleapis.com/auth/drive.file"]  # change as needed
     )
 
     flow.redirect_uri = REDIRECT_URI
