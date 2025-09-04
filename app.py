@@ -1250,7 +1250,7 @@ def register_device_tab():
             pdf_file_obj,
             prefix=f"device_{normalize_serial(serial)}",
             office="Head Office (HO)",
-            city_code=row.get("Location", ""),
+            city_code=row.get("Location (KSA)", ""),
             action="Register",
         )
         if not fid:
@@ -1319,7 +1319,7 @@ def transfer_tab():
             pdf_file,
             prefix=f"transfer_{normalize_serial(serial)}",
             office=row.get("Office", ""),
-            city_code=row.get("Location", ""),
+            city_code=row.get("Location (KSA)", ""),
             action="Transfer",
         )
         if not fid:
