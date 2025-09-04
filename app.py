@@ -453,7 +453,7 @@ def upload_pdf_and_get_link(
     serial: str = "",
     emp_name: str = "",
 ) -> Tuple[str, str]:
-    drive = get_drive()
+    drive = _get_drive()
     root_id = _get_secret("drive.approvals")
 
     # 🔍 Get employee location
