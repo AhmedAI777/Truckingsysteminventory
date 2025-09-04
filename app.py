@@ -356,10 +356,10 @@ def move_drive_file(
     city_code = _get_emp_value(emp_row, "Location (KSA)", "Location", "City")
 
     # 📁 Ensure full folder structure: Office > City > Action > Decision
-    parent_id = ensure_drive_subfolder(drive, root_id, _office_folder_name(office))
-    parent_id = ensure_drive_subfolder(drive, parent_id, city_folder_name(city_code))
-    parent_id = ensure_drive_subfolder(drive, parent_id, action)
-    parent_id = ensure_drive_subfolder(drive, parent_id, decision)
+    parent_id = ensure_drive_subfolder(drive_cli, root_id, _office_folder_name(office))
+    parent_id = ensure_drive_subfolder(drive_cli, parent_id, city_folder_name(city_code))
+    parent_id = ensure_drive_subfolder(drive_cli, parent_id, action)
+    parent_id = ensure_drive_subfolder(drive_cli, parent_id, decision)
 
     # 🚚 Move file to new folder
     drive.CreateFile({'id': fid}).Upload()  # Refresh metadata
@@ -464,9 +464,9 @@ def upload_pdf_and_get_link(
     city_code = _get_emp_value(emp_row, "Location (KSA)", "Location", "City") if emp_row is not None else city_code
 
     # 📁 Ensure folders exist: HO > JED > Register
-    parent_id = ensure_drive_subfolder(drive, root_id, _office_folder_name(office))
-    parent_id = ensure_drive_subfolder(drive, parent_id, city_folder_name(city_code))
-    parent_id = ensure_drive_subfolder(drive, parent_id, action)
+    parent_id = ensure_drive_subfolder(drive_cli, root_id, _office_folder_name(office))
+    parent_id = ensure_drive_subfolder(drive_cli, parent_id, city_folder_name(city_code))
+    parent_id = ensure_drive_subfolder(drive_cli, parent_id, action)
 
     # 🔢 Generate order number and filename
     order = get_next_order_number(action, serial)
