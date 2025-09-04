@@ -28,6 +28,15 @@ from googleapiclient.errors import HttpError
 from PyPDF2 import PdfReader, PdfWriter
 from PyPDF2.generic import NameObject, DictionaryObject, BooleanObject, ArrayObject
 
+
+# Load credentials from Streamlit secrets
+creds_dict = st.secrets["gcp_service_account"]
+creds = service_account.Credentials.from_service_account_info(dict(creds_dict))
+
+# Example: Using Google Sheets API
+import gspread
+gc = gspread.authorize(creds)
+
 # =========================
 # Config
 # =========================
