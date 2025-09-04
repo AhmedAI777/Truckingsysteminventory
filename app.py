@@ -459,6 +459,7 @@ def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_cod
 
     return link, file_id
 
+
 # =========================
 # Sheets helpers
 # =========================
