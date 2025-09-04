@@ -347,7 +347,7 @@ def move_drive_file(
     emp_name: str = "",
 ):
     drive = _get_drive()
-    root_id = _get_secret("drive.approvals")
+    root_id = st.secrets["drive"]["approvals"]
 
     # 🔍 Get city code from employee sheet if possible
     emp_row = _find_emp_row_by_name(emp_df, emp_name)
