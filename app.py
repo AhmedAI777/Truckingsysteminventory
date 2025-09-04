@@ -708,16 +708,21 @@ def fill_pdf_form(template_bytes: bytes, values: dict[str, str], *, flatten: boo
 # Employee helpers
 # =========================
 
-def _find_emp_row_by_name(emp_df: pd.DataFrame, name: str) -> pd.Series | None:
-    return None
-    emp_row = _find_emp_row_by_name(emp_df, row["Current user"])
-    if emp_row is None or emp_row is False or (isinstance(emp_row, pd.Series) and emp_row.empty):
-        emp_row = {}
-    else:
-        emp_row = emp_row.to_dict() if isinstance(emp_row, pd.Series) else emp_row
-        return cand.iloc[0] if not cand.empty else None
-except Exception:
-return None
+def _find_emp_row_by_name(emp_df: pd.DataFrame, name: str) -> dict | None:
+    try:
+        if emp_df is None or emp_df.empty or not str(name).strip():
+            return None
+        name = str(name).strip()
+        cand = emp_df[
+            (emp_df.get("New Employeer", "").astype(str).str.strip() == name)
+            | (emp_df.get("Name", "").astype(str).str.strip() == name)
+        ]
+        if cand.empty:
+            return None
+        return cand.iloc[0].to_dict()
+    except Exception:
+        return None
+
 
 
 def _get_emp_value(row: pd.Series, *aliases: str) -> str:
