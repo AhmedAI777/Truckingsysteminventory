@@ -346,8 +346,8 @@ def move_drive_file(
     decision: str,
     emp_name: str = "",
 ):
-    drive = _get_drive()
-    root_id = st.secrets["drive"]["approvals"]
+    drive_cli = _get_drive()
+    root_id = st.secrets.get("drive", {}).get("approvals", "")
     
 
     # 🔍 Get city code from employee sheet if possible
@@ -454,8 +454,8 @@ def upload_pdf_and_get_link(
     serial: str = "",
     emp_name: str = "",
 ) -> Tuple[str, str]:
-    drive = _get_drive()
-    root_id = st.secrets["drive"]["approvals"]
+    drive_cli = _get_drive()
+    root_id = st.secrets.get("drive", {}).get("approvals", "")
 
     # 🔍 Get employee location
     emp_row = _find_emp_row_by_name(emp_df, emp_name)
