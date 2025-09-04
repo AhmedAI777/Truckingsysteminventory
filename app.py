@@ -350,26 +350,55 @@ def _office_code(office: str) -> str:
 #     return CITY_MAP.get(code.upper(), f"{code.upper()} ({code.upper()})")
 
 
-def ensure_drive_subfolder(drive, parent_id: str, folder_name: str) -> str:
-    # Check if folder already exists
+# def ensure_drive_subfolder(drive, parent_id: str, folder_name: str) -> str:
+#     # Check if folder already exists
+#     query = (
+#         f"'{parent_id}' in parents and name = '{folder_name}' "
+#         "and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+#     )
+#     results = drive.files().list(q=query, spaces="drive", fields="files(id, name)").execute()
+#     folders = results.get("files", [])
+
+#     if folders:
+#         return folders[0]["id"]
+
+#     # Create folder if not exists
+#     file_metadata = {
+#         "name": folder_name,
+#         "mimeType": "application/vnd.google-apps.folder",
+#         "parents": [parent_id],
+#     }
+#     folder = drive.files().create(body=file_metadata, fields="id").execute()
+#     return folder["id"]
+def ensure_drive_subfolder(service, parent_id: str, folder_name: str) -> str:
     query = (
         f"'{parent_id}' in parents and name = '{folder_name}' "
         "and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     )
-    results = drive.files().list(q=query, spaces="drive", fields="files(id, name)").execute()
+    results = service.files().list(
+        q=query,
+        spaces="drive",
+        fields="files(id, name)",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True
+    ).execute()
     folders = results.get("files", [])
 
     if folders:
         return folders[0]["id"]
 
-    # Create folder if not exists
     file_metadata = {
         "name": folder_name,
         "mimeType": "application/vnd.google-apps.folder",
         "parents": [parent_id],
     }
-    folder = drive.files().create(body=file_metadata, fields="id").execute()
+    folder = service.files().create(
+        body=file_metadata,
+        fields="id",
+        supportsAllDrives=True
+    ).execute()
     return folder["id"]
+
 
 
 #the correct one is below
@@ -391,6 +420,48 @@ def ensure_drive_subfolder(drive, parent_id: str, folder_name: str) -> str:
 #             parent = newf["id"]
 #     return parent
 
+# --- MOVE + RENAME (Drive API v3; supports Shared Drives) ---
+def update_drive_file_location_and_name(
+    service,
+    file_id: str,
+    new_parent_id: str,
+    new_name: str
+) -> tuple[str, str | None]:
+    """
+    Move a file to a new parent folder and rename it in one request.
+
+    Returns:
+        (file_id, webViewLink_or_None)
+    """
+    # Ensure .pdf suffix (adjust if you sometimes move non-PDFs)
+    if not new_name.lower().endswith(".pdf"):
+        new_name = f"{new_name}.pdf"
+
+    # 1) get current parents
+    meta = service.files().get(
+        fileId=file_id,
+        fields="parents",
+        supportsAllDrives=True
+    ).execute()
+    prev_parents = ",".join(meta.get("parents", []))
+
+    # 2) build update kwargs (omit removeParents if there are none)
+    update_kwargs = {
+        "fileId": file_id,
+        "addParents": new_parent_id,
+        "body": {"name": new_name},
+        "fields": "id,name,parents,webViewLink",
+        "supportsAllDrives": True,
+    }
+    if prev_parents:
+        update_kwargs["removeParents"] = prev_parents
+
+    # 3) move + rename
+    updated = service.files().update(**update_kwargs).execute()
+    return updated["id"], updated.get("webViewLink")
+
+
+
 def move_drive_file(
     fid: str,
     serial: str,
@@ -399,15 +470,11 @@ def move_drive_file(
     action: str,
     decision: str,
     emp_name: str
-):
-    drive_cli = _get_drive()
+) -> str | None:
+    service = _get_drive()
     root_id = st.secrets.get("drive", {}).get("approvals", "")
-    drive_cli = _get_drive()  # This is a googleapiclient Resource
-    file_id = upload_to_drive(drive_cli, file_name_with_pdf, pdf_bytes_io, parent_folder_id)
-    link = f"https://drive.google.com/file/d/{file_id}/view"
-
     if not root_id or not fid:
-        return
+        return None
 
     # 🔍 Lookup employee/project info
     emp_df = read_worksheet(EMPLOYEE_WS)
@@ -419,18 +486,62 @@ def move_drive_file(
     office = _get_office_from_project(project, mainlist_df)
     office_code = _office_code(office)
 
-    # 📁 Ensure folders exist
-    parent_id = ensure_drive_subfolder(drive_cli, root_id, office)
-    parent_id = ensure_drive_subfolder(drive_cli, parent_id, city_code)
-    parent_id = ensure_drive_subfolder(drive_cli, parent_id, action)
-    parent_id = ensure_drive_subfolder(drive_cli, parent_id, decision)
+    # 📁 Ensure target folders exist (Shared Drives compatible)
+    parent_id = ensure_drive_subfolder(service, root_id, office)
+    parent_id = ensure_drive_subfolder(service, parent_id, city_code)
+    parent_id = ensure_drive_subfolder(service, parent_id, action)
+    parent_id = ensure_drive_subfolder(service, parent_id, decision)
 
-    # 🔢 Filename with order number
+    # 🔢 New filename (without .pdf; helper adds it)
     order = get_next_order_number(action, serial)
-    new_name = f"{office_code}-{city_code}-{action[:3].upper()}-{normalize_serial(serial)}-{order}"
+    base_name = f"{office_code}-{city_code}-{action[:3].upper()}-{normalize_serial(serial)}-{order}"
 
-    # 📤 Move and rename
-    update_drive_file_location_and_name(drive_cli, fid, parent_id, new_name)
+    # 🚚 Move + rename
+    file_id, web_link = update_drive_file_location_and_name(service, fid, parent_id, base_name)
+
+    # 🔗 Return best link we have
+    return web_link or f"https://drive.google.com/file/d/{file_id}/view"
+
+# def move_drive_file(
+#     fid: str,
+#     serial: str,
+#     office: str,
+#     city_code: str,
+#     action: str,
+#     decision: str,
+#     emp_name: str
+# ):
+#     drive_cli = _get_drive()
+#     root_id = st.secrets.get("drive", {}).get("approvals", "")
+#     drive_cli = _get_drive()  # This is a googleapiclient Resource
+#     file_id = upload_to_drive(drive_cli, file_name_with_pdf, pdf_bytes_io, parent_folder_id)
+#     link = f"https://drive.google.com/file/d/{file_id}/view"
+
+#     if not root_id or not fid:
+#         return
+
+#     # 🔍 Lookup employee/project info
+#     emp_df = read_worksheet(EMPLOYEE_WS)
+#     mainlist_df = read_worksheet(MAINLIST_WS)
+
+#     emp_row = _find_emp_row_by_name(emp_df, emp_name)
+#     project = _get_emp_value(emp_row, "Project")
+#     city_code = city_folder_name(_get_emp_value(emp_row, "Location (KSA)", "Location", "City"))
+#     office = _get_office_from_project(project, mainlist_df)
+#     office_code = _office_code(office)
+
+#     # 📁 Ensure folders exist
+#     parent_id = ensure_drive_subfolder(drive_cli, root_id, office)
+#     parent_id = ensure_drive_subfolder(drive_cli, parent_id, city_code)
+#     parent_id = ensure_drive_subfolder(drive_cli, parent_id, action)
+#     parent_id = ensure_drive_subfolder(drive_cli, parent_id, decision)
+
+#     # 🔢 Filename with order number
+#     order = get_next_order_number(action, serial)
+#     new_name = f"{office_code}-{city_code}-{action[:3].upper()}-{normalize_serial(serial)}-{order}"
+
+#     # 📤 Move and rename
+#     update_drive_file_location_and_name(drive_cli, fid, parent_id, new_name)
 
 
 
@@ -509,24 +620,7 @@ def move_drive_file(
 #         pass
 #     return link, file_id
 
-from typing import Tuple
-from io import BytesIO
-from googleapiclient.http import MediaIoBaseUpload
-
-
 def upload_to_drive(service, file_name: str, file_obj: BytesIO, parent_id: str) -> str:
-    """
-    Upload a PDF file to Google Drive using the Drive API v3 client.
-
-    Args:
-        service: Google Drive API service client (from googleapiclient.discovery.build).
-        file_name: The name to assign to the file in Drive.
-        file_obj: The PDF file as a BytesIO object.
-        parent_id: The ID of the parent folder where the file should be uploaded.
-
-    Returns:
-        The file ID of the uploaded file.
-    """
     file_metadata = {
         'name': file_name,
         'parents': [parent_id]
@@ -536,10 +630,12 @@ def upload_to_drive(service, file_name: str, file_obj: BytesIO, parent_id: str) 
     uploaded_file = service.files().create(
         body=file_metadata,
         media_body=media,
-        fields='id'
+        fields='id',
+        supportsAllDrives=True
     ).execute()
 
     return uploaded_file.get('id')
+
 
 
 def upload_pdf_and_get_link(
