@@ -1244,12 +1244,22 @@ def register_device_tab():
         actor = st.session_state.get("username", "")
         row = build_row(now_str, actor)
         link, fid = upload_pdf_and_get_link(
-            pdf_file_obj,
+            pdf_file=pdf_file_obj,
             prefix=f"device_{normalize_serial(serial)}",
-            office="Head Office (HO)",
-            # city_code=row.get("Location (KSA)", ""),
+            office="Head Office (HO)",  # dynamically parsed later
             action="Register",
+            serial=serial,
+            emp_name=actor,
+            decision="Approved"
         )
+#the code below is correct
+        # link, fid = upload_pdf_and_get_link(
+        #     pdf_file_obj,
+        #     prefix=f"device_{normalize_serial(serial)}",
+        #     office="Head Office (HO)",
+        #     # city_code=row.get("Location (KSA)", ""),
+        #     action="Register",
+        # )
         if not fid:
             return
         pending = {
@@ -1313,12 +1323,23 @@ def transfer_tab():
         now_str = datetime.now().strftime(DATE_FMT)
         actor = st.session_state.get("username", "")
         link, fid = upload_pdf_and_get_link(
-            pdf_file,
+            pdf_file=pdf_file_obj,
             prefix=f"transfer_{normalize_serial(serial)}",
-            office=row.get("Office", ""),
-            # city_code=row.get("Location (KSA)", ""),
+            office="Head Office (HO)",  # dynamically parsed later
             action="Transfer",
+            serial=serial,
+            emp_name=actor,
+            decision="Approved"
         )
+
+        #the correct code is below
+        # link, fid = upload_pdf_and_get_link(
+        #     pdf_file,
+        #     prefix=f"transfer_{normalize_serial(serial)}",
+        #     office=row.get("Office", ""),
+        #     # city_code=row.get("Location (KSA)", ""),
+        #     action="Transfer",
+        # )
         if not fid:
             return
         pending = {
@@ -1545,6 +1566,8 @@ def _approve_transfer_row(row: pd.Series):
 #         st.warning(f"Approved, but couldn’t move PDF in Drive: {e}")
 #     st.success(f"✅ Transfer approved. {prev_user or '(blank)'} → {new_user}. Contact details updated.")
 
+
+
 def _reject_row(ws_title: str, row: pd.Series):
     df = read_worksheet(ws_title)
     key_cols = [c for c in ["Serial Number", "Submitted at", "Submitted by", "To owner"] if c in df.columns]
@@ -1565,12 +1588,20 @@ def _reject_row(ws_title: str, row: pd.Series):
     write_worksheet(ws_title, df)
 
     try:
+        # 📦 Prepare for file move
         action = "Register" if ws_title == PENDING_DEVICE_WS else "Transfer"
         serial = str(row.get("Serial Number", ""))
         emp_name = row.get("Current user", "") if action == "Register" else row.get("To owner", "")
-        office = str(row.get("Office", "Head Office (HO)"))
-        city_code = str(row.get("Location", ""))
         file_id = str(row.get("Approval File ID", "")).strip()
+
+        # 📋 Derive office and city properly
+        emp_df = read_worksheet(EMPLOYEE_WS)
+        mainlist_df = read_worksheet(MAINLIST_WS)
+        emp_row = _find_emp_row_by_name(emp_df, emp_name)
+
+        project = _get_emp_value(emp_row, "Project")
+        city_code = city_folder_name(_get_emp_value(emp_row, "Location (KSA)", "Location", "City"))
+        office = _get_office_from_project(project, mainlist_df)
 
         if file_id and serial:
             move_drive_file(
@@ -1586,6 +1617,50 @@ def _reject_row(ws_title: str, row: pd.Series):
         st.warning(f"Rejected, but couldn’t move PDF in Drive: {e}")
 
     st.success("❌ Request rejected. PDF stored under Rejected for evidence.")
+
+
+#the below code is correct
+# def _reject_row(ws_title: str, row: pd.Series):
+#     df = read_worksheet(ws_title)
+#     key_cols = [c for c in ["Serial Number", "Submitted at", "Submitted by", "To owner"] if c in df.columns]
+#     mask = pd.Series([True] * len(df))
+#     for c in key_cols:
+#         mask &= df[c].astype(str) == str(row.get(c, ""))
+#     idxs = df[mask].index.tolist()
+#     if not idxs and "Serial Number" in df.columns:
+#         idxs = df[df["Serial Number"].astype(str) == str(row.get("Serial Number", ""))].index.tolist()
+#     if not idxs:
+#         st.warning("Could not locate row to mark as Rejected.")
+#         return
+
+#     idx = idxs[0]
+#     df.loc[idx, "Approval Status"] = "Rejected"
+#     df.loc[idx, "Approver"] = st.session_state.get("username", "")
+#     df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
+#     write_worksheet(ws_title, df)
+
+#     try:
+#         action = "Register" if ws_title == PENDING_DEVICE_WS else "Transfer"
+#         serial = str(row.get("Serial Number", ""))
+#         emp_name = row.get("Current user", "") if action == "Register" else row.get("To owner", "")
+#         office = str(row.get("Office", "Head Office (HO)"))
+#         city_code = str(row.get("Location", ""))
+#         file_id = str(row.get("Approval File ID", "")).strip()
+
+#         if file_id and serial:
+#             move_drive_file(
+#                 fid=file_id,
+#                 serial=serial,
+#                 office=office,
+#                 city_code=city_code,
+#                 action=action,
+#                 decision="Rejected",
+#                 emp_name=emp_name
+#             )
+#     except Exception as e:
+#         st.warning(f"Rejected, but couldn’t move PDF in Drive: {e}")
+
+#     st.success("❌ Request rejected. PDF stored under Rejected for evidence.")
 
 
 
