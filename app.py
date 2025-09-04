@@ -402,6 +402,10 @@ def move_drive_file(
 ):
     drive_cli = _get_drive()
     root_id = st.secrets.get("drive", {}).get("approvals", "")
+    drive_cli = _get_drive()  # This is a googleapiclient Resource
+    file_id = upload_to_drive(drive_cli, file_name_with_pdf, pdf_bytes_io, parent_folder_id)
+    link = f"https://drive.google.com/file/d/{file_id}/view"
+
     if not root_id or not fid:
         return
 
