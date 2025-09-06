@@ -2903,6 +2903,42 @@ def history_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
+def employee_register_tab():
+    st.subheader("🧑‍💼 Register New Employee")
+    with st.form("employee_register", clear_on_submit=True):
+        name = st.text_input("Full Name *")
+        emp_id = st.text_input("Employee ID (APLUS) *")
+        email = st.text_input("Email")
+        mobile = st.text_input("Mobile Number")
+        position = st.text_input("Position")
+        dept = st.text_input("Department")
+        loc = st.text_input("Location (KSA)")
+        proj = st.text_input("Project / Office")
+        teams = st.text_input("Microsoft Teams")
+        submitted = st.form_submit_button("Save Employee", type="primary")
+    if submitted:
+        if not name.strip() or not emp_id.strip():
+            st.error("Name and Employee ID are required.")
+            return
+        new_row = pd.DataFrame(
+            [
+                {
+                    "Name": name.strip(),
+                    "Email": email.strip(),
+                    "APLUS": emp_id.strip(),
+                    "Active": "Yes",
+                    "Position": position.strip(),
+                    "Department": dept.strip(),
+                    "Location (KSA)": loc.strip(),
+                    "Project": proj.strip(),
+                    "Microsoft Teams": teams.strip(),
+                    "Mobile Number": mobile.strip(),
+                }
+            ]
+        )
+        append_to_worksheet(EMPLOYEE_WS, new_row)
+        st.success(f"✅ Employee '{name}' registered.")
+
 
 def register_device_tab():
     st.subheader("📝 Register New Device")
