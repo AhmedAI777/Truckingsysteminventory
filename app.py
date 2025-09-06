@@ -988,6 +988,7 @@ def employee_register_tab():
         st.success(f"✅ Employee '{name}' registered.")
 
 def register_device_tab(current_user: str):
+    
     st.header("📦 Register New Device")
 
     inv_df = read_worksheet(INVENTORY_WS)
@@ -1343,6 +1344,9 @@ def _config_check_ui():
 def run_app():
     render_header()
     _config_check_ui()
+
+    current_user = st.session_state.get("username", "")
+
     if st.session_state.role == "Admin":
         tabs = st.tabs(
             [
@@ -1361,11 +1365,11 @@ def run_app():
         with tabs[1]:
             employees_view_tab()
         with tabs[2]:
-            register_device_tab()
+            register_device_tab(current_user)
         with tabs[3]:
             inventory_tab()
         with tabs[4]:
-            transfer_tab()
+            transfer_tab(current_user)
         with tabs[5]:
             history_tab()
         with tabs[6]:
@@ -1373,15 +1377,21 @@ def run_app():
         with tabs[7]:
             export_tab()
     else:
-        tabs = st.tabs(["📝 Register Device", "🔁 Transfer Device", "📋 View Inventory", "📜 Transfer Log"])
+        tabs = st.tabs([
+            "📝 Register Device",
+            "🔁 Transfer Device",
+            "📋 View Inventory",
+            "📜 Transfer Log"
+        ])
         with tabs[0]:
-            register_device_tab()
+            register_device_tab(current_user)
         with tabs[1]:
-            transfer_tab()
+            transfer_tab(current_user)
         with tabs[2]:
             inventory_tab()
         with tabs[3]:
             history_tab()
+
 
 # =========================
 # Entry
