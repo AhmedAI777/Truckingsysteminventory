@@ -2431,14 +2431,17 @@ def _download_template_bytes_or_public(file_id: str) -> bytes:
     """
     Try to download template PDF in this order:
     1) Service Account (supportsAllDrives=True)
-    2) OAuth user (if allow_oauth_fallback)
-    3) Public 'uc?export=download' URL
+    2) OAuth user (if allow_oauth_fallback in secrets)
+    3) Public 'uc?export=download' URL (if file is shared publicly)
     """
     # 1) Service Account
     try:
         req = _get_drive().files().get_media(fileId=file_id, supportsAllDrives=True)
         buf = io.BytesIO()
-        MediaIoBaseDownload(buf, req).next_chunk()
+        downloader = MediaIoBaseDownload(buf, req)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
         buf.seek(0)
         data = buf.read()
         if data and data[:4] == b"%PDF":
@@ -2449,10 +2452,13 @@ def _download_template_bytes_or_public(file_id: str) -> bytes:
     # 2) OAuth fallback
     try:
         if st.secrets.get("drive", {}).get("allow_oauth_fallback", True):
-            user_drive = _get_user_drive()  # make sure you kept this helper
+            user_drive = _get_user_drive()  # you should already have this helper
             req = user_drive.files().get_media(fileId=file_id, supportsAllDrives=True)
             buf = io.BytesIO()
-            MediaIoBaseDownload(buf, req).next_chunk()
+            downloader = MediaIoBaseDownload(buf, req)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
             buf.seek(0)
             data = buf.read()
             if data and data[:4] == b"%PDF":
@@ -2460,7 +2466,7 @@ def _download_template_bytes_or_public(file_id: str) -> bytes:
     except Exception:
         pass
 
-    # 3) Public direct download (only if the file is shared publicly)
+    # 3) Public direct download
     try:
         url = f"https://drive.google.com/uc?export=download&id={file_id}"
         r = requests.get(url, timeout=15)
@@ -2469,8 +2475,8 @@ def _download_template_bytes_or_public(file_id: str) -> bytes:
     except Exception:
         pass
 
-    
     return b""
+
 
 
 
