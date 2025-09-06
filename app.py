@@ -1114,7 +1114,7 @@ def register_device_tab():
             pdf_file_obj,
             filename=filename,
             office=project,
-            city_code=Location,
+            city_code=Location (KSA),
             action="Register",
         )
 
@@ -1196,7 +1196,7 @@ def transfer_tab():
             pdf_file,
             filename=filename,
             office=project,
-            city_code=Location,
+            city_code=Location (KSA),
             action="Transfer",
         )
 
@@ -1205,7 +1205,7 @@ def transfer_tab():
         #     pdf_file,
         #     prefix=f"transfer_{normalize_serial(serial)}",
         #     office=row.get("Office", ""),
-        #     city_code=row.get("Location (KSA)", ""),
+        #     =row.get("Location (KSA)", ""),
         #     action="Transfer",
         # )
         if not fid:
@@ -1240,7 +1240,7 @@ def _approve_device_row(row: pd.Series):
     _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
     try:
         file_id = str(row.get("Approval File ID", "")).strip()
-        city_code = str(row.get("Location", "")).strip()
+        city_code = str(row.get("Location (KSA)", "")).strip()
         if file_id and city_code:
             move_drive_file(file_id, "Head Office (HO)", city_code, "Register", "Approved")
     except Exception as e:
