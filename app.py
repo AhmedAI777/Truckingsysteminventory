@@ -459,48 +459,6 @@ def upload_to_drive(service, file_name: str, file_obj: BytesIO, parent_id: str) 
 
 
 
-def upload_pdf_and_get_link(
-    pdf_file: BytesIO,
-    prefix: str,
-    office: str,
-    action: str,
-    serial: str,
-    emp_name: str,
-    decision: str = "Approved"
-) -> Tuple[str, str]:
-    """
-    Handle Drive folder hierarchy, upload a PDF, and return the shareable link + file ID.
-    """
-    service = _get_drive()
-    root_id = st.secrets.get("drive", {}).get("approvals", "")
-
-    emp_df = read_worksheet(EMPLOYEE_WS)
-    mainlist_df = read_worksheet(EMPLOYEE_WS)
-
-    emp_row = _find_emp_row_by_name(emp_df, emp_name)
-    project = _get_emp_value(emp_row, "Project")
-    city_code = city_folder_name(_get_emp_value(emp_row, "Location (KSA)", "Location", "City"))
-    office = _get_office_from_project(project, mainlist_df)
-    office_code = _office_code(office)
-
-    # Create nested subfolders: office -> city -> action -> decision
-    parent_id = ensure_drive_subfolder(service, root_id, office)
-    parent_id = ensure_drive_subfolder(service, parent_id, city_code)
-    parent_id = ensure_drive_subfolder(service, parent_id, action)
-    parent_id = ensure_drive_subfolder(service, parent_id, decision)
-
-    # Build filename
-    order = get_next_order_number(action, serial)
-    file_name = f"{office_code}-{city_code}-{action[:3].upper()}-{normalize_serial(serial)}-{order}.pdf"
-
-    # Upload file
-    file_id = upload_to_drive(service, file_name, pdf_file, parent_id)
-    link = f"https://drive.google.com/file/d/{file_id}/view"
-
-    return link, file_id
-
-
-
 # =========================
 # Sheets helpers
 # =========================
