@@ -1,10 +1,6 @@
 # app.py — Tracking Inventory Management System (Streamlit + Google Sheets/Drive)
-
-# =========================
-# Dependencies
-# =========================
-# pip install streamlit gspread gspread-dataframe extra-streamlit-components pandas
-# pip install google-auth google-api-python-client requests PyPDF2 xlsxwriter
+# deps: streamlit gspread gspread-dataframe extra-streamlit-components pandas
+#       google-auth google-api-python-client requests PyPDF2 xlsxwriter
 
 import os, re, io, json, hmac, time, base64, hashlib
 from datetime import datetime, timedelta
@@ -13,6 +9,7 @@ from typing import Tuple
 import pandas as pd
 import requests
 import streamlit as st
+
 st.set_page_config(page_title="Tracking Inventory Management System", layout="wide")
 
 import gspread
@@ -31,14 +28,13 @@ from googleapiclient.errors import HttpError
 from PyPDF2 import PdfReader, PdfWriter
 from PyPDF2.generic import NameObject, DictionaryObject, BooleanObject, ArrayObject
 
-
 # =========================
 # Config
 # =========================
 APP_TITLE = "Tracking Inventory Management System"
 SUBTITLE = "Advanced Construction"
-
 DATE_FMT = "%Y-%m-%d %H:%M:%S"
+
 SESSION_TTL_DAYS = 30
 SESSION_TTL_SECONDS = SESSION_TTL_DAYS * 24 * 60 * 60
 COOKIE_NAME = "ac_auth_v2"
@@ -50,22 +46,19 @@ TRANSFERLOG_WS = "transfer_log"
 EMPLOYEE_WS = "mainlists"
 PENDING_DEVICE_WS = "pending_device_reg"
 PENDING_TRANSFER_WS = "pending_transfers"
-
 DEVICE_CATALOG_WS = st.secrets.get("sheets", {}).get("catalog_ws", "truckingsysteminventory")
 
 INVENTORY_COLS = [
     "Serial Number", "Device Type", "Brand", "Model", "CPU",
     "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
-    "Current user", "Previous User", "TO", "Department",
-    "Email Address", "Contact Number", "Location", "Office", "Notes",
-    "Date issued", "Registered by"
+    "Current user", "Previous User", "TO",
+    "Department", "Email Address", "Contact Number", "Location", "Office",
+    "Notes", "Date issued", "Registered by"
 ]
-
 CATALOG_COLS = [
     "Serial Number", "Device Type", "Brand", "Model", "CPU",
-    "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size"
+    "Hard Drive 1", "Hard Drive 2", "Memory", "GPU", "Screen Size",
 ]
-
 LOG_COLS = ["Device Type", "Serial Number", "From owner", "To owner", "Date issued", "Registered by"]
 
 EMPLOYEE_HEADERS = [
@@ -77,7 +70,6 @@ APPROVAL_META_COLS = [
     "Approval Status", "Approval PDF", "Approval File ID",
     "Submitted by", "Submitted at", "Approver", "Decision at"
 ]
-
 PENDING_DEVICE_COLS = INVENTORY_COLS + APPROVAL_META_COLS
 PENDING_TRANSFER_COLS = LOG_COLS + APPROVAL_META_COLS
 
@@ -97,7 +89,6 @@ INVENTORY_HEADER_SYNONYMS = {
 COOKIE_MGR = stx.CookieManager(key="ac_cookie_mgr")
 for k in ("reg_pdf_ref", "transfer_pdf_ref"):
     ss.setdefault(k, None)
-
 
 # =========================
 # Auth (cookie)
@@ -140,7 +131,8 @@ def _issue_session_cookie(username: str, role: str):
 
 def _read_cookie():
     token = COOKIE_MGR.get(COOKIE_NAME)
-    if not token: return None
+    if not token:
+        return None
     try:
         data_b64, sig = token.split(".", 1)
         raw = base64.urlsafe_b64decode(data_b64.encode())
@@ -176,6 +168,12 @@ def do_logout():
         st.session_state.pop(k, None)
     st.session_state.just_logged_out = True
     st.rerun()
+
+if "cookie_bootstrapped" not in st.session_state:
+    st.session_state.cookie_bootstrapped = True
+    _ = COOKIE_MGR.get_all()
+    st.rerun()
+
 # =========================
 # Google APIs
 # =========================
@@ -278,7 +276,6 @@ def get_sh():
     st.error("Google Sheets API error while opening the spreadsheet.")
     raise last_exc
 
-
 # =========================
 # Drive helpers
 # =========================
@@ -286,10 +283,8 @@ def _drive_make_public(file_id: str, drive_client=None):
     try:
         cli = drive_client or _get_drive()
         cli.permissions().create(
-            fileId=file_id,
-            body={"role": "reader", "type": "anyone"},
-            fields="id",
-            supportsAllDrives=True,
+            fileId=file_id, body={"role": "reader", "type": "anyone"},
+            fields="id", supportsAllDrives=True,
         ).execute()
     except Exception:
         pass
@@ -330,21 +325,13 @@ def ensure_drive_subfolder(root_id: str, path_parts: list[str], drive_cli=None) 
             f"'{parent}' in parents and name='{part}' "
             "and mimeType='application/vnd.google-apps.folder' and trashed=false"
         )
-        res = cli.files().list(
-            q=q, spaces="drive", fields="files(id,name)", supportsAllDrives=True
-        ).execute()
+        res = cli.files().list(q=q, spaces="drive", fields="files(id,name)", supportsAllDrives=True).execute()
         items = res.get("files", [])
         if items:
             parent = items[0]["id"]
         else:
-            meta = {
-                "name": part,
-                "mimeType": "application/vnd.google-apps.folder",
-                "parents": [parent],
-            }
-            newf = cli.files().create(
-                body=meta, fields="id", supportsAllDrives=True
-            ).execute()
+            meta = {"name": part, "mimeType": "application/vnd.google-apps.folder", "parents": [parent]}
+            newf = cli.files().create(body=meta, fields="id", supportsAllDrives=True).execute()
             parent = newf["id"]
     return parent
 
@@ -487,31 +474,24 @@ def _read_worksheet_cached(ws_title: str) -> pd.DataFrame:
         ws = get_or_create_ws(PENDING_DEVICE_WS)
         df = pd.DataFrame(ws.get_all_records())
         return reorder_columns(df, PENDING_DEVICE_COLS)
-
     if ws_title == PENDING_TRANSFER_WS:
         ws = get_or_create_ws(PENDING_TRANSFER_WS)
         df = pd.DataFrame(ws.get_all_records())
         return reorder_columns(df, PENDING_TRANSFER_COLS)
-
     if ws_title == EMPLOYEE_WS:
         return _read_employees_df()
-
     if ws_title == DEVICE_CATALOG_WS:
         ws = get_or_create_ws(DEVICE_CATALOG_WS)
         df = pd.DataFrame(ws.get_all_records())
         return reorder_columns(df, CATALOG_COLS)
-
     ws = get_or_create_ws(ws_title)
     data = ws.get_all_records()
     df = pd.DataFrame(data)
-
     if ws_title == INVENTORY_WS:
         df = canon_inventory_columns(df)
         return reorder_columns(df, INVENTORY_COLS)
-
     if ws_title == TRANSFERLOG_WS:
         return reorder_columns(df, LOG_COLS)
-
     return df
 
 def read_worksheet(ws_title):
@@ -565,12 +545,10 @@ def append_to_worksheet(ws_title, new_data):
             row = df.iloc[0]
             payload = [str(row.get(c, "")) for c in EMPLOYEE_HEADERS]
             ws.append_row(payload)
-        st.cache_data.clear()
+            st.cache_data.clear()
         return
-
     ws = get_or_create_ws(ws_title)
     df_existing = pd.DataFrame(ws.get_all_records())
-
     if ws_title == INVENTORY_WS:
         df_existing = canon_inventory_columns(df_existing)
         df_existing = reorder_columns(df_existing, INVENTORY_COLS)
@@ -578,7 +556,6 @@ def append_to_worksheet(ws_title, new_data):
         df_existing = reorder_columns(df_existing, PENDING_DEVICE_COLS)
     if ws_title == PENDING_TRANSFER_WS:
         df_existing = reorder_columns(df_existing, PENDING_TRANSFER_COLS)
-
     df_combined = pd.concat([df_existing, new_data], ignore_index=True)
     set_with_dataframe(ws, df_combined)
     st.cache_data.clear()
@@ -636,13 +613,7 @@ def _registration_field_map() -> dict[str, str]:
         fm[f"eq{blk+1}_specs"] = f"Text Field{base+3}"
         fm[f"eq{blk+1}_serial"] = f"Text Field{base+4}"
     fm.update(
-        {
-            "eq_type": fm["eq1_type"],
-            "eq_brand": fm["eq1_brand"],
-            "eq_model": fm["eq1_model"],
-            "eq_specs": fm["eq1_specs"],
-            "eq_serial": fm["eq1_serial"],
-        }
+        {"eq_type": fm["eq1_type"], "eq_brand": fm["eq1_brand"], "eq_model": fm["eq1_model"], "eq_specs": fm["eq1_specs"], "eq_serial": fm["eq1_serial"]}
     )
     override = st.secrets.get("pdf", {}).get("reg_field_map", {})
     if isinstance(override, dict) and override:
@@ -658,18 +629,12 @@ def fill_pdf_form(template_bytes: bytes, values: dict[str, str], *, flatten: boo
         writer.update_page_form_field_values(writer.pages[0], values)
     except Exception:
         pass
-
     if "/AcroForm" in reader.trailer["/Root"]:
         ac = reader.trailer["/Root"]["/AcroForm"]
         writer._root_object.update({NameObject("/AcroForm"): ac})
-        writer._root_object["/AcroForm"].update(
-            {NameObject("/NeedAppearances"): BooleanObject(True)}
-        )
+        writer._root_object["/AcroForm"].update({NameObject("/NeedAppearances"): BooleanObject(True)})
     else:
-        writer._root_object.update(
-            {NameObject("/AcroForm"): DictionaryObject({NameObject("/NeedAppearances"): BooleanObject(True)})}
-        )
-
+        writer._root_object.update({NameObject("/AcroForm"): DictionaryObject({NameObject("/NeedAppearances"): BooleanObject(True)})})
     if flatten:
         try:
             fields = writer._root_object["/AcroForm"].get("/Fields")
@@ -679,10 +644,9 @@ def fill_pdf_form(template_bytes: bytes, values: dict[str, str], *, flatten: boo
                     if obj.get("/FT") == NameObject("/Tx"):
                         flags = int(obj.get("/Ff", 0))
                         obj.update({NameObject("/Ff"): flags | 1})
-                writer._root_object["/AcroForm"].update({NameObject("/Fields"): ArrayObject()})
+            writer._root_object["/AcroForm"].update({NameObject("/Fields"): ArrayObject()})
         except Exception:
             pass
-
     out = io.BytesIO()
     writer.write(out)
     out.seek(0)
@@ -711,13 +675,7 @@ def _transfer_field_map() -> dict[str, str]:
         fm[f"eq{blk+1}_specs"] = f"Text Field{base+3}"
         fm[f"eq{blk+1}_serial"] = f"Text Field{base+4}"
     fm.update(
-        {
-            "eq_type": fm["eq1_type"],
-            "eq_brand": fm["eq1_brand"],
-            "eq_model": fm["eq1_model"],
-            "eq_specs": fm["eq1_specs"],
-            "eq_serial": fm["eq1_serial"],
-        }
+        {"eq_type": fm["eq1_type"], "eq_brand": fm["eq1_brand"], "eq_model": fm["eq1_model"], "eq_specs": fm["eq1_specs"], "eq_serial": fm["eq1_serial"]}
     )
     override = st.secrets.get("pdf", {}).get("transfer_field_map", {})
     if isinstance(override, dict) and override:
@@ -793,7 +751,6 @@ def build_registration_values(device_row: dict, *, actor_name: str, emp_df: pd.D
     from_email = str(device_row.get("Email Address", "") or "")
     from_dept = str(device_row.get("Department", "") or "")
     from_location = str(device_row.get("Location", "") or "")
-
     if not is_unassigned and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
         r = _find_emp_row_by_name(emp_df, curr_owner)
         if r is not None:
@@ -801,7 +758,6 @@ def build_registration_values(device_row: dict, *, actor_name: str, emp_df: pd.D
             from_email = from_email or _get_emp_value(r, "Email Address", "Email", "E-mail")
             from_dept = from_dept or _get_emp_value(r, "Department", "Dept")
             from_location = from_location or _get_emp_value(r, "Location (KSA)", "Location", "City")
-
     values = {
         fm["from_name"]: from_name,
         fm["from_mobile"]: from_mobile,
@@ -816,14 +772,12 @@ def build_registration_values(device_row: dict, *, actor_name: str, emp_df: pd.D
         fm["to_date"]: "",
         fm["to_location"]: "",
     }
-
     specs = []
     office_val = str(device_row.get("Office", "")).strip()
     if not office_val and not is_unassigned and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
         r = _find_emp_row_by_name(emp_df, curr_owner)
         if r is not None:
             office_val = _get_emp_value(r, "Office", "Project", "Site")
-
     for label, v in [
         ("CPU", device_row.get("CPU", "")),
         ("Memory", device_row.get("Memory", "")),
@@ -838,7 +792,6 @@ def build_registration_values(device_row: dict, *, actor_name: str, emp_df: pd.D
         if v:
             specs.append(f"{label}: {v}")
     specs_txt = " | ".join(specs)
-
     values.update(
         {
             fm["eq_type"]: device_row.get("Device Type", ""),
@@ -857,7 +810,6 @@ def build_transfer_pdf_values(row: dict, new_owner: str, emp_df: pd.DataFrame) -
     from_phone = row.get("Contact Number", "")
     from_dept = row.get("Department", "")
     from_loc = row.get("Location", "")
-
     emp_row = emp_df.loc[(emp_df["New Employeer"] == new_owner) | (emp_df["Name"] == new_owner)]
     if not emp_row.empty:
         emp = emp_row.iloc[0]
@@ -868,13 +820,11 @@ def build_transfer_pdf_values(row: dict, new_owner: str, emp_df: pd.DataFrame) -
         to_loc = emp.get("Location (KSA)", "")
     else:
         to_name, to_email, to_phone, to_dept, to_loc = new_owner, "", "", "", ""
-
     equip = (
         f"CPU: {row.get('CPU','')} | Memory: {row.get('Memory','')} | GPU: {row.get('GPU','')} | "
         f"Hard Drive 1: {row.get('Hard Drive 1','')} | Hard Drive 2: {row.get('Hard Drive 2','')} | "
         f"Screen Size: {row.get('Screen Size','')} | Office: {row.get('Office','')}"
     )
-
     return {
         "from_name": from_name,
         "from_mobile": from_phone,
@@ -1452,20 +1402,32 @@ def run_app():
                 "⬇️ Export",
             ]
         )
-        with tabs[0]: employee_register_tab()
-        with tabs[1]: employees_view_tab()
-        with tabs[2]: register_device_tab()
-        with tabs[3]: inventory_tab()
-        with tabs[4]: transfer_tab()
-        with tabs[5]: history_tab()
-        with tabs[6]: approvals_tab()
-        with tabs[7]: export_tab()
+        with tabs[0]:
+            employee_register_tab()
+        with tabs[1]:
+            employees_view_tab()
+        with tabs[2]:
+            register_device_tab()
+        with tabs[3]:
+            inventory_tab()
+        with tabs[4]:
+            transfer_tab()
+        with tabs[5]:
+            history_tab()
+        with tabs[6]:
+            approvals_tab()
+        with tabs[7]:
+            export_tab()
     else:
         tabs = st.tabs(["📝 Register Device", "🔁 Transfer Device", "📋 View Inventory", "📜 Transfer Log"])
-        with tabs[0]: register_device_tab()
-        with tabs[1]: transfer_tab()
-        with tabs[2]: inventory_tab()
-        with tabs[3]: history_tab()
+        with tabs[0]:
+            register_device_tab()
+        with tabs[1]:
+            transfer_tab()
+        with tabs[2]:
+            inventory_tab()
+        with tabs[3]:
+            history_tab()
 
 # =========================
 # Entry
