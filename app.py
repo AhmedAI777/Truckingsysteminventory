@@ -1049,9 +1049,13 @@ def employee_register_tab():
 def register_device_tab():
     st.subheader("📝 Register New Device")
     st.session_state.setdefault("current_owner", UNASSIGNED_LABEL)
+
+    # Load employees for dropdown + city lookup
     emp_df = read_worksheet(EMPLOYEE_WS)
-    employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
+    employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"),
+                             *unique_nonempty(emp_df, "Name")})
     owner_options = [UNASSIGNED_LABEL] + employee_names
+
     st.selectbox(
         "Current owner (at registration)",
         owner_options,
@@ -1062,8 +1066,50 @@ def register_device_tab():
         on_change=_owner_changed,
         args=(emp_df,),
     )
+
     with st.form("register_device", clear_on_submit=False):
-        # ... (form fields unchanged)
+        r1c1, r1c2, r1c3 = st.columns(3)
+        with r1c1:
+            st.text_input("Serial Number *", key="reg_serial")
+        with r1c2:
+            st.text_input("Device Type *", key="reg_device")
+        with r1c3:
+            st.text_input("Brand", key="reg_brand")
+
+        r2c1, r2c2, r2c3 = st.columns(3)
+        with r2c1:
+            st.text_input("Model", key="reg_model")
+        with r2c2:
+            st.text_input("CPU", key="reg_cpu")
+        with r2c3:
+            st.text_input("Memory", key="reg_mem")
+
+        r3c1, r3c2, r3c3 = st.columns(3)
+        with r3c1:
+            st.text_input("Hard Drive 1", key="reg_hdd1")
+        with r3c2:
+            st.text_input("Hard Drive 2", key="reg_hdd2")
+        with r3c3:
+            st.text_input("GPU", key="reg_gpu")
+
+        r4c1, r4c2, r4c3 = st.columns(3)
+        with r4c1:
+            st.text_input("Screen Size", key="reg_screen")
+        with r4c2:
+            st.text_input("Email Address", key="reg_email")
+        with r4c3:
+            st.text_input("Contact Number", key="reg_contact")
+
+        r5c1, r5c2, r5c3 = st.columns(3)
+        with r5c1:
+            st.text_input("Department", key="reg_dept")
+        with r5c2:
+            st.text_input("Location", key="reg_location")
+        with r5c3:
+            st.text_input("Office", key="reg_office")
+
+        st.text_area("Notes", height=80, key="reg_notes")
+        st.divider()
 
         pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf")
         c1, c2 = st.columns([1, 1])
@@ -1072,8 +1118,47 @@ def register_device_tab():
         with c2:
             submitted = st.form_submit_button("💾 Save Device", type="primary")
 
-    # ... (download_btn code unchanged)
+    # === Prefilled PDF download ===
+    if download_btn:
+        serial = st.session_state.get("reg_serial", "")
+        device = st.session_state.get("reg_device", "")
+        if not serial or not device:
+            st.error("Serial and Device Type required.")
+        else:
+            now_str = datetime.now().strftime(DATE_FMT)
+            actor = st.session_state.get("username", "")
+            row = {
+                "Serial Number": serial,
+                "Device Type": device,
+                "Brand": st.session_state.get("reg_brand", ""),
+                "Model": st.session_state.get("reg_model", ""),
+                "CPU": st.session_state.get("reg_cpu", ""),
+                "Hard Drive 1": st.session_state.get("reg_hdd1", ""),
+                "Hard Drive 2": st.session_state.get("reg_hdd2", ""),
+                "Memory": st.session_state.get("reg_mem", ""),
+                "GPU": st.session_state.get("reg_gpu", ""),
+                "Screen Size": st.session_state.get("reg_screen", ""),
+                "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL),
+                "Department": st.session_state.get("reg_dept", ""),
+                "Email Address": st.session_state.get("reg_email", ""),
+                "Contact Number": st.session_state.get("reg_contact", ""),
+                "Location": st.session_state.get("reg_location", ""),
+                "Office": st.session_state.get("reg_office", ""),
+                "Notes": st.session_state.get("reg_notes", ""),
+                "Date issued": now_str,
+                "Registered by": actor,
+            }
+            tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
+            if not tpl_bytes:
+                st.error("Could not load ICT Registration PDF template.")
+            else:
+                reg_vals = build_registration_values(row, actor_name=actor, emp_df=emp_df)
+                filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
+                st.download_button("⬇️ Download ICT Registration Form",
+                                   data=filled,
+                                   file_name=_ict_filename(serial))
 
+    # === Save device submission ===
     if submitted:
         serial = st.session_state.get("reg_serial", "")
         device = st.session_state.get("reg_device", "")
@@ -1083,7 +1168,8 @@ def register_device_tab():
 
         inv_df = read_worksheet(INVENTORY_WS)
         pending_df = read_worksheet(PENDING_DEVICE_WS)
-        if serial in inv_df.get("Serial Number", []).tolist() or serial in pending_df.get("Serial Number", []).tolist():
+        if serial in inv_df.get("Serial Number", []).tolist() or \
+           serial in pending_df.get("Serial Number", []).tolist():
             st.error(f"Serial {serial} already exists in Inventory or Pending.")
             return
 
@@ -1116,7 +1202,7 @@ def register_device_tab():
             "Registered by": actor,
         }
 
-        # ✅ Get city from mainlists
+        # ✅ Get city from mainlists for current owner
         emp_row = _find_emp_row_by_name(emp_df, row.get("Current user", ""))
         city_val = emp_row.get("Location (KSA)", "Unknown") if emp_row is not None else "Unknown"
 
@@ -1130,6 +1216,7 @@ def register_device_tab():
 
         if not fid:
             return
+
         pending = {
             **row,
             "Approval Status": "Pending",
@@ -1142,6 +1229,7 @@ def register_device_tab():
         }
         append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
         st.success("🕒 Device registration submitted for Admin approval.")
+
 
 
 def transfer_tab():
