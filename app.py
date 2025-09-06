@@ -616,12 +616,12 @@ def get_next_order_number_v2(action: str, serial: str) -> int:
     write_worksheet(COUNTER_WS, df)
     return order
 
-def generate_pdf_filename(project: str, Location (KSA): str, type_: str, serial: str, order_no: int) -> str:
+def generate_pdf_filename(project: str, Location: str, type_: str, serial: str, order_no: int) -> str:
     safe = lambda s: re.sub(r"[^\w\s\-]", "", str(s)).strip()
     project = safe(project)
     Location = safe(Location (KSA))
     serial = normalize_serial(serial)
-    return f"{project} - {Location (KSA)} - {type_} - {serial} - {order_no:04d} - {datetime.now().strftime('%Y%m%d')}.pdf"
+    return f"{project} - {Location} - {type_} - {serial} - {order_no:04d} - {datetime.now().strftime('%Y%m%d')}.pdf"
 
 
 # =========================
@@ -634,13 +634,13 @@ def _registration_field_map() -> dict[str, str]:
         "from_email": "Text Field2",
         "from_department": "Text Field3",
         "from_date": "Text Field4",
-        "from_Location (KSA)": "Text Field5",
+        "from_Location": "Text Field5",
         "to_name": "Text Field6",
         "to_mobile": "Text Field7",
         "to_email": "Text Field8",
         "to_department": "Text Field9",
         "to_date": "Text Field10",
-        "to_Location (KSA)": "Text Field11",
+        "to_Location": "Text Field11",
     }
     for blk in range(4):
         base = 12 + blk * 5
@@ -696,13 +696,13 @@ def _transfer_field_map() -> dict[str, str]:
         "from_email": "Text Field2",
         "from_department": "Text Field3",
         "from_date": "Text Field4",
-        "from_Location (KSA)": "Text Field5",
+        "from_Location": "Text Field5",
         "to_name": "Text Field6",
         "to_mobile": "Text Field7",
         "to_email": "Text Field8",
         "to_department": "Text Field9",
         "to_date": "Text Field10",
-        "to_Location (KSA)": "Text Field11",
+        "to_Location": "Text Field11",
     }
     for blk in range(4):
         base = 12 + blk * 5
@@ -746,14 +746,14 @@ def _get_emp_value(row: pd.Series, *aliases: str) -> str:
 
 def _owner_changed(emp_df: pd.DataFrame):
     owner = st.session_state.get("current_owner", UNASSIGNED_LABEL)
-    keys = ("reg_contact", "reg_email", "reg_dept", "reg_Location (KSA)", "reg_office")
+    keys = ("reg_contact", "reg_email", "reg_dept", "reg_Location", "reg_office")
     if owner and owner != UNASSIGNED_LABEL and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
         r = _find_emp_row_by_name(emp_df, owner)
         if r is not None:
             st.session_state["reg_contact"] = _get_emp_value(r, "Mobile Number", "Phone", "Mobile")
             st.session_state["reg_email"] = _get_emp_value(r, "Email Address", "Email", "E-mail")
             st.session_state["reg_dept"] = _get_emp_value(r, "Department", "Dept")
-            st.session_state["reg_Location (KSA)"] = _get_emp_value(r, "Location (KSA) (KSA)", "Location (KSA)", "City")
+            st.session_state["reg_Location (KSA)"] = _get_emp_value(r, "Location (KSA)", "Location (KSA)", "City")
             st.session_state["reg_office"] = _get_emp_value(r, "Office", "Project", "Site")
             return
     for k in keys:
@@ -787,27 +787,27 @@ def build_registration_values(device_row: dict, *, actor_name: str, emp_df: pd.D
     from_mobile = str(device_row.get("Contact Number", "") or "")
     from_email = str(device_row.get("Email Address", "") or "")
     from_dept = str(device_row.get("Department", "") or "")
-    from_Location (KSA) = str(device_row.get("Location (KSA)", "") or "")
+    from_Location = str(device_row.get("Location (KSA)", "") or "")
     if not is_unassigned and isinstance(emp_df, pd.DataFrame) and not emp_df.empty:
         r = _find_emp_row_by_name(emp_df, curr_owner)
         if r is not None:
             from_mobile = from_mobile or _get_emp_value(r, "Mobile Number", "Phone", "Mobile")
             from_email = from_email or _get_emp_value(r, "Email Address", "Email", "E-mail")
             from_dept = from_dept or _get_emp_value(r, "Department", "Dept")
-            from_Location (KSA) = from_Location (KSA) or _get_emp_value(r, "Location (KSA) (KSA)", "Location (KSA)", "City")
+            from_Location = from_Location (KSA) or _get_emp_value(r, "Location (KSA) (KSA)", "Location (KSA)", "City")
     values = {
         fm["from_name"]: from_name,
         fm["from_mobile"]: from_mobile,
         fm["from_email"]: from_email,
         fm["from_department"]: from_dept,
         fm["from_date"]: datetime.now().strftime("%Y-%m-%d"),
-        fm["from_Location (KSA)"]: from_Location (KSA),
+        fm["from_Location"]: from_Location,
         fm["to_name"]: "",
         fm["to_mobile"]: "",
         fm["to_email"]: "",
         fm["to_department"]: "",
         fm["to_date"]: "",
-        fm["to_Location (KSA)"]: "",
+        fm["to_Location"]: "",
     }
     specs = []
     office_val = str(device_row.get("Office", "")).strip()
@@ -846,7 +846,7 @@ def build_transfer_pdf_values(row: dict, new_owner: str, emp_df: pd.DataFrame) -
     from_email = row.get("Email Address", "") or row.get("Email", "")
     from_phone = row.get("Contact Number", "")
     from_dept = row.get("Department", "")
-    from_loc = row.get("Location (KSA)", "")
+    from_loc = row.get("Location", "")
     emp_row = emp_df.loc[(emp_df["New Employeer"] == new_owner) | (emp_df["Name"] == new_owner)]
     if not emp_row.empty:
         emp = emp_row.iloc[0]
@@ -854,7 +854,7 @@ def build_transfer_pdf_values(row: dict, new_owner: str, emp_df: pd.DataFrame) -
         to_email = emp.get("Email Address", emp.get("Email", ""))
         to_phone = emp.get("Mobile Number", "")
         to_dept = emp.get("Department", "")
-        to_loc = emp.get("Location (KSA) (KSA)", "")
+        to_loc = emp.get("Location (KSA)", "")
     else:
         to_name, to_email, to_phone, to_dept, to_loc = new_owner, "", "", "", ""
     equip = (
@@ -868,13 +868,13 @@ def build_transfer_pdf_values(row: dict, new_owner: str, emp_df: pd.DataFrame) -
         "from_email": from_email,
         "from_department": from_dept,
         "from_date": now_str,
-        "from_Location (KSA)": from_loc,
+        "from_Location": from_loc,
         "to_name": to_name,
         "to_mobile": to_phone,
         "to_email": to_email,
         "to_department": to_dept,
         "to_date": now_str,
-        "to_Location (KSA)": to_loc,
+        "to_Location": to_loc,
         "eq_type": row.get("Device Type", ""),
         "eq_brand": row.get("Brand", ""),
         "eq_model": row.get("Model", ""),
@@ -959,7 +959,7 @@ def employee_register_tab():
         mobile = st.text_input("Mobile Number")
         position = st.text_input("Position")
         dept = st.text_input("Department")
-        loc = st.text_input("Location (KSA) (KSA)")
+        loc = st.text_input("Location (KSA)")
         proj = st.text_input("Project / Office")
         teams = st.text_input("Microsoft Teams")
         submitted = st.form_submit_button("Save Employee", type="primary")
@@ -976,7 +976,7 @@ def employee_register_tab():
                     "Active": "Yes",
                     "Position": position.strip(),
                     "Department": dept.strip(),
-                    "Location (KSA) (KSA)": loc.strip(),
+                    "Location (KSA)": loc.strip(),
                     "Project": proj.strip(),
                     "Microsoft Teams": teams.strip(),
                     "Mobile Number": mobile.strip(),
@@ -1035,7 +1035,7 @@ def register_device_tab():
         with r5c1:
             st.text_input("Department", key="reg_dept")
         with r5c2:
-            st.text_input("Location (KSA)", key="reg_Location (KSA)")
+            st.text_input("Location", key="reg_Location")
         with r5c3:
             st.text_input("Office", key="reg_office")
         st.text_area("Notes", height=80, key="reg_notes")
@@ -1063,7 +1063,7 @@ def register_device_tab():
             "Department": st.session_state.get("reg_dept", "").strip(),
             "Email Address": st.session_state.get("reg_email", "").strip(),
             "Contact Number": st.session_state.get("reg_contact", "").strip(),
-            "Location (KSA)": st.session_state.get("reg_Location (KSA)", "").strip(),
+            "Location": st.session_state.get("reg_Location", "").strip(),
             "Office": st.session_state.get("reg_office", "").strip(),
             "Notes": st.session_state.get("reg_notes", "").strip(),
             "Date issued": now_str,
@@ -1106,15 +1106,15 @@ def register_device_tab():
         actor = st.session_state.get("username", "")
         row = build_row(now_str, actor)
         project = row.get("Office", "Head Office (HO)")
-        Location (KSA) = row.get("Location (KSA)", "Unknown")
+        Location) = row.get("Location", "Unknown")
         order_no = get_next_order_number_v2("REG", serial)
-        filename = generate_pdf_filename(project, Location (KSA), "REG", serial, order_no)
+        filename = generate_pdf_filename(project, Location, "REG", serial, order_no)
 
         link, fid = upload_pdf_and_get_link(
             pdf_file_obj,
             filename=filename,
             office=project,
-            city_code=Location (KSA),
+            city_code=Location,
             action="Register",
         )
 
@@ -1188,15 +1188,15 @@ def transfer_tab():
         now_str = datetime.now().strftime(DATE_FMT)
         actor = st.session_state.get("username", "")
         project = row.get("Office", "Head Office (HO)")
-        Location (KSA) = row.get("Location (KSA)", "Unknown")
+        Location = row.get("Location", "Unknown")
         order_no = get_next_order_number_v2("TRF", serial)
-        filename = generate_pdf_filename(project, Location (KSA), "TRF", serial, order_no)
+        filename = generate_pdf_filename(project, Location, "TRF", serial, order_no)
 
         link, fid = upload_pdf_and_get_link(
             pdf_file,
             filename=filename,
             office=project,
-            city_code=Location (KSA),
+            city_code=Location,
             action="Transfer",
         )
 
@@ -1240,7 +1240,7 @@ def _approve_device_row(row: pd.Series):
     _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
     try:
         file_id = str(row.get("Approval File ID", "")).strip()
-        city_code = str(row.get("Location (KSA)", "")).strip()
+        city_code = str(row.get("Location", "")).strip()
         if file_id and city_code:
             move_drive_file(file_id, "Head Office (HO)", city_code, "Register", "Approved")
     except Exception as e:
@@ -1289,7 +1289,7 @@ def _approve_transfer_row(row: pd.Series):
     inv.loc[idx, "Email Address"] = _val("Email Address", "Email", "E-mail")
     inv.loc[idx, "Contact Number"] = _val("Mobile Number", "Phone", "Mobile")
     inv.loc[idx, "Department"] = _val("Department", "Dept")
-    inv.loc[idx, "Location (KSA)"] = _val("Location (KSA) (KSA)", "Location (KSA)", "City")
+    inv.loc[idx, "Location"] = _val("Location (KSA)", "Location", "City")
     inv.loc[idx, "Office"] = _val("Office", "Project", "Site")
     inv.loc[idx, "Date issued"] = now_str
     inv.loc[idx, "Registered by"] = approver
@@ -1308,7 +1308,7 @@ def _approve_transfer_row(row: pd.Series):
     _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
     try:
         file_id = str(row.get("Approval File ID", "")).strip()
-        city_code = str(inv.loc[idx, "Location (KSA)"]).strip() if "Location (KSA)" in inv.columns else ""
+        city_code = str(inv.loc[idx, "Location"]).strip() if "Location" in inv.columns else ""
         if file_id and city_code:
             move_drive_file(file_id, "Head Office (HO)", city_code, "Transfer", "Approved")
     except Exception as e:
@@ -1337,13 +1337,13 @@ def _reject_row(ws_title: str, row: pd.Series):
         file_id = str(row.get("Approval File ID", "")).strip()
         city_code = ""
         if action == "Register":
-            city_code = str(row.get("Location (KSA)", "")).strip()
+            city_code = str(row.get("Location", "")).strip()
         else:
             sn = str(row.get("Serial Number", ""))
             inv = read_worksheet(INVENTORY_WS)
             hit = inv[inv["Serial Number"].astype(str) == sn]
-            if not hit.empty and "Location (KSA)" in hit.columns:
-                city_code = str(hit.iloc[0]["Location (KSA)"]).strip()
+            if not hit.empty and "Location" in hit.columns:
+                city_code = str(hit.iloc[0]["Location"]).strip()
         if file_id and city_code:
             move_drive_file(file_id, "Head Office (HO)", city_code, action, "Rejected")
     except Exception as e:
