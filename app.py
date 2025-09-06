@@ -993,7 +993,7 @@ def register_device_tab(current_user: str):
 
     inv_df = read_worksheet(INVENTORY_WS)
     employees_df = read_worksheet(EMPLOYEE_WS)
-    pending_df = read_worksheet(PENDING_WS_REG)
+    pending_df = read_worksheet(PENDING_DEVICE_WS)
 
     row = employees_df[employees_df["Name"] == current_user]
     if row.empty:
@@ -1054,7 +1054,7 @@ def transfer_tab(current_user: str):
 
     inv_df = read_worksheet(INVENTORY_WS)
     employees_df = read_worksheet(EMPLOYEE_WS)
-    pending_df = read_worksheet(PENDING_WS_TRF)
+    pending_df = read_worksheet(PENDING_TRANSFER_WS)
 
     serials = inv_df[inv_df["Current user"] == current_user]["Serial Number"].tolist()
     if not serials:
