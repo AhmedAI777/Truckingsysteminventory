@@ -992,7 +992,7 @@ def register_device_tab(current_user: str):
     st.header("📦 Register New Device")
 
     inv_df = read_worksheet(INVENTORY_WS)
-    employees_df = read_worksheet(EMPLOYEES_WS)
+    employees_df = read_worksheet(EMPLOYEE_WS)
     pending_df = read_worksheet(PENDING_WS_REG)
 
     row = employees_df[employees_df["Name"] == current_user]
@@ -1053,7 +1053,7 @@ def transfer_tab(current_user: str):
     st.header("🔄 Transfer Device")
 
     inv_df = read_worksheet(INVENTORY_WS)
-    employees_df = read_worksheet(EMPLOYEES_WS)
+    employees_df = read_worksheet(EMPLOYEE_WS)
     pending_df = read_worksheet(PENDING_WS_TRF)
 
     serials = inv_df[inv_df["Current user"] == current_user]["Serial Number"].tolist()
@@ -1348,18 +1348,16 @@ def run_app():
     current_user = st.session_state.get("username", "")
 
     if st.session_state.role == "Admin":
-        tabs = st.tabs(
-            [
-                "🧑‍💼 Employee Register",
-                "📇 View Employees",
-                "📝 Register Device",
-                "📋 View Inventory",
-                "🔁 Transfer Device",
-                "📜 Transfer Log",
-                "✅ Approvals",
-                "⬇️ Export",
-            ]
-        )
+        tabs = st.tabs([
+            "🧑‍💼 Employee Register",
+            "📇 View Employees",
+            "📝 Register Device",
+            "📋 View Inventory",
+            "🔁 Transfer Device",
+            "📜 Transfer Log",
+            "✅ Approvals",
+            "⬇️ Export",
+        ])
         with tabs[0]:
             employee_register_tab()
         with tabs[1]:
@@ -1392,22 +1390,29 @@ def run_app():
         with tabs[3]:
             history_tab()
 
-
 # =========================
 # Entry
 # =========================
+
+# Initialize session state variables
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "just_logged_out" not in st.session_state:
     st.session_state.just_logged_out = False
+if "username" not in st.session_state:
+    st.session_state.username = ""
+if "role" not in st.session_state:
+    st.session_state.role = ""
 
-if not st.session_state.authenticated and not st.session_state.get("just_logged_out"):
+# Check cookie for auto-login
+if not st.session_state.authenticated and not st.session_state.just_logged_out:
     payload = _read_cookie()
     if payload:
         st.session_state.authenticated = True
-        st.session_state.username = payload["u"]
-        st.session_state.role = payload.get("r", "")
+        st.session_state.username = payload.get("u", "")
+        st.session_state.role = payload.get("r", "Staff")
 
+# Show app or login form
 if st.session_state.authenticated:
     run_app()
 else:
