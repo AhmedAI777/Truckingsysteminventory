@@ -2298,78 +2298,197 @@ def get_sh():
     raise last_exc
 
 # =========================
-# Drive Helpers (NEW)
+# Drive helpers (FINAL)
 # =========================
+
 CITY_MAP = {
     "JEDDAH": "JED",
     "RIYADH": "RUH",
     "TAIF": "TIF",
-    "MADINAH": "MED"
+    "MADINAH": "MED",
 }
 
 def city_folder_name(city: str) -> str:
     if not city:
         return "UNK"
-    return CITY_MAP.get(city.strip().upper(), city.strip().upper())
+    return CITY_MAP.get(str(city).strip().upper(), str(city).strip().upper())
 
-def _office_code(office: str) -> str:
-    if "(" in office and ")" in office:
-        return office.split("(")[-1].split(")")[0].strip().upper()
-    return office.strip().upper()
+def _office_code(project_or_office: str) -> str:
+    s = (project_or_office or "").strip()
+    if "(" in s and ")" in s:
+        return s.split("(")[-1].split(")")[0].strip().upper()
+    return s.upper() or "HO"
+
+def _as_pdf_media(pdf_obj) -> MediaIoBaseUpload:
+    """
+    Accepts Streamlit UploadedFile, bytes, or BytesIO and returns MediaIoBaseUpload.
+    """
+    if hasattr(pdf_obj, "getvalue"):  # UploadedFile
+        buf = io.BytesIO(pdf_obj.getvalue())
+    elif isinstance(pdf_obj, (bytes, bytearray)):
+        buf = io.BytesIO(pdf_obj)
+    elif isinstance(pdf_obj, io.BytesIO):
+        buf = pdf_obj
+        buf.seek(0)
+    else:
+        raise ValueError("Unsupported pdf object type.")
+    return MediaIoBaseUpload(buf, mimetype="application/pdf", resumable=True)
 
 def ensure_nested_folders(service, root_id: str, path_parts: list[str]) -> str:
-    parent = root_id
-    for part in path_parts:
+    """
+    Ensure a nested folder path exists under root_id (Shared Drive or folder).
+    Uses allDrives corpus so it works for Shared Drives.
+    """
+    parent_id = root_id
+    for name in path_parts:
+        name = name.strip() or "UNKNOWN"
         q = (
-            f"'{parent}' in parents and name='{part}' "
-            "and mimeType='application/vnd.google-apps.folder' and trashed=false"
+            f"name = '{name}' and mimeType = 'application/vnd.google-apps.folder' "
+            f"and '{parent_id}' in parents and trashed = false"
         )
         res = service.files().list(
-            q=q, spaces="drive", fields="files(id,name)",
-            supportsAllDrives=True, includeItemsFromAllDrives=True
+            q=q,
+            spaces="drive",
+            corpora="allDrives",
+            includeItemsFromAllDrives=True,
+            supportsAllDrives=True,
+            fields="files(id,name)"
         ).execute()
         items = res.get("files", [])
         if items:
-            parent = items[0]["id"]
+            parent_id = items[0]["id"]
         else:
-            meta = {"name": part, "mimeType": "application/vnd.google-apps.folder", "parents": [parent]}
-            newf = service.files().create(body=meta, fields="id", supportsAllDrives=True).execute()
-            parent = newf["id"]
-    return parent
+            meta = {"name": name, "mimeType": "application/vnd.google-apps.folder", "parents": [parent_id]}
+            newf = service.files().create(
+                body=meta, fields="id", supportsAllDrives=True
+            ).execute()
+            parent_id = newf["id"]
+    return parent_id
 
-def build_filename(project: str, location: str, action: str, serial: str, order: str) -> str:
+def _build_filename(project: str, location: str, action: str, serial: str, order: str) -> str:
     proj_code = _office_code(project or "HO")
     city_code = city_folder_name(location or "")
     return f"{proj_code}-{city_code}-{action[:3].upper()}-{normalize_serial(serial)}-{order}-{datetime.now().strftime('%Y%m%d')}.pdf"
 
 def store_pdf_in_drive(service, root_id: str, project: str, location: str,
-                       action: str, serial: str, pdf_bytes: BytesIO) -> tuple[str, str]:
-    """Upload new PDF into Pending folder."""
-    parent_id = ensure_nested_folders(service, root_id, [project, city_folder_name(location), action, "Pending"])
+                       action: str, serial: str, pdf_obj) -> tuple[str, str]:
+    """
+    Upload new PDF into <Project>/<LocationCode>/<Register|Transfer>/Pending.
+    Returns (webViewLink, file_id).
+    """
+    # Normalize path
+    path = [project or "Head Office (HO)", city_folder_name(location), action, "Pending"]
+    parent_id = ensure_nested_folders(service, root_id, path)
+
+    # Order + filename
     order = get_next_order_number(action, serial)
-    filename = build_filename(project, location, action, serial, order)
-    media = MediaIoBaseUpload(pdf_bytes, mimetype="application/pdf", resumable=True)
+    filename = _build_filename(project, location, action, serial, order)
+
+    media = _as_pdf_media(pdf_obj)
     meta = {"name": filename, "parents": [parent_id]}
-    f = service.files().create(body=meta, media_body=media, fields="id,webViewLink", supportsAllDrives=True).execute()
-    return f.get("webViewLink", ""), f.get("id", "")
+    created = service.files().create(
+        body=meta,
+        media_body=media,
+        fields="id,webViewLink",
+        supportsAllDrives=True
+    ).execute()
+    return created.get("webViewLink", ""), created.get("id", "")
 
 def move_pdf_in_drive(service, file_id: str, project: str, location: str,
-                      action: str, status: str, serial: str):
-    """Move existing PDF to Approved/Rejected."""
-    parent_id = ensure_nested_folders(service, st.secrets["drive"]["approvals"], [project, city_folder_name(location), action, status])
-    order = get_next_order_number(action, serial)
-    new_name = build_filename(project, location, action, serial, order)
-    meta = service.files().get(fileId=file_id, fields="parents", supportsAllDrives=True).execute()
+                      action: str, decision: str, serial: str) -> str:
+    """
+    Move an existing file to <Project>/<LocationCode>/<Action>/<Approved|Rejected>
+    and rename with fresh order number. Returns webViewLink (if available).
+    """
+    dest_parent = ensure_nested_folders(
+        service,
+        st.secrets["drive"]["approvals"],
+        [project or "Head Office (HO)", city_folder_name(location), action, decision]
+    )
+
+    # Get current parents
+    meta = service.files().get(
+        fileId=file_id, fields="parents", supportsAllDrives=True
+    ).execute()
     prev_parents = ",".join(meta.get("parents", []))
+
+    # Fresh order & name
+    order = get_next_order_number(action, serial)
+    new_name = _build_filename(project, location, action, serial, order)
+
     updated = service.files().update(
         fileId=file_id,
-        addParents=parent_id,
+        addParents=dest_parent,
         removeParents=prev_parents,
         body={"name": new_name},
         fields="id,webViewLink",
         supportsAllDrives=True
     ).execute()
     return updated.get("webViewLink", "")
+
+
+def _download_template_bytes_or_public(file_id: str) -> bytes:
+    """
+    Try to download template PDF in this order:
+    1) Service Account (supportsAllDrives=True)
+    2) OAuth user (if allow_oauth_fallback)
+    3) Public 'uc?export=download' URL
+    """
+    # 1) Service Account
+    try:
+        req = _get_drive().files().get_media(fileId=file_id, supportsAllDrives=True)
+        buf = io.BytesIO()
+        MediaIoBaseDownload(buf, req).next_chunk()
+        buf.seek(0)
+        data = buf.read()
+        if data and data[:4] == b"%PDF":
+            return data
+    except Exception:
+        pass
+
+    # 2) OAuth fallback
+    try:
+        if st.secrets.get("drive", {}).get("allow_oauth_fallback", True):
+            user_drive = _get_user_drive()  # make sure you kept this helper
+            req = user_drive.files().get_media(fileId=file_id, supportsAllDrives=True)
+            buf = io.BytesIO()
+            MediaIoBaseDownload(buf, req).next_chunk()
+            buf.seek(0)
+            data = buf.read()
+            if data and data[:4] == b"%PDF":
+                return data
+    except Exception:
+        pass
+
+    # 3) Public direct download (only if the file is shared publicly)
+    try:
+        url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        r = requests.get(url, timeout=15)
+        if r.ok and r.content[:4] == b"%PDF":
+            return r.content
+    except Exception:
+        pass
+
+    
+    return b""
+
+
+
+def _warn_if_not_shared_drive():
+    try:
+        root_id = st.secrets.get("drive", {}).get("approvals", "")
+        if not root_id:
+            st.warning("Drive approvals folder ID not set in secrets.")
+            return
+        meta = _get_drive().files().get(
+            fileId=root_id, fields="id,name,driveId,owners(emailAddress)", supportsAllDrives=True
+        ).execute()
+        if not meta.get("driveId"):
+            st.warning("Approvals folder appears to be in **My Drive**. "
+                       "Service Accounts cannot upload there. Use a Shared Drive.")
+    except Exception:
+        pass
+
 
 
 
@@ -2866,6 +2985,8 @@ def _mark_decision(ws_name: str, row: dict, *, status: str):
 # =========================
 # UI: header + simple views
 # =========================
+
+
 def render_header():
     c_title, c_user = st.columns([7, 3], gap="small")
     with c_title:
@@ -2878,6 +2999,15 @@ def render_header():
         if st.session_state.get("authenticated") and st.button("Logout"):
             do_logout()
     st.markdown("---")
+
+def _safe_df(df: pd.DataFrame) -> pd.DataFrame:
+    try:
+        return df.astype(str)
+    except Exception:
+        return df
+
+# Use when displaying:
+# st.dataframe(_safe_df(df), use_container_width=True, hide_index=True)
 
 def employees_view_tab():
     st.subheader("📇 Employees (mainlists)")
@@ -2960,25 +3090,35 @@ def register_device_tab():
     )
 
     with st.form("register_device", clear_on_submit=False):
-        # fields...
-        st.text_input("Serial Number *", key="reg_serial")
-        st.text_input("Device Type *", key="reg_device")
-        st.text_input("Brand", key="reg_brand")
-        st.text_input("Model", key="reg_model")
-        st.text_input("CPU", key="reg_cpu")
-        st.text_input("Memory", key="reg_mem")
-        st.text_input("Hard Drive 1", key="reg_hdd1")
-        st.text_input("Hard Drive 2", key="reg_hdd2")
-        st.text_input("GPU", key="reg_gpu")
-        st.text_input("Screen Size", key="reg_screen")
-        st.text_input("Email Address", key="reg_email")
-        st.text_input("Contact Number", key="reg_contact")
-        st.text_input("Department", key="reg_dept")
-        st.text_input("Location", key="reg_location")
-        st.text_input("Office", key="reg_office")
+        r1c1, r1c2, r1c3 = st.columns(3)
+        with r1c1: st.text_input("Serial Number *", key="reg_serial")
+        with r1c2: st.text_input("Device Type *", key="reg_device")
+        with r1c3: st.text_input("Brand", key="reg_brand")
+
+        r2c1, r2c2, r2c3 = st.columns(3)
+        with r2c1: st.text_input("Model", key="reg_model")
+        with r2c2: st.text_input("CPU", key="reg_cpu")
+        with r2c3: st.text_input("Memory", key="reg_mem")
+
+        r3c1, r3c2, r3c3 = st.columns(3)
+        with r3c1: st.text_input("Hard Drive 1", key="reg_hdd1")
+        with r3c2: st.text_input("Hard Drive 2", key="reg_hdd2")
+        with r3c3: st.text_input("GPU", key="reg_gpu")
+
+        r4c1, r4c2, r4c3 = st.columns(3)
+        with r4c1: st.text_input("Screen Size", key="reg_screen")
+        with r4c2: st.text_input("Email Address", key="reg_email")
+        with r4c3: st.text_input("Contact Number", key="reg_contact")
+
+        r5c1, r5c2, r5c3 = st.columns(3)
+        with r5c1: st.text_input("Department", key="reg_dept")
+        with r5c2: st.text_input("Location", key="reg_location")
+        with r5c3: st.text_input("Office", key="reg_office")
+
         st.text_area("Notes", height=80, key="reg_notes")
         st.divider()
-        pdf_file = st.file_uploader("Upload signed ICT Registration PDF", type=["pdf"], key="reg_pdf")
+        pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf")
+
         c1, c2 = st.columns([1, 1])
         with c1:
             download_btn = st.form_submit_button("📄 Download Prefilled PDF")
@@ -3008,6 +3148,28 @@ def register_device_tab():
             "Registered by": actor,
         }
 
+    # Download PDF button
+    if download_btn:
+        serial = st.session_state.get("reg_serial", "")
+        if not serial:
+            st.error("Serial required.")
+        else:
+            tpl_bytes = _download_template_bytes_or_public(st.secrets["drive"]["ICT_TEMPLATE_FILE_ID"])
+            if not tpl_bytes:
+                st.error("Could not load ICT Registration template.")
+            else:
+                now_str = datetime.now().strftime(DATE_FMT)
+                actor = st.session_state.get("username", "")
+                row = build_row(now_str, actor)
+                reg_vals = build_registration_values(row, actor_name=actor, emp_df=emp_df)
+                filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
+                st.download_button(
+                    "⬇️ Download ICT Registration Form",
+                    data=filled,
+                    file_name=f"reg_{normalize_serial(serial)}.pdf"
+                )
+
+    # Submit form
     if submitted:
         serial = st.session_state.get("reg_serial", "")
         device = st.session_state.get("reg_device", "")
@@ -3021,8 +3183,7 @@ def register_device_tab():
             st.error(f"Serial {serial} already exists in Inventory or Pending.")
             return
 
-        pdf_file_obj = pdf_file or st.session_state.get("reg_pdf")
-        if pdf_file_obj is None:
+        if pdf_file is None:
             st.error("Signed ICT Registration PDF is required.")
             return
 
@@ -3033,7 +3194,8 @@ def register_device_tab():
         drive = _get_drive()
         project = row.get("Office", "Head Office (HO)")
         location = row.get("Location", "")
-        link, fid = store_pdf_in_drive(drive, st.secrets["drive"]["approvals"], project, location, "Register", serial, pdf_file_obj)
+        link, fid = store_pdf_in_drive(drive, st.secrets["drive"]["approvals"],
+                                       project, location, "Register", serial, pdf_file)
 
         if not fid:
             return
@@ -3050,6 +3212,7 @@ def register_device_tab():
         }
         append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
         st.success("🕒 Device registration submitted for Admin approval.")
+
 
 def transfer_tab():
     st.subheader("🔄 Device Transfer")
@@ -3081,7 +3244,7 @@ def transfer_tab():
             transfer_vals = build_transfer_pdf_values(row, new_owner, emp_df)
             field_map = _transfer_field_map()
             mapped_vals = {field_map[k]: v for k, v in transfer_vals.items() if k in field_map}
-            tpl_bytes = _download_template_bytes_or_public(TRANSFER_TEMPLATE_FILE_ID)
+            tpl_bytes = _download_template_bytes_or_public(st.secrets["drive"]["TRANSFER_TEMPLATE_FILE_ID"])
             if not tpl_bytes:
                 st.error("Could not load transfer PDF template.")
             else:
@@ -3108,7 +3271,8 @@ def transfer_tab():
         drive = _get_drive()
         project = row.get("Office", "Head Office (HO)")
         location = row.get("Location", "")
-        link, fid = store_pdf_in_drive(drive, st.secrets["drive"]["approvals"], project, location, "Transfer", serial, pdf_file)
+        link, fid = store_pdf_in_drive(drive, st.secrets["drive"]["approvals"],
+                                       project, location, "Transfer", serial, pdf_file)
 
         if not fid:
             return
@@ -3127,6 +3291,7 @@ def transfer_tab():
         }
         append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
         st.success("🕒 Transfer request submitted for Admin approval.")
+
 
 
 def approvals_tab():
