@@ -619,7 +619,7 @@ def get_next_order_number_v2(action: str, serial: str) -> int:
 def generate_pdf_filename(project: str, Location (KSA): str, type_: str, serial: str, order_no: int) -> str:
     safe = lambda s: re.sub(r"[^\w\s\-]", "", str(s)).strip()
     project = safe(project)
-    Location (KSA) = safe(Location (KSA))
+    Location = safe(Location (KSA))
     serial = normalize_serial(serial)
     return f"{project} - {Location (KSA)} - {type_} - {serial} - {order_no:04d} - {datetime.now().strftime('%Y%m%d')}.pdf"
 
