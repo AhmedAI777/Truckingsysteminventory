@@ -861,7 +861,7 @@ def _mark_decision(ws_name: str, row: dict, *, status: str):
     write_worksheet(ws_name, df)
 
 # =========================
-# UI helpers
+# UI
 # =========================
 def _ict_filename(serial: str, seq: str = "0008") -> str:
     return f"HO-JED-REG-{re.sub(r'[^A-Z0-9]','',serial.upper())}-{seq}-{datetime.now().strftime('%Y%m%d')}.pdf"
@@ -882,9 +882,6 @@ def render_header():
             do_logout()
     st.markdown("---")
 
-# =========================
-# Tabs
-# =========================
 def employees_view_tab():
     st.subheader("📇 Employees (mainlists)")
     df = read_worksheet(EMPLOYEE_WS)
@@ -909,9 +906,6 @@ def history_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-# =========================
-# Employee Register Tab
-# =========================
 def employee_register_tab():
     st.subheader("🧑‍💼 Register New Employee")
     with st.form("employee_register", clear_on_submit=True):
@@ -925,28 +919,29 @@ def employee_register_tab():
         proj = st.text_input("Project / Office")
         teams = st.text_input("Microsoft Teams")
         submitted = st.form_submit_button("Save Employee", type="primary")
-        if submitted:
-            if not name.strip() or not emp_id.strip():
-                st.error("Name and Employee ID are required.")
-                return
-            new_row = pd.DataFrame([{
-                "Name": name.strip(),
-                "Email": email.strip(),
-                "APLUS": emp_id.strip(),
-                "Active": "Yes",
-                "Position": position.strip(),
-                "Department": dept.strip(),
-                "Location (KSA)": loc.strip(),
-                "Project": proj.strip(),
-                "Microsoft Teams": teams.strip(),
-                "Mobile Number": mobile.strip(),
-            }])
-            append_to_worksheet(EMPLOYEE_WS, new_row)
-            st.success(f"✅ Employee '{name}' registered.")
+    if submitted:
+        if not name.strip() or not emp_id.strip():
+            st.error("Name and Employee ID are required.")
+            return
+        new_row = pd.DataFrame(
+            [
+                {
+                    "Name": name.strip(),
+                    "Email": email.strip(),
+                    "APLUS": emp_id.strip(),
+                    "Active": "Yes",
+                    "Position": position.strip(),
+                    "Department": dept.strip(),
+                    "Location (KSA)": loc.strip(),
+                    "Project": proj.strip(),
+                    "Microsoft Teams": teams.strip(),
+                    "Mobile Number": mobile.strip(),
+                }
+            ]
+        )
+        append_to_worksheet(EMPLOYEE_WS, new_row)
+        st.success(f"✅ Employee '{name}' registered.")
 
-# =========================
-# Register Device Tab
-# =========================
 def register_device_tab():
     st.subheader("📝 Register New Device")
     st.session_state.setdefault("current_owner", UNASSIGNED_LABEL)
@@ -957,20 +952,137 @@ def register_device_tab():
         "Current owner (at registration)",
         owner_options,
         index=owner_options.index(st.session_state["current_owner"])
-        if st.session_state["current_owner"] in owner_options else 0,
+        if st.session_state["current_owner"] in owner_options
+        else 0,
         key="current_owner",
         on_change=_owner_changed,
         args=(emp_df,),
     )
     with st.form("register_device", clear_on_submit=False):
-        # (all the reg_device inputs from your original code here)
-        # ...
-        # save device logic
-        pass  # keep the full implementation from your original code
+        r1c1, r1c2, r1c3 = st.columns(3)
+        with r1c1:
+            st.text_input("Serial Number *", key="reg_serial")
+        with r1c2:
+            st.text_input("Device Type *", key="reg_device")
+        with r1c3:
+            st.text_input("Brand", key="reg_brand")
+        r2c1, r2c2, r2c3 = st.columns(3)
+        with r2c1:
+            st.text_input("Model", key="reg_model")
+        with r2c2:
+            st.text_input("CPU", key="reg_cpu")
+        with r2c3:
+            st.text_input("Memory", key="reg_mem")
+        r3c1, r3c2, r3c3 = st.columns(3)
+        with r3c1:
+            st.text_input("Hard Drive 1", key="reg_hdd1")
+        with r3c2:
+            st.text_input("Hard Drive 2", key="reg_hdd2")
+        with r3c3:
+            st.text_input("GPU", key="reg_gpu")
+        r4c1, r4c2, r4c3 = st.columns(3)
+        with r4c1:
+            st.text_input("Screen Size", key="reg_screen")
+        with r4c2:
+            st.text_input("Email Address", key="reg_email")
+        with r4c3:
+            st.text_input("Contact Number", key="reg_contact")
+        r5c1, r5c2, r5c3 = st.columns(3)
+        with r5c1:
+            st.text_input("Department", key="reg_dept")
+        with r5c2:
+            st.text_input("Location", key="reg_location")
+        with r5c3:
+            st.text_input("Office", key="reg_office")
+        st.text_area("Notes", height=80, key="reg_notes")
+        st.divider()
+        pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf")
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            download_btn = st.form_submit_button("📄 Download Prefilled PDF")
+        with c2:
+            submitted = st.form_submit_button("💾 Save Device", type="primary")
 
-# =========================
-# Transfer Device Tab
-# =========================
+    def build_row(now_str, actor):
+        return {
+            "Serial Number": st.session_state.get("reg_serial", "").strip(),
+            "Device Type": st.session_state.get("reg_device", "").strip(),
+            "Brand": st.session_state.get("reg_brand", "").strip(),
+            "Model": st.session_state.get("reg_model", "").strip(),
+            "CPU": st.session_state.get("reg_cpu", "").strip(),
+            "Hard Drive 1": st.session_state.get("reg_hdd1", "").strip(),
+            "Hard Drive 2": st.session_state.get("reg_hdd2", "").strip(),
+            "Memory": st.session_state.get("reg_mem", "").strip(),
+            "GPU": st.session_state.get("reg_gpu", "").strip(),
+            "Screen Size": st.session_state.get("reg_screen", "").strip(),
+            "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
+            "Department": st.session_state.get("reg_dept", "").strip(),
+            "Email Address": st.session_state.get("reg_email", "").strip(),
+            "Contact Number": st.session_state.get("reg_contact", "").strip(),
+            "Location": st.session_state.get("reg_location", "").strip(),
+            "Office": st.session_state.get("reg_office", "").strip(),
+            "Notes": st.session_state.get("reg_notes", "").strip(),
+            "Date issued": now_str,
+            "Registered by": actor,
+        }
+
+    if download_btn:
+        serial = st.session_state.get("reg_serial", "")
+        device = st.session_state.get("reg_device", "")
+        if not serial or not device:
+            st.error("Serial and Device Type required.")
+        else:
+            now_str = datetime.now().strftime(DATE_FMT)
+            actor = st.session_state.get("username", "")
+            row = build_row(now_str, actor)
+            tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
+            if not tpl_bytes:
+                st.error("Could not load ICT Registration PDF template.")
+            else:
+                reg_vals = build_registration_values(row, actor_name=actor, emp_df=emp_df)
+                filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
+                st.download_button("⬇️ Download ICT Registration Form", data=filled, file_name=_ict_filename(serial))
+
+    if submitted:
+        serial = st.session_state.get("reg_serial", "")
+        device = st.session_state.get("reg_device", "")
+        if not serial or not device:
+            st.error("Serial Number and Device Type are required.")
+            return
+        inv_df = read_worksheet(INVENTORY_WS)
+        pending_df = read_worksheet(PENDING_DEVICE_WS)
+        if serial in inv_df.get("Serial Number", []).tolist() or serial in pending_df.get("Serial Number", []).tolist():
+            st.error(f"Serial {serial} already exists in Inventory or Pending.")
+            return
+        pdf_file_obj = pdf_file or st.session_state.get("reg_pdf")
+        if pdf_file_obj is None:
+            st.error("Signed ICT Registration PDF is required.")
+            return
+        now_str = datetime.now().strftime(DATE_FMT)
+        actor = st.session_state.get("username", "")
+        row = build_row(now_str, actor)
+        link, fid = upload_pdf_and_get_link(
+            pdf_file_obj,
+            prefix=f"device_{normalize_serial(serial)}",
+            office="Head Office (HO)",
+            city_code=row.get("Location", ""),
+            action="Register",
+        )
+        if not fid:
+            return
+        pending = {
+            **row,
+            "Approval Status": "Pending",
+            "Approval PDF": link,
+            "Approval File ID": fid,
+            "Submitted by": actor,
+            "Submitted at": now_str,
+            "Approver": "",
+            "Decision at": "",
+        }
+        append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
+        st.success("🕒 Device registration submitted for Admin approval.")
+
 def transfer_tab():
     st.subheader("🔄 Device Transfer")
     inv_df = read_worksheet(INVENTORY_WS)
@@ -981,14 +1093,194 @@ def transfer_tab():
     serials = inv_df["Serial Number"].dropna().tolist()
     employees = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
     with st.form("transfer_form", clear_on_submit=False):
-        # (transfer form inputs and PDF upload logic from your original code here)
-        pass  # keep the full implementation from your original code
+        serial = st.selectbox("Select Serial Number", serials, key="trf_serial")
+        new_owner = st.selectbox("Select New Owner", employees, key="trf_new_owner")
+        pdf_file = st.file_uploader("Upload signed transfer PDF", type=["pdf"], key="trf_pdf")
+        c1, c2 = st.columns([1, 1])
+        with c1:
+            dl = st.form_submit_button("📄 Download Prefilled Transfer PDF")
+        with c2:
+            submitted = st.form_submit_button("💾 Submit Transfer Request", type="primary")
+    if dl:
+        if not serial or not new_owner:
+            st.error("Serial number and new owner are required.")
+        else:
+            row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
+            transfer_vals = build_transfer_pdf_values(row, new_owner, emp_df)
+            field_map = _transfer_field_map()
+            mapped_vals = {field_map[k]: v for k, v in transfer_vals.items() if k in field_map}
+            tpl_bytes = _download_template_bytes_or_public(TRANSFER_TEMPLATE_FILE_ID)
+            if not tpl_bytes:
+                st.error("Could not load transfer PDF template.")
+            else:
+                pdf_bytes = fill_pdf_form(tpl_bytes, mapped_vals)
+                st.download_button(
+                    "📥 Download Prefilled Transfer PDF",
+                    data=pdf_bytes,
+                    file_name=_transfer_filename(serial),
+                    mime="application/pdf",
+                )
+    if submitted:
+        if not serial or not new_owner:
+            st.error("Serial number and new owner required.")
+            return
+        if pdf_file is None:
+            st.error("Signed ICT Transfer PDF is required.")
+            return
+        row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
+        now_str = datetime.now().strftime(DATE_FMT)
+        actor = st.session_state.get("username", "")
+        link, fid = upload_pdf_and_get_link(
+            pdf_file,
+            prefix=f"transfer_{normalize_serial(serial)}",
+            office=row.get("Office", ""),
+            city_code=row.get("Location", ""),
+            action="Transfer",
+        )
+        if not fid:
+            return
+        pending = {
+            **row,
+            "From owner": row.get("Current user", ""),  # include actual current owner
+            "To owner": new_owner,
+            "Approval Status": "Pending",
+            "Approval PDF": link,
+            "Approval File ID": fid,
+            "Submitted by": actor,
+            "Submitted at": now_str,
+            "Approver": "",
+            "Decision at": "",
+        }
+        append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
+        st.success("🕒 Transfer request submitted for Admin approval.")
 
+def _approve_device_row(row: pd.Series):
+    inv = read_worksheet(INVENTORY_WS)
+    now_str = datetime.now().strftime(DATE_FMT)
+    approver = st.session_state.get("username", "")
+    new_row = {k: row.get(k, "") for k in INVENTORY_COLS}
+    new_row["Registered by"] = approver or new_row.get("Registered by", "")
+    new_row["Date issued"] = now_str
+    inv_out = pd.concat(
+        [inv if not inv.empty else pd.DataFrame(columns=INVENTORY_COLS), pd.DataFrame([new_row])],
+        ignore_index=True,
+    )
+    write_worksheet(INVENTORY_WS, inv_out)
+    _mark_decision(PENDING_DEVICE_WS, row, status="Approved")
+    try:
+        file_id = str(row.get("Approval File ID", "")).strip()
+        city_code = str(row.get("Location", "")).strip()
+        if file_id and city_code:
+            move_drive_file(file_id, "Head Office (HO)", city_code, "Register", "Approved")
+    except Exception as e:
+        st.warning(f"Approved, but couldn’t move PDF in Drive: {e}")
+    # Optional: log initial assignment (Stock → current owner)
+    try:
+        log_row = {
+            "Device Type": new_row.get("Device Type", ""),
+            "Serial Number": new_row.get("Serial Number", ""),
+            "From owner": UNASSIGNED_LABEL,
+            "To owner": new_row.get("Current user", ""),
+            "Date issued": now_str,
+            "Registered by": approver,
+        }
+        append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
+    except Exception:
+        pass
+    st.success("✅ Device approved, added to Inventory, and PDF moved to Register/Approved.")
+
+def _approve_transfer_row(row: pd.Series):
+    """Approve a transfer: log correct prev owner and refresh all person fields."""
+    inv = read_worksheet(INVENTORY_WS)
+    if inv.empty:
+        st.error("Inventory is empty; cannot apply transfer.")
+        st.stop()
+    sn = str(row.get("Serial Number", ""))
+    match = inv[inv["Serial Number"].astype(str) == sn]
+    if match.empty:
+        st.error("Serial not found in Inventory.")
+        st.stop()
+    idx = match.index[0]
+    now_str = datetime.now().strftime(DATE_FMT)
+    approver = st.session_state.get("username", "")
+    prev_user = str(inv.loc[idx, "Current user"] or "")
+    new_user = str(row.get("To owner", ""))
+
+    emp_df = read_worksheet(EMPLOYEE_WS)
+    emp_row = _find_emp_row_by_name(emp_df, new_user)
+
+    def _val(*cols: str) -> str:
+        return _get_emp_value(emp_row, *cols) if emp_row is not None else ""
+
+    inv.loc[idx, "Previous User"] = prev_user
+    inv.loc[idx, "Current user"] = new_user
+    inv.loc[idx, "TO"] = new_user
+    inv.loc[idx, "Email Address"] = _val("Email Address", "Email", "E-mail")
+    inv.loc[idx, "Contact Number"] = _val("Mobile Number", "Phone", "Mobile")
+    inv.loc[idx, "Department"] = _val("Department", "Dept")
+    inv.loc[idx, "Location"] = _val("Location (KSA)", "Location", "City")
+    inv.loc[idx, "Office"] = _val("Office", "Project", "Site")
+    inv.loc[idx, "Date issued"] = now_str
+    inv.loc[idx, "Registered by"] = approver
+    write_worksheet(INVENTORY_WS, inv)
+
+    log_row = {
+        "Device Type": row.get("Device Type", ""),
+        "Serial Number": sn,
+        "From owner": prev_user,
+        "To owner": new_user,
+        "Date issued": now_str,
+        "Registered by": approver,
+    }
+    append_to_worksheet(TRANSFERLOG_WS, pd.DataFrame([log_row]))
+
+    _mark_decision(PENDING_TRANSFER_WS, row, status="Approved")
+    try:
+        file_id = str(row.get("Approval File ID", "")).strip()
+        city_code = str(inv.loc[idx, "Location"]).strip() if "Location" in inv.columns else ""
+        if file_id and city_code:
+            move_drive_file(file_id, "Head Office (HO)", city_code, "Transfer", "Approved")
+    except Exception as e:
+        st.warning(f"Approved, but couldn’t move PDF in Drive: {e}")
+    st.success(f"✅ Transfer approved. {prev_user or '(blank)'} → {new_user}. Contact details updated.")
+
+def _reject_row(ws_title: str, row: pd.Series):
+    df = read_worksheet(ws_title)
+    key_cols = [c for c in ["Serial Number", "Submitted at", "Submitted by", "To owner"] if c in df.columns]
+    mask = pd.Series([True] * len(df))
+    for c in key_cols:
+        mask &= df[c].astype(str) == str(row.get(c, ""))
+    idxs = df[mask].index.tolist()
+    if not idxs and "Serial Number" in df.columns:
+        idxs = df[df["Serial Number"].astype(str) == str(row.get("Serial Number", ""))].index.tolist()
+    if not idxs:
+        st.warning("Could not locate row to mark as Rejected.")
+        return
+    idx = idxs[0]
+    df.loc[idx, "Approval Status"] = "Rejected"
+    df.loc[idx, "Approver"] = st.session_state.get("username", "")
+    df.loc[idx, "Decision at"] = datetime.now().strftime(DATE_FMT)
+    write_worksheet(ws_title, df)
+    try:
+        action = "Register" if ws_title == PENDING_DEVICE_WS else "Transfer"
+        file_id = str(row.get("Approval File ID", "")).strip()
+        city_code = ""
+        if action == "Register":
+            city_code = str(row.get("Location", "")).strip()
+        else:
+            sn = str(row.get("Serial Number", ""))
+            inv = read_worksheet(INVENTORY_WS)
+            hit = inv[inv["Serial Number"].astype(str) == sn]
+            if not hit.empty and "Location" in hit.columns:
+                city_code = str(hit.iloc[0]["Location"]).strip()
+        if file_id and city_code:
+            move_drive_file(file_id, "Head Office (HO)", city_code, action, "Rejected")
+    except Exception as e:
+        st.warning(f"Rejected, but couldn’t move PDF in Drive: {e}")
+    st.success("❌ Request rejected. PDF stored under Rejected for evidence.")
 
 def approvals_tab():
     st.subheader("✅ Approvals")
-
-    # Device Registrations
     st.markdown("### 📦 Pending Device Registrations")
     pend_df = read_worksheet(PENDING_DEVICE_WS)
     if pend_df.empty:
@@ -1011,10 +1303,7 @@ def approvals_tab():
                     if st.button("❌ Reject", key=f"reject_device_{i}"):
                         _reject_row(PENDING_DEVICE_WS, row)
                         st.rerun()
-
     st.divider()
-
-    # Transfers
     st.markdown("### 🔄 Pending Transfers")
     pend_trf = read_worksheet(PENDING_TRANSFER_WS)
     if pend_trf.empty:
@@ -1054,7 +1343,6 @@ def export_tab():
     if df.empty:
         st.info("No data available to export.")
         return
-
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button(
         label=f"📥 Download {choice} as CSV",
@@ -1062,7 +1350,6 @@ def export_tab():
         file_name=f"{choice.replace(' ', '_').lower()}_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv",
     )
-
     excel_buf = io.BytesIO()
     with pd.ExcelWriter(excel_buf, engine="xlsxwriter") as writer:
         df.to_excel(writer, sheet_name=choice[:30], index=False)
