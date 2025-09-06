@@ -987,108 +987,25 @@ def employee_register_tab():
         append_to_worksheet(EMPLOYEE_WS, new_row)
         st.success(f"✅ Employee '{name}' registered.")
 
-def register_device_tab():
-    st.subheader("📝 Register New Device")
-    st.session_state.setdefault("current_owner", UNASSIGNED_LABEL)
-    emp_df = read_worksheet(EMPLOYEE_WS)
-    employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
-    owner_options = [UNASSIGNED_LABEL] + employee_names
-    st.selectbox(
-        "Current owner (at registration)",
-        owner_options,
-        index=owner_options.index(st.session_state["current_owner"])
-        if st.session_state["current_owner"] in owner_options
-        else 0,
-        key="current_owner",
-        on_change=_owner_changed,
-        args=(emp_df,),
-    )
-    with st.form("register_device", clear_on_submit=False):
-        r1c1, r1c2, r1c3 = st.columns(3)
-        with r1c1:
-            st.text_input("Serial Number *", key="reg_serial")
-        with r1c2:
-            st.text_input("Device Type *", key="reg_device")
-        with r1c3:
-            st.text_input("Brand", key="reg_brand")
-        r2c1, r2c2, r2c3 = st.columns(3)
-        with r2c1:
-            st.text_input("Model", key="reg_model")
-        with r2c2:
-            st.text_input("CPU", key="reg_cpu")
-        with r2c3:
-            st.text_input("Memory", key="reg_mem")
-        r3c1, r3c2, r3c3 = st.columns(3)
-        with r3c1:
-            st.text_input("Hard Drive 1", key="reg_hdd1")
-        with r3c2:
-            st.text_input("Hard Drive 2", key="reg_hdd2")
-        with r3c3:
-            st.text_input("GPU", key="reg_gpu")
-        r4c1, r4c2, r4c3 = st.columns(3)
-        with r4c1:
-            st.text_input("Screen Size", key="reg_screen")
-        with r4c2:
-            st.text_input("Email Address", key="reg_email")
-        with r4c3:
-            st.text_input("Contact Number", key="reg_contact")
-        r5c1, r5c2, r5c3 = st.columns(3)
-        with r5c1:
-            st.text_input("Department", key="reg_dept")
-        with r5c2:
-            st.text_input("Location", key="reg_Location")
-        with r5c3:
-            st.text_input("Office", key="reg_office")
-        st.text_area("Notes", height=80, key="reg_notes")
-        st.divider()
-        pdf_file = st.file_uploader("Upload signed PDF", type=["pdf"], key="reg_pdf")
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            download_btn = st.form_submit_button("📄 Download Prefilled PDF")
-        with c2:
-            submitted = st.form_submit_button("💾 Save Device", type="primary")
+def register_device_tab(current_user: str):
+    st.header("📦 Register New Device")
 
-    def build_row(now_str, actor):
-        return {
-            "Serial Number": st.session_state.get("reg_serial", "").strip(),
-            "Device Type": st.session_state.get("reg_device", "").strip(),
-            "Brand": st.session_state.get("reg_brand", "").strip(),
-            "Model": st.session_state.get("reg_model", "").strip(),
-            "CPU": st.session_state.get("reg_cpu", "").strip(),
-            "Hard Drive 1": st.session_state.get("reg_hdd1", "").strip(),
-            "Hard Drive 2": st.session_state.get("reg_hdd2", "").strip(),
-            "Memory": st.session_state.get("reg_mem", "").strip(),
-            "GPU": st.session_state.get("reg_gpu", "").strip(),
-            "Screen Size": st.session_state.get("reg_screen", "").strip(),
-            "Current user": st.session_state.get("current_owner", UNASSIGNED_LABEL).strip(),
-            "Department": st.session_state.get("reg_dept", "").strip(),
-            "Email Address": st.session_state.get("reg_email", "").strip(),
-            "Contact Number": st.session_state.get("reg_contact", "").strip(),
-            "Location": st.session_state.get("reg_Location", "").strip(),
-            "Office": st.session_state.get("reg_office", "").strip(),
-            "Notes": st.session_state.get("reg_notes", "").strip(),
-            "Date issued": now_str,
-            "Registered by": actor,
-        }
+    inv_df = read_worksheet(INVENTORY_WS)
+    employees_df = read_worksheet(EMPLOYEES_WS)
+    pending_df = read_worksheet(PENDING_WS_REG)
 
-    if download_btn:
-        serial = st.session_state.get("reg_serial", "")
-        device = st.session_state.get("reg_device", "")
-        if not serial or not device:
-            st.error("Serial and Device Type required.")
-        else:
-            now_str = datetime.now().strftime(DATE_FMT)
-            actor = st.session_state.get("username", "")
-            row = build_row(now_str, actor)
-            tpl_bytes = _download_template_bytes_or_public(ICT_TEMPLATE_FILE_ID)
-            if not tpl_bytes:
-                st.error("Could not load ICT Registration PDF template.")
-            else:
-                reg_vals = build_registration_values(row, actor_name=actor, emp_df=emp_df)
-                filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
-                st.download_button("⬇️ Download ICT Registration Form", data=filled, file_name=_ict_filename(serial))
+    row = employees_df[employees_df["Name"] == current_user]
+    if row.empty:
+        st.error("User not found in employee directory.")
+        return
 
-       if submitted:
+    row = row.iloc[0]
+    model = st.text_input("Device Model")
+    serial = st.text_input("Serial Number").strip().upper()
+    notes = st.text_area("Notes (optional)")
+
+    submitted = st.button("Submit for Approval")
+    if submitted:
         if serial in inv_df["Serial Number"].values:
             st.error("Serial already exists in inventory.")
             return
@@ -1115,7 +1032,6 @@ def register_device_tab():
             action="Register",
         )
 
-        pending_df = read_worksheet(PENDING_WS_REG)
         new_row = {
             "Date": datetime.now().strftime(DATE_FMT),
             "Serial Number": serial,
@@ -1131,47 +1047,33 @@ def register_device_tab():
         st.success("Device registered and pending approval.")
 
 
-def transfer_tab():
-    st.subheader("🔄 Device Transfer")
+
+def transfer_tab(current_user: str):
+    st.header("🔄 Transfer Device")
+
     inv_df = read_worksheet(INVENTORY_WS)
-    emp_df = read_worksheet(EMPLOYEE_WS)
-    if inv_df.empty:
-        st.info("No devices in inventory.")
+    employees_df = read_worksheet(EMPLOYEES_WS)
+    pending_df = read_worksheet(PENDING_WS_TRF)
+
+    serials = inv_df[inv_df["Current user"] == current_user]["Serial Number"].tolist()
+    if not serials:
+        st.info("You have no devices assigned.")
         return
-    serials = inv_df["Serial Number"].dropna().tolist()
-    employees = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
-    with st.form("transfer_form", clear_on_submit=False):
-        serial = st.selectbox("Select Serial Number", serials, key="trf_serial")
-        new_owner = st.selectbox("Select New Owner", employees, key="trf_new_owner")
-        pdf_file = st.file_uploader("Upload signed transfer PDF", type=["pdf"], key="trf_pdf")
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            dl = st.form_submit_button("📄 Download Prefilled Transfer PDF")
-        with c2:
-            submitted = st.form_submit_button("💾 Submit Transfer Request", type="primary")
-    if dl:
-        if not serial or not new_owner:
-            st.error("Serial number and new owner are required.")
-        else:
-            row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
-            transfer_vals = build_transfer_pdf_values(row, new_owner, emp_df)
-            field_map = _transfer_field_map()
-            mapped_vals = {field_map[k]: v for k, v in transfer_vals.items() if k in field_map}
-            tpl_bytes = _download_template_bytes_or_public(TRANSFER_TEMPLATE_FILE_ID)
-            if not tpl_bytes:
-                st.error("Could not load transfer PDF template.")
-            else:
-                pdf_bytes = fill_pdf_form(tpl_bytes, mapped_vals)
-                st.download_button(
-                    "📥 Download Prefilled Transfer PDF",
-                    data=pdf_bytes,
-                    file_name=_transfer_filename(serial),
-                    mime="application/pdf",
-                )
-        if submitted:
+
+    serial = st.selectbox("Select Serial Number to Transfer", serials)
+    device_row = inv_df[inv_df["Serial Number"] == serial].iloc[0]
+    model = device_row["Model"]
+    from_owner = current_user
+    to_owner = st.selectbox("Transfer To", sorted(employees_df["Name"]))
+    notes = st.text_area("Notes (optional)")
+
+    submitted = st.button("Submit Transfer Request")
+    if submitted:
         if serial not in inv_df["Serial Number"].values:
             st.error("Serial not found in inventory.")
             return
+
+        row = employees_df[employees_df["Name"] == to_owner].iloc[0]
 
         pdf_file = fill_pdf_form("transfer", {
             "serial": serial,
@@ -1196,7 +1098,6 @@ def transfer_tab():
             action="Transfer",
         )
 
-        pending_df = read_worksheet(PENDING_WS_TRF)
         new_row = {
             "Date": datetime.now().strftime(DATE_FMT),
             "Serial Number": serial,
@@ -1211,6 +1112,7 @@ def transfer_tab():
         pending_df = pd.concat([pending_df, pd.DataFrame([new_row])], ignore_index=True)
         write_worksheet(PENDING_WS_TRF, pending_df)
         st.success("Transfer submitted and pending approval.")
+
 
 
 def _approve_device_row(row: pd.Series):
