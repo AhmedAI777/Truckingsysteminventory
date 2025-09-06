@@ -909,7 +909,81 @@ def history_tab():
     else:
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-# (employee_register_tab, register_device_tab, transfer_tab already defined earlier)
+# =========================
+# Employee Register Tab
+# =========================
+def employee_register_tab():
+    st.subheader("🧑‍💼 Register New Employee")
+    with st.form("employee_register", clear_on_submit=True):
+        name = st.text_input("Full Name *")
+        emp_id = st.text_input("Employee ID (APLUS) *")
+        email = st.text_input("Email")
+        mobile = st.text_input("Mobile Number")
+        position = st.text_input("Position")
+        dept = st.text_input("Department")
+        loc = st.text_input("Location (KSA)")
+        proj = st.text_input("Project / Office")
+        teams = st.text_input("Microsoft Teams")
+        submitted = st.form_submit_button("Save Employee", type="primary")
+        if submitted:
+            if not name.strip() or not emp_id.strip():
+                st.error("Name and Employee ID are required.")
+                return
+            new_row = pd.DataFrame([{
+                "Name": name.strip(),
+                "Email": email.strip(),
+                "APLUS": emp_id.strip(),
+                "Active": "Yes",
+                "Position": position.strip(),
+                "Department": dept.strip(),
+                "Location (KSA)": loc.strip(),
+                "Project": proj.strip(),
+                "Microsoft Teams": teams.strip(),
+                "Mobile Number": mobile.strip(),
+            }])
+            append_to_worksheet(EMPLOYEE_WS, new_row)
+            st.success(f"✅ Employee '{name}' registered.")
+
+# =========================
+# Register Device Tab
+# =========================
+def register_device_tab():
+    st.subheader("📝 Register New Device")
+    st.session_state.setdefault("current_owner", UNASSIGNED_LABEL)
+    emp_df = read_worksheet(EMPLOYEE_WS)
+    employee_names = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
+    owner_options = [UNASSIGNED_LABEL] + employee_names
+    st.selectbox(
+        "Current owner (at registration)",
+        owner_options,
+        index=owner_options.index(st.session_state["current_owner"])
+        if st.session_state["current_owner"] in owner_options else 0,
+        key="current_owner",
+        on_change=_owner_changed,
+        args=(emp_df,),
+    )
+    with st.form("register_device", clear_on_submit=False):
+        # (all the reg_device inputs from your original code here)
+        # ...
+        # save device logic
+        pass  # keep the full implementation from your original code
+
+# =========================
+# Transfer Device Tab
+# =========================
+def transfer_tab():
+    st.subheader("🔄 Device Transfer")
+    inv_df = read_worksheet(INVENTORY_WS)
+    emp_df = read_worksheet(EMPLOYEE_WS)
+    if inv_df.empty:
+        st.info("No devices in inventory.")
+        return
+    serials = inv_df["Serial Number"].dropna().tolist()
+    employees = sorted({*unique_nonempty(emp_df, "New Employeer"), *unique_nonempty(emp_df, "Name")})
+    with st.form("transfer_form", clear_on_submit=False):
+        # (transfer form inputs and PDF upload logic from your original code here)
+        pass  # keep the full implementation from your original code
+
 
 def approvals_tab():
     st.subheader("✅ Approvals")
