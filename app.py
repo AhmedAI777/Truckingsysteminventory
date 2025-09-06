@@ -383,7 +383,8 @@ def move_drive_file(file_id: str, office: str, city_code: str, action: str, deci
         fields="id, parents",
         supportsAllDrives=True,
     ).execute()
-#below is the correct one of def upload
+
+
 def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_code: str, action: str) -> Tuple[str, str]:
     if uploaded_file is None:
         st.error("No file selected.")
@@ -398,64 +399,127 @@ def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_cod
         return "", ""
     if data[:4] != b"%PDF":
         st.warning("File doesn't start with %PDF header — continuing.")
+
     try:
         drive_cli = _get_drive()
         root_id = st.secrets.get("drive", {}).get("approvals", "")
         if not root_id:
             st.error("Drive approvals folder not configured in secrets.")
             return "", ""
+
         city_folder = city_folder_name(city_code)
-        folder_id = ensure_drive_subfolder(root_id, [office or "Head Office (HO)", city_folder, action, "Pending"], drive_cli)
+        folder_id = ensure_drive_subfolder(
+            root_id,
+            [office or "Head Office (HO)", city_folder, action, "Pending"],
+            drive_cli,
+        )
+
         today = datetime.now().strftime("%Y%m%d")
-        meta = {"name": f"{prefix}_{today}.pdf", "parents": [folder_id], "mimeType": "application/pdf"}
+        meta = {
+            "name": f"{prefix}_{today}.pdf",
+            "parents": [folder_id],
+            "mimeType": "application/pdf",
+        }
         media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
         file = drive_cli.files().create(
             body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
         ).execute()
+
     except HttpError as e:
-        if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
-            if not ALLOW_OAUTH_FALLBACK:
-                st.error("Service Account quota exceeded and OAuth fallback disabled.")
-                return "", ""
-            try:
-                drive_cli = _get_user_drive()
-                file = drive_cli.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
-            except Exception as e2:
-                st.error(f"OAuth upload failed: {e2}")
-                return "", ""
-        else:
-            st.error(f"Drive upload failed: {e}")
-            return "", ""
+        # 🚫 OAuth fallback disabled
+        st.error(f"Drive upload failed: {e}")
+        return "", ""
     except Exception as e:
         st.error(f"Unexpected error uploading to Drive: {e}")
         return "", ""
+
     file_id = file.get("id", "")
     link = file.get("webViewLink", "")
     if not file_id:
         st.error("Drive did not return a file id.")
         return "", ""
+
     try:
         if st.secrets.get("drive", {}).get("public", True):
             _drive_make_public(file_id, drive_client=drive_cli)
     except Exception:
         pass
+
     return link, file_id
 
-def upload_to_drive(service, file_name: str, file_obj: BytesIO, parent_id: str) -> str:
-    file_metadata = {
-        'name': file_name,
-        'parents': [parent_id]
-    }
-    media = MediaIoBaseUpload(file_obj, mimetype='application/pdf', resumable=True)
+# #below is the correct one of def upload
+# def upload_pdf_and_get_link(uploaded_file, *, prefix: str, office: str, city_code: str, action: str) -> Tuple[str, str]:
+#     if uploaded_file is None:
+#         st.error("No file selected.")
+#         return "", ""
+#     try:
+#         data = uploaded_file.getvalue()
+#     except Exception as e:
+#         st.error(f"Failed reading the uploaded file: {e}")
+#         return "", ""
+#     if not data:
+#         st.error("Uploaded file is empty.")
+#         return "", ""
+#     if data[:4] != b"%PDF":
+#         st.warning("File doesn't start with %PDF header — continuing.")
+#     try:
+#         drive_cli = _get_drive()
+#         root_id = st.secrets.get("drive", {}).get("approvals", "")
+#         if not root_id:
+#             st.error("Drive approvals folder not configured in secrets.")
+#             return "", ""
+#         city_folder = city_folder_name(city_code)
+#         folder_id = ensure_drive_subfolder(root_id, [office or "Head Office (HO)", city_folder, action, "Pending"], drive_cli)
+#         today = datetime.now().strftime("%Y%m%d")
+#         meta = {"name": f"{prefix}_{today}.pdf", "parents": [folder_id], "mimeType": "application/pdf"}
+#         media = MediaIoBaseUpload(io.BytesIO(data), mimetype="application/pdf", resumable=False)
+#         file = drive_cli.files().create(
+#             body=meta, media_body=media, fields="id, webViewLink", supportsAllDrives=True
+#         ).execute()
+#     except HttpError as e:
+#         if e.resp.status == 403 and "storageQuotaExceeded" in str(e):
+#             if not ALLOW_OAUTH_FALLBACK:
+#                 st.error("Service Account quota exceeded and OAuth fallback disabled.")
+#                 return "", ""
+#             try:
+#                 drive_cli = _get_user_drive()
+#                 file = drive_cli.files().create(body=meta, media_body=media, fields="id, webViewLink").execute()
+#             except Exception as e2:
+#                 st.error(f"OAuth upload failed: {e2}")
+#                 return "", ""
+#         else:
+#             st.error(f"Drive upload failed: {e}")
+#             return "", ""
+#     except Exception as e:
+#         st.error(f"Unexpected error uploading to Drive: {e}")
+#         return "", ""
+#     file_id = file.get("id", "")
+#     link = file.get("webViewLink", "")
+#     if not file_id:
+#         st.error("Drive did not return a file id.")
+#         return "", ""
+#     try:
+#         if st.secrets.get("drive", {}).get("public", True):
+#             _drive_make_public(file_id, drive_client=drive_cli)
+#     except Exception:
+#         pass
+#     return link, file_id
 
-    uploaded_file = service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields='id',
-        supportsAllDrives=True
-    ).execute()
+# def upload_to_drive(service, file_name: str, file_obj: BytesIO, parent_id: str) -> str:
+#     file_metadata = {
+#         'name': file_name,
+#         'parents': [parent_id]
+#     }
+#     media = MediaIoBaseUpload(file_obj, mimetype='application/pdf', resumable=True)
 
-    return uploaded_file.get('id')
+#     uploaded_file = service.files().create(
+#         body=file_metadata,
+#         media_body=media,
+#         fields='id',
+#         supportsAllDrives=True
+#     ).execute()
+
+#     return uploaded_file.get('id')
 
 
 
