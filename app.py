@@ -616,12 +616,13 @@ def get_next_order_number_v2(action: str, serial: str) -> int:
     write_worksheet(COUNTER_WS, df)
     return order
 
-def generate_pdf_filename(project: str, Location: str, type_: str, serial: str, order_no: int) -> str:
+def generate_pdf_filename(project: str, location: str, type_: str, serial: str, order_no: int) -> str:
     safe = lambda s: re.sub(r"[^\w\s\-]", "", str(s)).strip()
     project = safe(project)
-    Location = safe(Location (KSA))
+    location = safe(location)
     serial = normalize_serial(serial)
-    return f"{project} - {Location} - {type_} - {serial} - {order_no:04d} - {datetime.now().strftime('%Y%m%d')}.pdf"
+    return f"{project} - {location} - {type_} - {serial} - {order_no:04d} - {datetime.now().strftime('%Y%m%d')}.pdf"
+
 
 
 # =========================
@@ -1087,58 +1088,48 @@ def register_device_tab():
                 filled = fill_pdf_form(tpl_bytes, reg_vals, flatten=True)
                 st.download_button("⬇️ Download ICT Registration Form", data=filled, file_name=_ict_filename(serial))
 
-    if submitted:
-        serial = st.session_state.get("reg_serial", "")
-        device = st.session_state.get("reg_device", "")
-        if not serial or not device:
-            st.error("Serial Number and Device Type are required.")
+       if submitted:
+        if serial in inv_df["Serial Number"].values:
+            st.error("Serial already exists in inventory.")
             return
-        inv_df = read_worksheet(INVENTORY_WS)
-        pending_df = read_worksheet(PENDING_DEVICE_WS)
-        if serial in inv_df.get("Serial Number", []).tolist() or serial in pending_df.get("Serial Number", []).tolist():
-            st.error(f"Serial {serial} already exists in Inventory or Pending.")
-            return
-        pdf_file_obj = pdf_file or st.session_state.get("reg_pdf")
-        if pdf_file_obj is None:
-            st.error("Signed ICT Registration PDF is required.")
-            return
-        now_str = datetime.now().strftime(DATE_FMT)
-        actor = st.session_state.get("username", "")
-        row = build_row(now_str, actor)
+
+        pdf_file_obj = fill_pdf_form("reg", {
+            "serial": serial,
+            "model": model,
+            "employee": current_user,
+            "office": row.get("Office", ""),
+            "location": row.get("Location (KSA)", ""),
+            "notes": notes,
+        })
+
         project = row.get("Office", "Head Office (HO)")
-        Location) = row.get("Location", "Unknown")
+        location = row.get("Location (KSA)", "Unknown")
         order_no = get_next_order_number_v2("REG", serial)
-        filename = generate_pdf_filename(project, Location, "REG", serial, order_no)
+        filename = generate_pdf_filename(project, location, "REG", serial, order_no)
 
         link, fid = upload_pdf_and_get_link(
             pdf_file_obj,
             filename=filename,
             office=project,
-            city_code=Location (KSA),
+            city_code=location,
             action="Register",
         )
 
-        # link, fid = upload_pdf_and_get_link(
-        #     pdf_file_obj,
-        #     prefix=f"device_{normalize_serial(serial)}",
-        #     office="Head Office (HO)",
-        #     city_code=row.get("Location (KSA)", ""),
-        #     action="Register",
-        # )
-        if not fid:
-            return
-        pending = {
-            **row,
-            "Approval Status": "Pending",
-            "Approval PDF": link,
-            "Approval File ID": fid,
-            "Submitted by": actor,
-            "Submitted at": now_str,
-            "Approver": "",
-            "Decision at": "",
+        pending_df = read_worksheet(PENDING_WS_REG)
+        new_row = {
+            "Date": datetime.now().strftime(DATE_FMT),
+            "Serial Number": serial,
+            "Model": model,
+            "Current user": current_user,
+            "Status": "Pending Approval",
+            "GDrive Link": link,
+            "File ID": fid,
+            "Notes": notes
         }
-        append_to_worksheet(PENDING_DEVICE_WS, pd.DataFrame([pending]))
-        st.success("🕒 Device registration submitted for Admin approval.")
+        pending_df = pd.concat([pending_df, pd.DataFrame([new_row])], ignore_index=True)
+        write_worksheet(PENDING_WS_REG, pending_df)
+        st.success("Device registered and pending approval.")
+
 
 def transfer_tab():
     st.subheader("🔄 Device Transfer")
@@ -1177,53 +1168,50 @@ def transfer_tab():
                     file_name=_transfer_filename(serial),
                     mime="application/pdf",
                 )
-    if submitted:
-        if not serial or not new_owner:
-            st.error("Serial number and new owner required.")
+        if submitted:
+        if serial not in inv_df["Serial Number"].values:
+            st.error("Serial not found in inventory.")
             return
-        if pdf_file is None:
-            st.error("Signed ICT Transfer PDF is required.")
-            return
-        row = inv_df.loc[inv_df["Serial Number"] == serial].iloc[0].to_dict()
-        now_str = datetime.now().strftime(DATE_FMT)
-        actor = st.session_state.get("username", "")
+
+        pdf_file = fill_pdf_form("transfer", {
+            "serial": serial,
+            "model": model,
+            "from_employee": from_owner,
+            "to_employee": to_owner,
+            "office": row.get("Office", ""),
+            "location": row.get("Location (KSA)", ""),
+            "notes": notes,
+        })
+
         project = row.get("Office", "Head Office (HO)")
-        Location = row.get("Location", "Unknown")
+        location = row.get("Location (KSA)", "Unknown")
         order_no = get_next_order_number_v2("TRF", serial)
-        filename = generate_pdf_filename(project, Location, "TRF", serial, order_no)
+        filename = generate_pdf_filename(project, location, "TRF", serial, order_no)
 
         link, fid = upload_pdf_and_get_link(
             pdf_file,
             filename=filename,
             office=project,
-            city_code=Location (KSA),
+            city_code=location,
             action="Transfer",
         )
 
-
-        # link, fid = upload_pdf_and_get_link(
-        #     pdf_file,
-        #     prefix=f"transfer_{normalize_serial(serial)}",
-        #     office=row.get("Office", ""),
-        #     =row.get("Location (KSA)", ""),
-        #     action="Transfer",
-        # )
-        if not fid:
-            return
-        pending = {
-            **row,
-            "From owner": row.get("Current user", ""),  # include actual current owner
-            "To owner": new_owner,
-            "Approval Status": "Pending",
-            "Approval PDF": link,
-            "Approval File ID": fid,
-            "Submitted by": actor,
-            "Submitted at": now_str,
-            "Approver": "",
-            "Decision at": "",
+        pending_df = read_worksheet(PENDING_WS_TRF)
+        new_row = {
+            "Date": datetime.now().strftime(DATE_FMT),
+            "Serial Number": serial,
+            "Model": model,
+            "From owner": from_owner,
+            "To owner": to_owner,
+            "Status": "Pending Approval",
+            "GDrive Link": link,
+            "File ID": fid,
+            "Notes": notes
         }
-        append_to_worksheet(PENDING_TRANSFER_WS, pd.DataFrame([pending]))
-        st.success("🕒 Transfer request submitted for Admin approval.")
+        pending_df = pd.concat([pending_df, pd.DataFrame([new_row])], ignore_index=True)
+        write_worksheet(PENDING_WS_TRF, pending_df)
+        st.success("Transfer submitted and pending approval.")
+
 
 def _approve_device_row(row: pd.Series):
     inv = read_worksheet(INVENTORY_WS)
