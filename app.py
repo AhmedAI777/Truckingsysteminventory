@@ -63,7 +63,7 @@ LOG_COLS = ["Device Type", "Serial Number", "From owner", "To owner", "Date issu
 
 EMPLOYEE_HEADERS = [
     "Name", "Email", "APLUS", "Active", "Position", "Department",
-    "Location (KSA) (KSA)", "Project", "Microsoft Teams", "Mobile Number"
+    "Location (KSA)", "Project", "Microsoft Teams", "Mobile Number"
 ]
 
 APPROVAL_META_COLS = [
@@ -795,7 +795,7 @@ def build_registration_values(device_row: dict, *, actor_name: str, emp_df: pd.D
             from_mobile = from_mobile or _get_emp_value(r, "Mobile Number", "Phone", "Mobile")
             from_email = from_email or _get_emp_value(r, "Email Address", "Email", "E-mail")
             from_dept = from_dept or _get_emp_value(r, "Department", "Dept")
-            from_Location = from_Location (KSA) or _get_emp_value(r, "Location (KSA) (KSA)", "Location (KSA)", "City")
+            from_Location = from_Location (KSA) or _get_emp_value(r, "Location (KSA)", "Location (KSA)", "City")
     values = {
         fm["from_name"]: from_name,
         fm["from_mobile"]: from_mobile,
